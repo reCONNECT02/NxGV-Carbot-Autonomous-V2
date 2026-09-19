@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Exec=xfce4-terminal -x bash -i -c "risabot; exec bash"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name[en_US]=RISA-Bot Autostart
+Name=RISA-Bot Autostart
+Comment=Starts RISA-Bot ROS Nodes in xfce4-terminal

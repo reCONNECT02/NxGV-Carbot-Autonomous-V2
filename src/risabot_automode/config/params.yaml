@@ -1,0 +1,360 @@
+# ============================================================
+# RISA-Bot Centralized Parameters
+# All tunable parameters in one place for easy competition-day tuning.
+# Load via launch file: parameters=[params_file]
+# ============================================================
+
+# --- Auto Driver (brain) ---
+# PID TUNING GUIDE:
+#   Start conservative: kp=0.8, ki=0.0, kd=0.2
+#   If robot weaves/oscillates: INCREASE kd, DECREASE kp
+#   If robot is slow to correct: INCREASE kp
+#   If robot drifts to one side on a straight: INCREASE ki slightly
+#   speed_error_scale: higher = more aggressive speed reduction in turns
+#   min_turn_speed: 0.4 = robot never goes below 40% forward_speed in turns
+auto_driver:
+  ros__parameters:
+    forward_speed: 0.15          # m/s maximum speed on a straight (conservative start)
+    stale_timeout: 3.0
+    dist_lap_complete: 1.0
+    enable_subsumption_obstacle: false
+    max_odom_speed: 1.0
+    min_state_dwell_sec: 0.25
+    publish_loop_stats: true
+    steering_gain: 1.0           # legacy, kept for compatibility
+    # PID gains (conservative — increase kp once tracking is reliable)
+    pid_kp: 0.8
+    pid_ki: 0.01
+    pid_kd: 0.20
+    pid_integral_max: 0.3
+    # Adaptive speed
+    speed_error_scale: 1.5
+    min_turn_speed: 0.4
+    lane_steer_slew: 3.0         # max angular.z change per second (Cytron acceleration limit)
+    # Challenge 1→2 sequencing (time-based gating)
+    t_post_obstacle_sec: 1.5     # re-center delay after obstacle clears (before roundabout)
+    t_roundabout_sec: 8.0        # time inside roundabout before exiting
+    # ── Hill Climbing Mode (Challenge 5) ──────────────────────────────────
+    # TUNING GUIDE:
+    #   hill_pitch_threshold   : IMU pitch (deg) to enter HILL state. Start at 8-10°.
+    #   hill_pitch_hysteresis  : pitch must drop this many degrees below threshold to EXIT.
+    #                            Prevents rapid flapping on the crest. Default 4°.
+    #   hill_base_speed        : speed (m/s) assigned when pitch first crosses threshold.
+    #                            Should be slightly above forward_speed.
+    #   hill_speed_per_degree  : extra m/s per extra degree of pitch.
+    #                            e.g. 0.006 * 10° = +0.06 m/s boost.
+    #   hill_max_speed         : hard cap. Never exceed this on the hill.
+    #   hill_steer_scale       : fraction of lane-follow steering to keep (0 = dead straight).
+    #   hill_sign_prime_sec    : seconds after seeing the hill sign that priming stays active.
+    #   hill_sign_prime_threshold_reduction : degrees subtracted from threshold while primed.
+    hill_pitch_threshold: 8.0
+    hill_pitch_hysteresis: 4.0
+    hill_base_speed: 0.18        # m/s — starting speed when robot tips onto the slope
+    hill_speed_per_degree: 0.006 # extra m/s per degree above threshold
+    hill_max_speed: 0.28         # safety cap — never go faster than this on the hill
+    hill_steer_scale: 0.4        # keep 40% of lane steering on hill (helps stay straight)
+    hill_sign_prime_sec: 8.0     # prime window duration after hill sign seen (seconds)
+    hill_sign_prime_threshold_reduction: 3.0  # lower threshold by 3° when primed
+
+# --- Command Safety Controller ---
+cmd_safety_controller:
+  ros__parameters:
+    publish_hz: 50.0
+    cmd_timeout: 0.35
+    max_linear_speed: 0.30
+    max_angular_speed: 1.2
+    max_linear_accel: 0.8
+    max_angular_accel: 4.0
+    deadband_linear: 0.01
+    deadband_angular: 0.01
+    publish_loop_stats: true
+
+# --- Line Follower Camera (MDPI-enhanced scanline detection) ---
+# TUNING GUIDE:
+#   n_scanlines      : more scanlines = more robust but slightly slower
+#   min_valid_scanlines: lower = less strict lane lock (may cause false locks)
+#   min_line_width_px: raise if noise triggers false lane detections
+#   crop_ratio_base  : increase if robot cuts corners on slight curves
+#   search_radius_px : how far (pixels) a blob can be from expected position
+#   white_threshold  : gray value cutoff for white border detection (higher = stricter)
+#   use_otsu         : true = auto-threshold (unreliable on 3-tone tracks)
+#   morph_open_size  : erosion→dilation kernel to remove noise (0=disable, 3=default)
+#   morph_close_size : dilation→erosion kernel to fill gaps (0=disable, 5=default)
+#   clahe_enabled    : disable if camera already has good auto-exposure
+#   clahe_clip_limit : higher = more contrast boost (good for dim tracks)
+# IPM (Bird's Eye View):
+#   ipm_enabled      : DISABLED by default — requires calibration for camera mount
+#   ipm_top_width_ratio : controls the narrow end of the trapezoid (further road)
+#                         lower = more aggressive warp (0.2-0.5 typical)
+#   ipm_bottom_width_ratio : controls the wide end (close road, usually 1.0)
+# KALMAN FILTER:
+#   kalman_enabled         : use Kalman instead of EMA for smoothing
+#   kalman_process_noise   : Q — lower = smoother but slower to react
+#   kalman_measurement_noise: R — lower = trusts measurements more
+# LEGACY EMA (used when kalman_enabled=false):
+#   smoothing_alpha  : EMA factor — lower = smoother but slower response
+#   dead_zone        : tolerance threshold — skip Kalman update below this value
+#   hold_error_frames: frames (~30fps) the last heading is held when lines are lost
+#   error_decay_rate : 0.92 → held error halves every ~9 frames
+line_follower_camera:
+  ros__parameters:
+    n_scanlines: 8
+    min_valid_scanlines: 2
+    min_line_width_px: 5
+    crop_ratio_base: 0.55           # raised from 0.4 — robot sees further ahead
+    search_radius_px: 80             # blob-to-expected match radius
+    # Thresholding — lane detection
+    white_threshold: 100              # inverted mode: pixels BELOW this = lane (tune 80-120)
+    use_otsu: false
+    invert_binary: true               # true = detect dark lane, false = detect white borders
+    # Morphological cleanup
+    morph_open_size: 3                # remove noise blobs (0=disable)
+    morph_close_size: 5               # fill small gaps in lane lines (0=disable)
+    clahe_enabled: true
+    clahe_clip_limit: 2.0
+    # IPM — Bird's Eye View (DISABLED: camera is horizontal at 8.5cm, IPM distorts)
+    ipm_enabled: false
+    ipm_top_width_ratio: 0.35    # 0° tilt at 8.5cm height → moderate warp
+    ipm_bottom_width_ratio: 1.0
+    # Kalman filter (MDPI-inspired)
+    kalman_enabled: true
+    kalman_process_noise: 0.01
+    kalman_measurement_noise: 0.1
+    # Legacy EMA (fallback when kalman_enabled=false)
+    smoothing_alpha: 0.3
+    dead_zone: 0.05
+    hold_error_frames: 15
+    error_decay_rate: 0.92
+    show_debug: false             # OFF by default — dashboard auto-enables for active view
+    resize_width: 320
+    print_debug: false
+    debug_print_rate: 0.5
+
+# --- Traffic Light Detector ---
+# TUNING GUIDE:
+#   sat_min / val_min    : raise if false positives on dark-coloured objects
+#   required_confidence  : raise to reduce false triggers (3 = safe default)
+#   min_pixel_count      : raise if detecting small coloured blobs that aren't lights
+traffic_light_detector:
+  ros__parameters:
+    red_h_low1: 0
+    red_h_high1: 10
+    red_h_low2: 160
+    red_h_high2: 180
+    yellow_h_low: 20
+    yellow_h_high: 35
+    green_h_low: 40
+    green_h_high: 85
+    sat_min: 80
+    val_min: 80
+    min_circle_radius: 8
+    max_circle_radius: 80
+    min_pixel_count: 50
+    required_confidence: 3
+    show_debug: false
+    resize_width: 320
+    print_debug: false
+    debug_print_rate: 0.5
+    heartbeat_sec: 0.5
+
+# --- Boom Gate Detector ---
+boom_gate_detector:
+  ros__parameters:
+    min_detect_dist: 0.15
+    max_detect_dist: 0.80
+    angle_window: 0.35
+    min_gate_points: 5
+    distance_variance_max: 0.05
+    lidar_angle_offset: 3.1416
+    hysteresis: 3
+    heartbeat_sec: 0.5
+
+# --- Tunnel Wall Follower (RANSAC Enhanced) ---
+# TUNING GUIDE:
+#   kp / kd             : PD gains for distance centering (left-right balance)
+#   kp_heading / kd_heading : PD gains for heading alignment (wall angle)
+#   ransac_threshold    : inlier distance for RANSAC line fit (meters, lower = stricter)
+#   ransac_iterations   : more iterations = better fit but slower (50 is fine for <100 pts)
+#   tunnel_hysteresis_frames : consecutive frames before toggling tunnel state (prevents flicker)
+#   lidar_angle_offset  : hardware mounting correction (radians). 3.1416 = LiDAR 0° points backward
+tunnel_wall_follower:
+  ros__parameters:
+    target_center_dist: 0.0
+    forward_speed: 0.12           # slightly faster for better inertia
+    kp: 5.0                       # sharply increased to match lane follower steering magnitude
+    kd: 0.5                       # derivative to dampen the high P gain
+    kp_heading: 1.0               # stronger heading correction
+    kd_heading: 0.1               
+    max_angular: 2.0              # allow sharp turns (same limit as lane follower)
+    output_alpha: 0.4             # EMA smoothing (0=frozen, 1=raw/noisy)
+    left_angle_min: 0.26              # 15° (was 30° — catch walls near the front)
+    left_angle_max: 2.09              # 120° (was 90° — catch walls slightly behind)
+    right_angle_min: -2.09            # -120°
+    right_angle_max: -0.26            # -15°
+    lidar_angle_offset: 3.1416
+    min_wall_points: 5             # require 5 pts per side (more robust)
+    max_wall_dist: 0.80            # detect walls up to 80cm away
+    ransac_threshold: 0.03         # 3cm inlier tolerance (forgiving for rough walls)
+    ransac_iterations: 50
+    tunnel_hysteresis_frames: 3
+    heartbeat_sec: 0.2
+
+# --- Obstruction Avoidance ---
+obstruction_avoidance:
+  ros__parameters:
+    detect_dist: 0.50
+    clear_dist: 0.60
+    front_angle: 0.35
+    side_angle_min: 0.35
+    side_angle_max: 1.20
+    steer_speed: 0.10
+    steer_angular: 0.6
+    pass_speed: 0.15
+    pass_duration: 2.0
+    steer_back_duration: 1.5
+    steer_away_duration: 1.0
+    lidar_angle_offset: 3.1416
+
+# --- Parking Controller ---
+parking_controller:
+  ros__parameters:
+    parallel_forward_dist: 0.30
+    parallel_reverse_dist: 0.35
+    parallel_steer_angle: 0.6
+    park_wait_time: 3.0
+    perp_turn_angle: 1.57
+    perp_forward_dist: 0.25
+    drive_speed: 0.15
+    reverse_speed: -0.12
+
+
+# --- Camera Obstacle Detection ---
+obstacle_avoidance_camera:
+  ros__parameters:
+    edge_threshold: 0.08        # raised from 0.02 — floor tiles trigger at ~2%, real obstacles at ~10%
+    canny_low: 50
+    canny_high: 150
+    blur_kernel: 5
+    hysteresis_on: 5
+    hysteresis_off: 8
+    show_debug: false
+    resize_width: 320
+    print_debug: false
+    debug_print_rate: 0.5
+    heartbeat_sec: 0.5
+
+# --- LiDAR Obstacle Detection ---
+obstacle_avoidance_node:
+  ros__parameters:
+    min_obstacle_distance: 0.48
+    heartbeat_sec: 0.5
+
+# --- Dashboard ---
+dashboard:
+  ros__parameters:
+    use_hw_odom: true
+    freshness_stale_sec: 2.0
+    sim_odom_scale: 1.55
+    hw_odom_scale: 1.0
+    hw_odom_yaw_scale: 1.0
+
+# --- Health Monitor ---
+health_monitor:
+  ros__parameters:
+    publish_period: 0.5
+    timeout_perception: 1.5
+    timeout_state: 2.0
+    timeout_control: 1.0
+    timeout_odom: 1.0
+    timeout_joy: 2.0
+
+# --- Servo Controller ---
+servo_controller:
+  ros__parameters:
+    servo_steer_id: 4
+    servo_center: 90
+    servo_range_left: 50            # servo units from center to max LEFT steer
+    servo_range_right: 70           # servo units from center to max RIGHT steer
+    speed_levels: [15, 25, 40, 60, 100]
+    default_speed_index: 1
+    joy_timeout: 0.8
+    auto_cmd_timeout: 0.4
+    unlock_requires_neutral: true
+    unlock_neutral_threshold: 0.15
+    hw_heartbeat_sec: 1.0
+    hw_fail_limit: 5
+    ticks_per_meter: 1050.0
+    drive_motor_index: 0        # which encoder channel to use (0=FL, 1=FR, 2=RL, 3=RR)
+    odom_distance_scale: 1.0
+    odom_yaw_scale: 1.0
+    encoder_jump_threshold: 800.0
+    max_linear_velocity: 1.0
+    max_angular_velocity: 6.0
+    odom_reverse_polarity: false
+    wheel_base: 0.14
+    steering_max_deg: 50.0
+    odom_vel_alpha: 0.3
+    odom_velocity_deadband: 0.02
+    publish_loop_stats: true
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    # ── Auto-mode steering asymmetry correction ──────────────────────────────
+    # Ackermann geometry means the robot needs more servo throw on one side to
+    # achieve the same physical turning radius. If right turns are sluggish,
+    # increase this value. 1.0 = no boost (symmetric). 1.3 = 30% more right servo angle.
+    # This multiplier ONLY applies in auto mode (process_twist). Manual is unaffected.
+    # TUNING: Start at 1.3. If still understeering right, try 1.4. Max ~1.6 before servo clamps.
+    auto_right_steer_boost: 1.3
+
+# --- BPU Signage Detector ---
+# CLASS MAP:
+#   0: Bumper_signboard      ← DISABLED (unnecessary for competition)
+#   1: Hill_signboard        ← CRUCIAL  (Challenge 5 — hill climb trigger)
+#   2: Obstacle_signboard    ← DISABLED (unnecessary for competition)
+#   3: ParallelP_signboard   ← CRUCIAL  (parking trigger)
+#   4: PerpendP_signboard    ← CRUCIAL  (parking trigger)
+#   5: Roundabout_signboard  ← DISABLED (unnecessary for competition)
+#   6: Traffic_Green         ← CRUCIAL  (traffic light state)
+#   7: Traffic_Red           ← CRUCIAL  (traffic light state)
+#   8: Trafficlight_signboard← CRUCIAL  (generic TL — CV reclassified to 6 or 7)
+#   9: null                  ← always ignored
+#
+# TUNING GUIDE:
+#   thresh_*   : per-class minimum confidence (objectness × class_prob)
+#                Set 0.99 to effectively disable a class.
+#                Lower = more sensitive but more false positives.
+#   iou_threshold : NMS overlap threshold (0.45 is standard YOLOv5 default)
+#   min_parking_sign_width : pixel width gate — ignore tiny parking detections
+signage_detector:
+  ros__parameters:
+    model_path: "/home/sunrise/risabot_signs_640x640_nv12.bin"
+    conf_threshold: 0.05          # global fallback (per-class thresholds below take priority)
+    iou_threshold: 0.45
+    show_debug: false             # OFF by default — dashboard auto-enables when signage view active
+    heartbeat_sec: 0.5
+    min_parking_sign_width: 0     # set >0 to require minimum bounding-box width for parking
+
+    # ── Per-class confidence thresholds ────────────────────────────────────
+    # CRUCIAL classes — tuned for reliable detection without false positives
+    thresh_hill:       0.06       # Hill_signboard  — tested working value
+    thresh_parallelp:  0.05       # ParallelP_signboard — tested working value
+    thresh_perpendp:   0.05       # PerpendP_signboard  — tested working value
+    thresh_tl_green:   0.25       # Traffic_Green
+    thresh_tl_red:     0.25       # Traffic_Red
+    thresh_tl_generic: 0.20       # Trafficlight_signboard (CV re-classifies to green/red)
+
+    # DISABLED classes — threshold set to 0.99 so they never fire
+    thresh_bumper:     0.99       # Bumper_signboard    ← not used
+    thresh_obstacle:   0.99       # Obstacle_signboard  ← not used
+    thresh_roundabout: 0.50       # Roundabout_signboard← fires high spuriously, 0.5 suppresses false triggers
+
+    # ── Per-class bounding-box colors (BGR) for debug overlay ─────────────
+    color_hill:       '180,0,255'   # Pink/Purple
+    color_parallelp:  '255,0,0'     # Blue
+    color_perpendp:   '0,100,0'     # Forest Green
+    color_tl_green:   '0,255,0'     # Pure Green
+    color_tl_red:     '0,0,255'     # Pure Red
+    color_tl_generic: '255,255,0'   # Cyan
+    color_bumper:     '0,140,255'   # Orange  (unused — class disabled)
+    color_obstacle:   '0,255,255'   # Yellow  (unused — class disabled)
+    color_roundabout: '255,255,255' # White   (unused — class disabled)

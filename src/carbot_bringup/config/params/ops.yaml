@@ -1,0 +1,62 @@
+# =============================================================================
+# ops.yaml -- calibration wizard, race supervisor (preflight + START), run
+# recorder, system monitor, scoreboard. Step definitions: data/calibration_steps.yaml
+# =============================================================================
+calibration_wizard:
+  ros__parameters:
+    session_format: "%Y%m%d_%H%M%S"
+    allow_keep_previous: true
+
+race_supervisor:
+  ros__parameters:
+    preflight_period_s: 0.5
+    camera_min_rate_ratio: 0.8      # >= 80 % of cameras.yaml expected_hz
+    camera_max_age_s: 0.5
+    lidar_min_hz: 6.0
+    lidar_max_age_s: 0.5
+    uwb_anchor_max_age_s: 1.0       # every anchor in uwb.yaml must be seen
+    battery_min_v: 10.8             # CONFIRM for your pack
+    start_position_tolerance_m: 0.20   # UWB (+-20 cm) vs map start pose
+    start_heading_tolerance_deg: 15.0
+    start_camera_uwb_agreement_m: 0.20
+    auto_record: true
+    ready_hold_s: 1.0               # all checks green for this long before READY
+
+run_recorder:
+  ros__parameters:
+    storage_id: sqlite3
+    max_bag_size_mb: 2048
+    # Explicit list: raw camera images are NOT recorded (use the record streams).
+    topics: [/carbot/status, /carbot/mission/state, /carbot/mission/events,
+             /carbot/mission/gate_route_mismatch, /carbot/owner/state, /carbot/safety/status,
+             /carbot/localization/local_pose, /carbot/localization/global_pose,
+             /carbot/localization/status, /carbot/uwb/ranges, /carbot/uwb/status,
+             /carbot/uwb/raw_fix, /carbot/plan/corridor, /carbot/plan/local_candidates,
+             /carbot/plan/local_path, /carbot/parking/candidates, /carbot/parking/path,
+             /carbot/recovery/candidates, /carbot/detections, /carbot/memory/grid,
+             /carbot/perception/road_grid, /carbot/race/preflight, /carbot/race/armed,
+             /carbot/system/health, /carbot/scoreboard, /carbot/map/track_json,
+             /carbot/plan/global_route, /carbot/plan/route_info,
+             /carbot/cam/front/record/compressed, /carbot/cam/left_rear/record/compressed,
+             /carbot/cam/right_rear/record/compressed,
+             /scan, /odom, /imu/rpy, /imu/pitch, /uwb3/input_json, /cmd_vel_auto, /cmd_vel,
+             /auto_mode, /e_stop, /tunnel_detected, /tunnel_cmd_vel, /tunnel_debug,
+             /carbot/request/road, /carbot/request/tunnel, /carbot/request/parking,
+             /carbot/request/recovery, /tf, /tf_static]
+
+system_monitor:
+  ros__parameters:
+    rate_hz: 1.0
+    # Watched topics and expected rates (parallel arrays).
+    watch_topics: [/camera/color/image_raw, /cam_ov5647/image_raw, /cam_imx219/image_raw,
+                   /scan, /odom, /imu/rpy, /uwb3/input_json, /carbot/perception/road_grid,
+                   /carbot/localization/local_pose, /carbot/owner/state]
+    watch_expected_hz: [30.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 50.0]
+    soc_temp_path: /sys/class/thermal/thermal_zone0/temp
+    bpu_ratio_path: /sys/devices/system/bpu/bpu0/ratio   # UNVERIFIED on RDK X5: check in phase 7
+    camera_process_patterns: [mipi_cam, astra_camera, hobot_codec, websocket]
+    uwb_agent_pattern: micro_ros_agent
+
+scoreboard:
+  ros__parameters:
+    rate_hz: 2.0

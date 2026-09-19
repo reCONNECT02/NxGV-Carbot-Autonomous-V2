@@ -1,0 +1,35 @@
+# =============================================================================
+# common.yaml -- parameters every Carbot node receives (`/**` wildcard).
+# Vehicle geometry = V4 core.js DEFAULTS (block 01). Metres / seconds / radians
+# unless the key says otherwise. Provenance per V4 PROVENANCE: measured vs assumed.
+# =============================================================================
+/**:
+  ros__parameters:
+    status_rate_hz: 1.0
+    frames:
+      track: track
+      venue: venue
+      odom: odom
+      base: base_link
+      laser: laser_frame
+    vehicle:
+      car_length_m: 0.30          # measured
+      car_width_m: 0.192          # measured
+      wheelbase_m: 0.216          # measured  (base servo_controller.wheel_base is 0.14 -> see base_nodes.yaml)
+      rear_overhang_m: 0.042      # assumed
+      min_turning_radius_m: 0.40  # assumed, rear axle; measured in calibration step 7
+      wheel_radius_m: 0.033       # measured
+      wheel_width_m: 0.025        # measured
+      mass_kg: 2.0                # assumed
+      height_m: 0.24              # rule max 0.25; tunnel clear height 0.27
+      steering_lag_s: 0.12        # assumed
+      speed_lag_s: 0.18           # assumed
+      steering_rate_deg_s: 180.0  # assumed
+      lidar_x_m: 0.09             # V4 lidar origin
+      lidar_height_m: 0.22
+    limits:
+      max_speed_mps: 0.18         # V4 maxSpeedCms 18
+      parking_speed_mps: 0.06     # V4 parkingSpeedCms 6
+      recovery_speed_mps: 0.03    # V4 recovery controller parkingSpeedCms 3
+      # V4 lineToleranceCm: training override, NOT a competition permission.
+      line_tolerance_m: 0.05

@@ -1,0 +1,9 @@
+# GUI -> calibration_wizard. /carbot/calibration/action
+string step_id
+string action           # RUN | SAVE | REDO | KEEP_PREVIOUS | SELECT | ROLLBACK
+string argument         # step-specific (e.g. camera id, session to roll back to)
+---
+bool ok
+string message
+string result_yaml      # result as YAML text (shown in the wizard)
+bool passed

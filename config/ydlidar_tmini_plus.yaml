@@ -1,0 +1,16 @@
+lidar:
+  driver:
+    port: "/dev/ttyUSB1"
+    baudrate: 230400
+    lidar_type: 2             # 2 = TYPE_TOF (for T-mini Plus)
+    device_type: 6            # 6 = YDLIDAR_TYPE_SERIAL
+    sample_rate: 4            # 4 = 4000 Hz
+    scan_frequency: 10.0      # Hz
+    resolution_fixed: true
+    reversed: false
+    inverted: false
+    angle_min: -180.0
+    angle_max: 180.0
+    range_min: 0.05           # 5 cm
+    range_max: 12.0           # 12 meters
+    ignore_array: ""

@@ -1,0 +1,36 @@
+# ---- colcon ----
+build/
+install/
+log/
+
+# ---- python / editors ----
+**/*.pyc
+__pycache__/
+*.egg-info/
+dist/
+.eggs/
+.pytest_cache/
+.vscode/
+.idea/
+*.DS_Store
+
+# ---- SECRETS: never commit ----
+# The real tag config holds the WiFi password. Copy TagConfig.example.h to
+# TagConfig.h next to it and edit locally. tools/git-hooks/pre-commit enforces this.
+firmware/uwb_tag/TagMicroROS/TagConfig.h
+**/TagConfig.h
+*.env
+secrets*.yaml
+
+# ---- run-time data (lives in ~/carbot_data on the robot, never in git) ----
+carbot_data/
+*.db3
+*.mcap
+rosbag2_*/
+
+# ---- large model-training artefacts (base repo convention) ----
+tools/bpu_model/best.onnx
+tools/bpu_model/calibration_data/
+tools/bpu_model/model_output/main_graph_subgraph_0.html
+datasets/**/images/
+datasets/**/labels/

@@ -1,0 +1,13 @@
+# RISA-bot UDEV Rules
+# ==============================================================================
+
+# 1. Rosmaster (Yahboom Motor Driver Board)
+# Matches the CH340 serial chip (Vendor 1a86, Product 7523)
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0666", SYMLINK+="myserial"
+
+# 2. YDLiDAR (Tmini Plus)
+# Matches the Silicon Labs CP210x chip (Vendor 10c4, Product ea60)
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE:="0666", SYMLINK+="ydlidar"
+
+# Note: If both use CP2102, they might conflict. 
+# We prioritize by-id in launch files where possible.

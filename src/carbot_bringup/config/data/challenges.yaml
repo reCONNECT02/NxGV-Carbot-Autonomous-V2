@@ -1,0 +1,117 @@
+# =============================================================================
+# challenges.yaml -- the 13 rubric challenges (rulebook section 7.3)
+# Used by: scoreboard node, mission logic (challenge id/name), GUI Scoreboard
+# tab, docs/CHALLENGE_MAP.md. `nodes`, `params`, `tab` drive the docs table.
+# `zone` = track region where the challenge is judged (for automatic results).
+# =============================================================================
+version: 1
+levels: [EXCELLENT, COMPLETED, PARTIAL, FAIL]
+rules:
+  manual_intervention_scores_zero: true   # touch, e-stop, controller reset, reposition
+  timer_based_traffic_light_scores_zero: true
+  prerecorded_motion_allowed_only_for: parking
+challenges:
+  - id: 1
+    name: Lane change
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: track_area, area: lane_change, visit: 1}
+    nodes: [corridor, local_planner, path_tracker]
+    params: [local_planner.offsets_m, corridor.*, limits.line_tolerance_m]
+    tab: planner
+  - id: 2
+    name: Roundabout (1st exit)
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: circle, x: 2.40, y: 0.80, radius_m: 0.90, visit: 1}
+    nodes: [global_planner, mission_logic, corridor]
+    params: [mission.yaml roundabout_visits, global_planner.*, speed_zones.roundabout]
+    tab: map
+  - id: 3
+    name: Tunnel
+    marks: [15, 12, 8, 0]
+    mandatory: true
+    zone: {type: track_feature, feature: tunnel}
+    nodes: ["tunnel_wall_follower (base, unchanged)", tunnel_bridge, mission_logic]
+    params: [tunnel_wall_follower.*, tunnel_bridge.*, safety_monitor.tunnel_*]
+    tab: memory_lidar
+  - id: 4
+    name: Boom gate
+    marks: [5, 4, 2, 0]
+    mandatory: true
+    zone: {type: near_feature, feature: boom_gates.challenge4, radius_m: 0.8}
+    nodes: [bpu_detector, mission_logic]
+    params: [mission.yaml challenge4_gate, bpu_detector.boom_gate_*]
+    tab: detections
+  - id: 5
+    name: Hill
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: track_feature, feature: elevation}
+    nodes: [mission_logic, command_owner (speed PID), local_pose]
+    params: [speed_zones.hill_and_bump, command_owner.speed_pid.*, local_pose.visual.disable_pitch_rad]
+    tab: control
+  - id: 6
+    name: Speed bump
+    marks: [5, 4, 2, 0]
+    mandatory: true
+    zone: {type: rect, x0: 4.10, x1: 5.10, y0: 4.45, y1: 5.05}
+    nodes: [bpu_detector, mission_logic, command_owner]
+    params: [speed_zones.bump_sign, bpu_detector.speed_bump_*]
+    tab: detections
+  - id: 7
+    name: Traffic light
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: near_pose, pose: light_goal_pose, radius_m: 0.6}
+    nodes: [bpu_detector, mission_logic]
+    params: [mission.yaml traffic_light, bpu_detector.traffic_light_*]
+    tab: detections
+  - id: 8
+    name: Lane change 2
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: track_area, area: lane_change, visit: 2}
+    nodes: [corridor, local_planner, path_tracker]
+    params: [local_planner.*, corridor.*]
+    tab: planner
+  - id: 9
+    name: Roundabout (2nd exit)
+    marks: [5, 4, 2, 0]      # rulebook: 5 marks, "same evaluation criteria as Challenge 1"
+    mandatory: true
+    zone: {type: circle, x: 2.40, y: 0.80, radius_m: 0.90, visit: 2}
+    nodes: [global_planner, mission_logic, corridor]
+    params: [mission.yaml roundabout_visits]
+    tab: map
+  - id: 10
+    name: Parallel parking
+    marks: [10, 8, 5, 0]
+    mandatory: true
+    zone: {type: track_area, area: parallel_opening}
+    nodes: [parking_planner, path_tracker, local_memory]
+    params: [parking_planner.*, path_tracker.parking_*]
+    tab: planner
+  - id: 11
+    name: Perpendicular parking
+    marks: [5, 4, 2, 0]
+    mandatory: true
+    zone: {type: track_area, area: perpendicular_zone}
+    nodes: [parking_planner, path_tracker]
+    params: [parking_planner.*, mission.yaml leg3_perpendicular]
+    tab: planner
+  - id: 12
+    name: Overall lane following
+    marks: [5, 4, 2, 0]
+    mandatory: false
+    zone: {type: whole_run}
+    nodes: [road_perception, corridor, local_planner, path_tracker]
+    params: [road_perception.*, corridor.*, path_tracker.*]
+    tab: perception
+  - id: 13
+    name: Mission completion time
+    marks: [5, 4, 3, 2, 0]   # ranking: fastest 5, 2nd 4, 3rd 3, other finishers 2, else 0
+    mandatory: false
+    zone: {type: whole_run}
+    nodes: [scoreboard]
+    params: []
+    tab: scoreboard

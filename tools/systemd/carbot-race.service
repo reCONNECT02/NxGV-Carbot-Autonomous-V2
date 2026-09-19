@@ -1,0 +1,26 @@
+# Auto-start the Carbot stack in RACE mode at boot (optional).
+# Install (after tools/setup/install_root_helpers.sh):
+#   sudo cp tools/systemd/carbot-race.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now carbot-race      # disable: sudo systemctl disable --now carbot-race
+# Logs: journalctl -u carbot-race -f
+# The car still does NOT move until the START button is pressed in the GUI.
+# Only one stack may run: stop this service before `ros2 launch ... calibrate.launch.py`.
+[Unit]
+Description=NxGV Carbot stack (race mode)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=sunrise
+Environment=CARBOT_WS=/home/sunrise/NxGV-Carbot-Autonomous-V2
+Environment=CARBOT_DATA=/home/sunrise/carbot_data
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source "$CARBOT_WS/install/setup.bash" && exec ros2 launch carbot_bringup race.launch.py'
+KillSignal=SIGINT
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

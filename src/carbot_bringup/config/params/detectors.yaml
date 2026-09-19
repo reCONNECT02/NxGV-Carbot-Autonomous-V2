@@ -1,0 +1,33 @@
+# =============================================================================
+# detectors.yaml -- traffic light (red/green), speed-bump sign, boom gate
+# (open/closed) on the RDK X5 BPU. Phase 6 trains/converts the model; until
+# then model_path points at the base repo model (tools/bpu_model, kept at its
+# original path), which has NO boom-gate class (base used LiDAR for the gate).
+# =============================================================================
+bpu_detector:
+  ros__parameters:
+    camera_role: front
+    rate_hz: 10.0
+    model_path: tools/bpu_model/model_output/risabot_signs_640x640_nv12.bin   # relative to workspace src root
+    input_width: 640
+    input_height: 640
+    nms_iou: 0.45
+    # Class names in model output order. Phase 6 replaces this list together with the new model.
+    class_names: [Bumper_signboard, Hill_signboard, Obstacle_signboard, ParallelP_signboard,
+                  PerpendP_signboard, Roundabout_signboard, Traffic_Green, Traffic_Red,
+                  Trafficlight_signboard, "null"]
+    # Canonical label for each model class ("" = ignored).
+    class_map: [speed_bump_sign, "", "", "", "", "", traffic_light_green, traffic_light_red, "", ""]
+    thresholds:
+      traffic_light_red: 0.25
+      traffic_light_green: 0.25
+      speed_bump_sign: 0.30
+      boom_gate_open: 0.40
+      boom_gate_closed: 0.40
+    debounce_frames: 3              # base traffic_light_detector.required_confidence
+    state_expiry_s: 0.4
+    publish_legacy_topics: true     # also /traffic_light_state and /boom_gate_open
+    debug:
+      enabled: true                 # only encoded while subscribed
+      jpeg_quality: 70
+      max_rate_hz: 4.0

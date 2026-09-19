@@ -1,0 +1,23 @@
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/ttyUSB1        # (Kept this as USB1 since we know that's where it is)
+    frame_id: laser_frame
+    ignore_array: ""
+    baudrate: 230400          # Match Python: 230400
+    lidar_type: 1             # Match Python: TYPE_TRIANGLE
+    device_type: 0            # Match Python: YDLIDAR_TYPE_SERIAL
+    sample_rate: 4            # Match Python: 4
+    abnormal_check_count: 4
+    fixed_resolution: true
+    reversion: true
+    inverted: true
+    auto_reconnect: true
+    isSingleChannel: false    # <--- CRITICAL FIX (Python line 17 says False)
+    intensity: true           # <--- CRITICAL FIX (Python line 21 says True)
+    support_motor_dtr: true   # Keep true to power the motor
+    angle_max: 180.0          # Match Python
+    angle_min: -180.0         # Match Python
+    range_max: 16.0           # Match Python (was 12.0)
+    range_min: 0.02           # Match Python (was 0.1)
+    frequency: 10.0           # Match Python
+    invalid_range_is_inf: false

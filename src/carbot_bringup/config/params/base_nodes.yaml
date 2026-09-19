@@ -1,0 +1,58 @@
+# =============================================================================
+# base_nodes.yaml -- parameters for the REUSED base-repo nodes.
+# Values copied verbatim from src/risabot_automode/config/params.yaml (base
+# commit 44d61d9) so behaviour is identical. Calibration overlays may override
+# the keys marked (calib). Do not edit the base package's own params.yaml.
+# =============================================================================
+servo_controller:
+  ros__parameters:
+    servo_steer_id: 4
+    servo_center: 90                # (calib step 7)
+    servo_range_left: 50            # (calib step 7)
+    servo_range_right: 70           # (calib step 7)
+    speed_levels: [15, 25, 40, 60, 100]
+    default_speed_index: 1
+    joy_timeout: 0.8
+    auto_cmd_timeout: 0.4
+    unlock_requires_neutral: true
+    unlock_neutral_threshold: 0.15
+    hw_heartbeat_sec: 1.0
+    hw_fail_limit: 5
+    ticks_per_meter: 1050.0         # (calib step 6)
+    drive_motor_index: 0
+    odom_distance_scale: 1.0        # (calib step 6)
+    odom_yaw_scale: 1.0             # (calib step 6)
+    encoder_jump_threshold: 800.0
+    max_linear_velocity: 1.0
+    max_angular_velocity: 6.0
+    odom_reverse_polarity: false
+    wheel_base: 0.14                # base value. V4 measured 0.216 -> reconcile in step 6/7
+    steering_max_deg: 50.0
+    odom_vel_alpha: 0.3
+    odom_velocity_deadband: 0.02
+    publish_loop_stats: true
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    auto_right_steer_boost: 1.3     # kept: the tunnel follower was tuned with it
+
+tunnel_wall_follower:
+  ros__parameters:
+    target_center_dist: 0.0
+    forward_speed: 0.12
+    kp: 5.0
+    kd: 0.5
+    kp_heading: 1.0
+    kd_heading: 0.1
+    max_angular: 2.0
+    output_alpha: 0.4
+    left_angle_min: 0.26
+    left_angle_max: 2.09
+    right_angle_min: -2.09
+    right_angle_max: -0.26
+    lidar_angle_offset: 3.1416      # (calib step 5 may refine)
+    min_wall_points: 5
+    max_wall_dist: 0.80
+    ransac_threshold: 0.03
+    ransac_iterations: 50
+    tunnel_hysteresis_frames: 3
+    heartbeat_sec: 0.2

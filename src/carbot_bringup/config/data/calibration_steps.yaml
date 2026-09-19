@@ -1,0 +1,59 @@
+# =============================================================================
+# calibration_steps.yaml -- the guided calibration wizard (calibrate.launch.py)
+#
+# Steps run IN ORDER. A step cannot be skipped until it passes, unless the user
+# picks "keep previous value" (only offered when a previous session has a PASS
+# for that step). Each result is written to:
+#   <data_root>/calibration/<YYYYmmdd_HHMMSS>/<NN>_<id>.yaml
+# plus summary.yaml (pass/fail per step) and, when relevant, params_overlay.yaml
+# (ROS parameter overrides) and data-file copies (cameras.yaml, uwb.yaml).
+# <data_root>/calibration/ACTIVE holds the session race mode loads. Older
+# sessions are never deleted, so the user can roll back.
+#
+# tab: diagnostic tab shown live next to the instructions.
+# writes: which files/keys the step produces.
+# =============================================================================
+version: 1
+steps:
+  - {index: 1,  id: sensor_health,     title: Sensor health check,           required: true,  tab: health,
+     writes: [summary only],
+     pass: {camera_rate_min_ratio: 0.8, lidar_min_hz: 6.0, odom_min_hz: 15.0, imu_min_hz: 15.0, uwb_min_hz: 7.0, battery_min_v: 10.8}}
+  - {index: 2,  id: camera_identity,   title: Camera identity (front / left / right), required: true, tab: perception,
+     writes: [cameras.yaml roles, cameras.yaml roles_confirmed],
+     pass: {user_confirmed: true}}
+  - {index: 3,  id: camera_intrinsics, title: Camera intrinsics (per camera), required: true, tab: perception,
+     writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file],
+     per_sensor: [astra, ov5647, imx219],
+     target: {type: chessboard, inner_corners: [9, 6], square_m: 0.025},
+     pass: {min_views: 15, max_reprojection_px: 0.8}}
+  - {index: 4,  id: extrinsics_ipm,    title: 3-camera extrinsics + IPM,     required: true,  tab: perception,
+     writes: [cameras.yaml mounts, cameras.yaml extrinsics_calibrated],
+     target: {type: floor_markers, layout: docs/images/calib_mat.png},
+     pass: {max_ground_error_m: 0.02, max_seam_error_m: 0.03}}
+  - {index: 5,  id: lidar_camera,      title: LiDAR-camera alignment,        required: true,  tab: memory_lidar,
+     writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset],
+     pass: {max_bearing_error_deg: 2.0}}
+  - {index: 6,  id: imu_odometry,      title: IMU + wheel odometry,          required: true,  tab: localization,
+     writes: [params_overlay servo_controller.ticks_per_meter, servo_controller.odom_distance_scale, servo_controller.imu_*_offset],
+     procedure: {straight_run_m: 2.0, spin_test: true},
+     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0}}
+  - {index: 7,  id: servo_steering,    title: Servo centre + steering limits, required: true, tab: control,
+     writes: [params_overlay servo_controller.servo_center, servo_range_left, servo_range_right, command_owner.steering.*, vehicle.min_turning_radius_m],
+     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}}
+  - {index: 8,  id: speed_pid,         title: Speed PID,                     required: true,  tab: control,
+     writes: [params_overlay command_owner.speed_pid.*, command_owner.feedforward.*],
+     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}}
+  - {index: 9,  id: venue_thresholds,  title: Venue colour / lighting thresholds, required: true, tab: perception,
+     writes: [params_overlay road_perception.classify.*, bpu_detector.thresholds.*],
+     pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}}
+  - {index: 10, id: uwb_survey,        title: UWB anchor survey + uwb_calib offsets, required: true, tab: localization,
+     writes: [uwb.yaml anchors, uwb.yaml anchors_surveyed, uwb.yaml offsets_calibrated],
+     procedure: {tool: tools/uwb/uwb_calib.py, seconds: 20, min_distance_from_anchor_m: 1.0, verify_spot: true},
+     pass: {max_verify_error_m: 0.15, all_anchors_seen: true}}
+  - {index: 11, id: map_uwb_alignment, title: Map-to-UWB alignment lap,      required: true,  tab: map,
+     writes: [uwb.yaml track_to_venue],
+     procedure: {drive: slow_manual_lap, mode: calibrate_only},
+     pass: {max_rms_m: 0.20}}
+  - {index: 12, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
+     writes: [practice/<challenge>.yaml],
+     pass: {}}

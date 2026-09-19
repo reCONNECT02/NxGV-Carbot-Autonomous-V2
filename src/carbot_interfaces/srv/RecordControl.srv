@@ -1,0 +1,8 @@
+# GUI / race_supervisor -> run_recorder. /carbot/record/control
+string action           # START | STOP | LIST | PLAY | PAUSE | SEEK | STOP_PLAY
+string argument         # bag name or seek time
+---
+bool ok
+string message
+string bag_path
+string[] bags

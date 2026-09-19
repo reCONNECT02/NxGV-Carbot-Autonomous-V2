@@ -1,0 +1,61 @@
+# =============================================================================
+# control.yaml -- BLOCK 14 (safety), BLOCK 15 (command owner) + actuator mapping
+# (block 16 interface to the base servo_controller), tunnel bridge.
+# =============================================================================
+safety_monitor:
+  ros__parameters:
+    rate_hz: 50.0
+    camera_max_age_s: 0.45          # V4: camera age above 0.45 s stops motion
+    motion_max_age_s: 0.2           # V4: motion sensor stale
+    local_sigma_max_m: 0.035        # V4: local uncertainty exceeds clearance budget
+    road_min_connected_cells: 60    # V4: no usable camera road mask ...
+    road_low_dwell_s: 0.5           # ... for more than 0.5 s
+    tunnel_front_half_angle_rad: 0.14
+    tunnel_min_clearance_m: 0.24    # V4: tunnel forward LiDAR clearance below 24 cm
+    lidar_max_age_s: 0.35
+    hold_on_branch_conflict: true   # unresolved route identity holds (V4 branchCheck)
+    # UWB is deliberately NOT a safety input: a WiFi dropout must never stop the car.
+
+command_owner:
+  ros__parameters:
+    rate_hz: 50.0
+    request_expiry_s: 0.2           # V4 expiryMs 200 -> WATCHDOG
+    safety_max_age_s: 0.1           # stale SafetyStatus = SAFETY STOP
+    mission_max_age_s: 0.5
+    # ---- Speed control (calibration step 8). Output = base duty (linear.x * 255 = PWM).
+    speed_pid:
+      kp: 0.8
+      ki: 0.4
+      kd: 0.0
+      integral_limit: 0.15
+    feedforward:
+      duty_per_mps: 1.0             # UNCALIBRATED placeholder
+      static_duty: 0.08             # UNCALIBRATED: duty needed to start rolling
+    duty_max: 0.40
+    duty_reverse_max: 0.30
+    duty_slew_per_s: 1.5
+    stop_speed_mps: 0.004
+    # ---- Steering map (calibration step 7).
+    # steer_rad follows REP-103 (+ = left). The base servo_controller turns RIGHT
+    # for positive angular.z (and multiplies right by auto_right_steer_boost), so:
+    #   angular.z = steer_sign * steer_rad / (left_max_rad or right_max_rad)
+    steering:
+      steer_sign: -1.0
+      left_max_rad: 0.495           # atan(wheelbase / min_radius); measured in step 7
+      right_max_rad: 0.495
+      trim_rad: 0.0
+      angular_limit: 1.0            # |angular.z| sent to the servo controller
+    output_topic: /cmd_vel_auto     # base servo_controller input (unchanged name)
+
+tunnel_bridge:
+  ros__parameters:
+    # Wraps the UNCHANGED base tunnel_wall_follower: forwards its /tunnel_cmd_vel
+    # as a MotionRequest(source=TUNNEL) only while mission logic has TUNNEL active.
+    cmd_max_age_s: 0.3
+    # Steering comes from the base node (normalized angular.z -> steer_rad with the
+    # inverse of command_owner.steering, so the servo sees the same value as in the
+    # base stack). Speed:
+    #   zone      -> speed zone cap from mission.yaml (tunnel 0.075 m/s), via speed PID
+    #   base_duty -> the base node's linear.x passed straight through as duty
+    speed_source: zone
+    zone_speed_mps: 0.075

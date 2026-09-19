@@ -1,0 +1,85 @@
+# =============================================================================
+# mission.yaml  -- BLOCKS 07 + 08 (global route, mission logic, speed zones)
+#
+# The GLOBAL PLANNER (block 07) plans each leg through its checkpoints with the
+# V4 hybrid-A* (core.js hybridPlan, clockwise roundabout constraint) and fixes
+# the roundabout exits from `roundabout_visits`. The boom-gate detector NEVER
+# changes the route: if the detected gate state disagrees with the planned exit,
+# mission logic logs a GateRouteMismatch and shows a GUI warning (see
+# gate_route_check). The route source is this file only.
+#
+# Poses: track frame, metres, radians. Checkpoints are V4 buildMission values.
+# =============================================================================
+version: 1
+
+legs:
+  - id: leg1_to_traffic_light          # V4 routes[0]
+    description: Start bottom-right, lane change, roundabout exit 1, tunnel, boom gate, hill, bump, stop at light
+    clockwise: true
+    checkpoints:
+      - {name: roundabout_south, x: 2.40, y: 0.22, a: 3.1415927}
+      - {name: roundabout_exit1, x: 1.10, y: 0.75, a: 3.1415927}
+      - {name: left_straight,    x: 0.25, y: 2.50, a: 1.5707963}
+      - {name: top_left,         x: 1.20, y: 4.75, a: 0.0}
+      - {name: top_right,        x: 5.80, y: 4.75, a: 0.0}
+      - {name: traffic_light,    ref: light_goal_pose}   # track_map.yaml
+    end_behaviour: traffic_light_stop    # stop; continue only after OBSERVED green
+  - id: leg2_to_parking                # V4 routes[1]
+    description: Right side down, lane change 2, roundabout exit 2, approach parking
+    clockwise: true
+    checkpoints:
+      - {name: right_side,        x: 6.75, y: 2.20, a: -1.5707963}
+      - {name: lane_change_2,     x: 5.90, y: 1.30, a: 3.1415927}
+      - {name: roundabout_south,  x: 2.40, y: 0.22, a: 3.1415927}
+      - {name: roundabout_exit2,  x: 2.40, y: 1.80, a: 1.5707963}
+      - {name: parking_handoff,   x: 2.40, y: 3.02, a: 1.5707963}
+    end_behaviour: parking_handoff       # local parking planner (block 11) takes over
+    parking_bay: parallel_bay            # challenge 10
+  - id: leg3_perpendicular             # NOT IN V4: challenge 11 (leave parallel bay, park perpendicular)
+    enabled: false                       # phase 4/5 designs it; V4 stops after parallel parking
+    clockwise: true
+    checkpoints: []
+    end_behaviour: parking_handoff
+    parking_bay: perpendicular_bay
+
+# Planned roundabout exits (block 07 decides; the gate never overrides).
+roundabout_visits:
+  - {visit: 1, leg: leg1_to_traffic_light, exit: exit1_west_to_tunnel,  via_checkpoint: roundabout_exit1}
+  - {visit: 2, leg: leg2_to_parking,       exit: exit2_north_to_parking, via_checkpoint: roundabout_exit2}
+
+gate_route_check:
+  gate: roundabout_exit1                 # track_map.yaml boom_gates.<name>
+  # Rulebook text: gate OPEN -> exit to tunnel, CLOSED -> exit to parking.
+  expected_exit_when_open: exit1_west_to_tunnel
+  expected_exit_when_closed: exit2_north_to_parking
+  observe_within_m: 0.90                 # only compare while approaching this gate
+  min_confidence: 0.60
+  action: log_and_warn                   # the only supported action (route never changes)
+
+# Challenge 4 stop / proceed uses the detector (never a timer).
+challenge4_gate:
+  gate: challenge4
+  hold_distance_m: 0.53                  # V4 gateDistance < .53 -> GATE HOLD unless OPEN observed
+  commit_distance_m: 0.65                # V4: OPEN observed within .65 m past gate x -> commit
+  hold_x_margin_m: 0.30
+  observation_expiry_s: 0.40
+
+traffic_light:
+  stop_distance_m: 0.35                  # V4 lightDistance < .35
+  observation_expiry_s: 0.40
+  # Timer-based logic is PROHIBITED (rulebook 7.3 ch.7): proceed only on an observed GREEN.
+
+transitions:
+  mission_hold_s: 1.0                    # V4 hold after mission 1 completes
+  parking_start_hold_s: 0.5
+  gear_change_hold_s: 0.4
+
+# Speed zones (V4 app.js step). Speeds are caps; the lowest applicable wins.
+speed_zones:
+  - {name: tunnel,        max_speed_mps: 0.075, region: {type: track_feature, feature: tunnel}}
+  - {name: roundabout,    max_speed_mps: 0.055, region: {type: circle, x: 2.40, y: 0.80, radius_m: 0.90}}
+  - {name: hill_and_bump, max_speed_mps: 0.090, region: {type: rect, x0: 1.80, x1: 4.80, y0: 4.45, y1: 99.0}}
+  # NOT IN V4 (V4 slows from the prior map only). Rulebook ch.6 requires slowing on the detected sign.
+  - {name: bump_sign,     max_speed_mps: 0.060, region: {type: detection, detection: speed_bump_sign, hold_m: 0.60}}
+  - {name: low_guidance,  max_speed_mps: 0.075, region: {type: condition, condition: corridor_observed_lt_3}}
+  - {name: stale_camera,  max_speed_mps: 0.035, region: {type: condition, condition: camera_age_gt_0p25}}

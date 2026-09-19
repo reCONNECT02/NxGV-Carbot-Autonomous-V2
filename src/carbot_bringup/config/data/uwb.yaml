@@ -1,0 +1,42 @@
+# =============================================================================
+# uwb.yaml  -- UWB system (docs/reference/UWB_Handoff.md). Feeds BLOCK 06 only.
+# UWB NEVER reaches the servo and never writes the local (block 05) estimate.
+#
+# Calibration writes a session copy: step 10 -> anchors[].xyz_m + range_offset_m
+#                                     step 11 -> track_to_venue
+# =============================================================================
+version: 1
+
+agent:                        # micro-ROS agent on the RDK (built in ~/uros_ws against /opt/ros/humble)
+  transport: udp4
+  port: 8888                  # TagConfig.h MICROROS_AGENT_PORT
+  domain_id: 1                # TagConfig.h MICROROS_DOMAIN_ID; the TAG chooses the domain
+  localhost_only: 0           # MUST be 0: the agent ignores ROS_LOCALHOST_ONLY=1 and hides the topic
+  workspace: /home/sunrise/uros_ws
+  ros_setup: /opt/ros/humble/setup.bash
+  verbosity: 4                # -v4 (use 6 only to dump packets)
+
+tag:
+  input_topic: /uwb3/input_json   # std_msgs/String JSON, BEST_EFFORT, ~10 Hz
+  name: RISA01
+  mac: "7D:17:22:EA:82:60:3B:9C"
+  z_m: 0.0                    # tag antenna height (only the difference to anchor z matters)
+  omit_older_than_ms: 400     # firmware OMIT_OLDER_THAN_MS
+
+# Venue frame: origin anchor 1782, +x towards 1786, +y from 1786 towards 1783.
+# UWB_Handoff.md section 10 gives the layout in cm; stored here in METRES.
+# range_offset_m = median(measured - true) from tools/uwb/uwb_calib.py (step 10),
+# subtracted from every raw range. 0.0 = NOT calibrated (raw ranges read ~1 m long).
+anchors:
+  - {id: "1782", xyz_m: [0.00, 0.00, 0.00], range_offset_m: 0.0}
+  - {id: "1786", xyz_m: [7.50, 0.00, 0.00], range_offset_m: 0.0}
+  - {id: "1783", xyz_m: [7.50, 4.83, 0.00], range_offset_m: 0.0}
+anchors_surveyed: false       # re-survey on site (MARii, Day 1)
+offsets_calibrated: false
+
+# track (prior map) -> venue (anchors): p_venue = R(yaw) * p_track + [x, y]
+track_to_venue:
+  x_m: 0.0
+  y_m: 0.0
+  yaw_deg: 0.0
+  aligned: false              # calibration step 11 (alignment lap)

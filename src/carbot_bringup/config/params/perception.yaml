@@ -1,0 +1,57 @@
+# =============================================================================
+# perception.yaml -- BLOCK 03 (warp -> stitch -> road mask), BLOCK 04 (memory),
+# camera preview/record streams for the GUI and rosbag.
+# Values = V4 perception.js / vehicle.js LocalMemory unless marked.
+# =============================================================================
+road_perception:
+  ros__parameters:
+    process_rate_hz: 8.0            # V4 capture 8 Hz (simulator setting, re-measure on RDK)
+    input_downscale_width: 480      # NOT V4: decimate 960x544 before warping to save CPU
+    grid:
+      cells: 100                    # n x n
+      resolution_m: 0.018
+      origin_x_m: -0.65             # V4 x0
+      origin_y_m: -0.90             # V4 y0
+    stitch:
+      min_depth_m: 0.025            # skip points behind / too close to the camera
+      weight_eps: 0.1               # weight = 1 / (eps + depth^2); strongest view wins per cell
+      border_px: 2
+      exclude_body: true            # cells under the car footprint are never observed
+    classify:                       # tuned per venue in calibration step 9
+      road_max_luma: 105            # (r+g+b)/3 < 105 ...
+      road_max_chroma: 50           # ... and max-min < 50 -> ROAD
+      paint_min_luma: 190           # > 190 -> PAINT
+    seed:                           # 4-connected growth starts from observed road near the car
+      x_min_m: -0.25
+      x_max_m: 0.45
+      half_width_m: 0.19
+    camera_timeout_s: 0.45
+    debug:
+      enabled: true                 # debug images are only encoded while someone subscribes
+      jpeg_quality: 70
+      max_rate_hz: 4.0
+
+local_memory:
+  ros__parameters:
+    resolution_m: 0.025
+    drive_max_age_s: 3.0            # guidance.evidence default maxAge
+    corridor_max_age_s: 2.0
+    parking_max_age_s: 24.0         # bay-edge lookup during parking
+    display_max_age_s: 25.0
+    max_cells: 26000                # expire() when exceeded
+    uncertainty_base_m: 0.004       # uncertainty = base + per_m * distance since observation
+    uncertainty_per_m: 0.006
+    uncertainty_limit_m: 0.02
+    publish_rate_hz: 5.0
+
+camera_preview:
+  ros__parameters:
+    # GUI previews are published ONLY while a subscriber exists (tab open).
+    preview_width: 320
+    preview_max_fps: 5.0
+    preview_jpeg_quality: 60
+    # Record streams feed the rosbag (raw 960x544 bgr8 x3 would saturate the SD card).
+    record_enabled: true
+    record_width: 480
+    record_max_fps: 10.0
+    record_jpeg_quality: 70

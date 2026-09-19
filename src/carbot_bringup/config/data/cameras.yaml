@@ -1,0 +1,70 @@
+# =============================================================================
+# cameras.yaml  -- BLOCK 02 cameras (driver config, roles, extrinsics)
+#
+# Physical sensors follow docs/reference/Camera_Setup.md EXACTLY:
+#   OV5647 -> MIPI channel 2 -> /cam_ov5647/image_raw
+#   IMX219 -> MIPI channel 0 -> /cam_imx219/image_raw
+#   both 960x544 bgr8 ~30 fps; image_width/height ALWAYS set explicitly
+#   mipi_cam runs as ROOT (the launch uses the sudo wrapper, see SETUP.md)
+#
+# Calibration writes a copy of this file into the session folder:
+#   step 2 -> roles + roles_confirmed      step 3 -> intrinsics_file per sensor
+#   step 4 -> mounts (extrinsics) + ipm     step 5 -> lidar_to_camera
+# =============================================================================
+version: 1
+
+sensors:
+  astra:
+    driver: astra_camera
+    launch_file: astra_mini.launch.py      # base repo launch, reused unchanged
+    image_topic: /camera/color/image_raw
+    width: 640
+    height: 480
+    encoding: rgb8
+    expected_hz: 30.0
+    intrinsics_file: ""                    # calibration step 3
+  ov5647:
+    driver: mipi_cam
+    namespace: /cam_ov5647
+    channel: 2
+    image_width: 960
+    image_height: 544
+    image_topic: /cam_ov5647/image_raw
+    encoding: bgr8
+    expected_hz: 30.0
+    hardware: "OV5647 Rev1.3, MIPI host 2, I2C bus 4, addr 0x36"
+    intrinsics_file: ""
+  imx219:
+    driver: mipi_cam
+    namespace: /cam_imx219
+    channel: 0
+    image_width: 960
+    image_height: 544
+    image_topic: /cam_imx219/image_raw
+    encoding: bgr8
+    expected_hz: 30.0
+    hardware: "IMX219 v2.1, MIPI host 0, I2C bus 6, addr 0x10"
+    intrinsics_file: ""
+
+# Role -> sensor. front is always the Astra Pro. Which MIPI camera is left and
+# which is right is NOT known yet: calibration step 2 shows the feeds, the user
+# confirms (or swaps), and only then roles_confirmed becomes true.
+roles:
+  front: astra
+  left_rear: ov5647          # UNCONFIRMED default
+  right_rear: imx219         # UNCONFIRMED default
+roles_confirmed: false       # race mode refuses to arm while false
+
+# Extrinsics in base_link (rear-axle centre on the ground, +x fwd, +y left).
+# Defaults = V4 scene.js makeCameras (provisional mounts). yaw: 0 = forward.
+# pitch_down: downward tilt. hfov_deg is ASSUMED until step 3 gives intrinsics.
+mounts:
+  front:      {x_m: 0.225, y_m:  0.000, z_m: 0.18, yaw_deg:    0.0, pitch_down_deg: 25.0, roll_deg: 0.0, hfov_deg: 100.0}
+  left_rear:  {x_m: 0.015, y_m:  0.071, z_m: 0.15, yaw_deg:  135.0, pitch_down_deg: 50.0, roll_deg: 0.0, hfov_deg: 100.0}
+  right_rear: {x_m: 0.015, y_m: -0.071, z_m: 0.15, yaw_deg: -135.0, pitch_down_deg: 50.0, roll_deg: 0.0, hfov_deg: 100.0}
+extrinsics_calibrated: false
+
+# Step 5 result: LiDAR scan points projected into the front camera.
+lidar_to_camera:
+  calibrated: false
+  yaw_offset_deg: 0.0

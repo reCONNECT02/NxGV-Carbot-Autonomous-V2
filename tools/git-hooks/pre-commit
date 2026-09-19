@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Refuses commits that contain secrets. Install once per clone:
+#   git config core.hooksPath tools/git-hooks
+set -u
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+# 1. The real tag config must never be committed.
+if echo "$staged" | grep -qE '(^|/)TagConfig\.h$'; then
+  echo "pre-commit: TagConfig.h is staged. It holds the WiFi password."
+  echo "            Commit TagConfig.example.h instead: git rm --cached <path>/TagConfig.h"
+  fail=1
+fi
+
+# 2. Obvious credentials in any staged text file. Files reviewed by a human
+#    (e.g. base-repo tools that only hold the public RDK default login) are
+#    listed in tools/git-hooks/secret-allowlist.txt, one path per line.
+ALLOW="tools/git-hooks/secret-allowlist.txt"
+for f in $staged; do
+  if [[ -f "$ALLOW" ]] && grep -qxF "$f" "$ALLOW"; then continue; fi
+  [[ -f "$f" ]] || continue
+  case "$f" in *.bin|*.png|*.jpg|*.jpeg|*.pdf|*.zip|*.rar|*.so|*.a) continue ;; esac
+  [[ "$f" == tools/git-hooks/pre-commit ]] && continue
+  if git show ":$f" | grep -nEi \
+      '(WIFI_PASS(WORD)?|WIFI_PSK|password)[[:space:]]*(\[\])?[[:space:]]*=[[:space:]]*"[^"<]{4,}"' \
+      | grep -viE 'YOUR_|CHANGE_ME|<|example|placeholder' ; then
+    echo "pre-commit: possible password in $f (line above). Use a placeholder."
+    fail=1
+  fi
+  if git show ":$f" | grep -nE '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+    echo "pre-commit: token / private key in $f."
+    fail=1
+  fi
+done
+exit $fail

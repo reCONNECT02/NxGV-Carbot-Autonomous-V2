@@ -1,0 +1,27 @@
+# =============================================================================
+# gui.yaml -- Browser GUI (extends the base dashboard in phase 7).
+# The GUI must not starve autonomy: every stream is throttled and downscaled,
+# and each tab's topics are subscribed ONLY while that tab is open.
+# =============================================================================
+gui_server:
+  ros__parameters:
+    host: 0.0.0.0
+    port: 8080                      # same port as the base dashboard (not run alongside)
+    lazy_subscriptions: true
+    idle_unsubscribe_s: 5.0         # drop a tab's subscriptions this long after it closes
+    max_clients: 4
+    state_rate_hz: 10.0             # main tab
+    map_rate_hz: 2.0
+    lidar_rate_hz: 5.0
+    candidates_rate_hz: 5.0
+    health_rate_hz: 1.0
+    image_max_fps: 5.0
+    image_width: 320
+    image_jpeg_quality: 60
+    race:
+      diagnostics_read_only: true
+      tuning_enabled: false
+      diagnostic_rate_scale: 0.5    # halve diagnostic rates while racing
+      estop_label: "E-STOP - counts as manual intervention = 0 marks"
+    calibrate:
+      tuning_enabled: true

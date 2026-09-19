@@ -1,0 +1,165 @@
+# =============================================================================
+# planning.yaml -- BLOCKS 01, 07-13. Values = V4 core.js / app.js / guidance.js /
+# local-planner.js / recovery.js / vehicle.js Controller.
+# Route checkpoints, exits and speed zones are in data/mission.yaml.
+# =============================================================================
+track_map_server:
+  ros__parameters:
+    publish_period_s: 0.0           # 0 = latched once (transient local)
+
+global_planner:
+  ros__parameters:
+    step_m: 0.04                    # hybridPlan forward step
+    reverse_step_m: 0.025
+    xy_resolution_m: 0.012
+    reverse_xy_resolution_m: 0.014
+    heading_bins: 180
+    curvature_fractions: [-1.0, -0.5, 0.0, 0.5, 1.0]   # x 1/r
+    max_nodes: 120000
+    planning_margin_m: 0.008
+    reverse_planning_margin_m: 0.006
+    goal_tolerance_m: 0.025
+    goal_tolerance_rad: 0.035
+    heuristic_heading_weight: 0.12
+    heuristic_inflation: 1.25
+    cost_reverse_factor: 1.07
+    cost_curvature: 0.0003
+    cost_direction_change: 0.08
+    cost_curvature_change: 0.001
+    cost_clearance: 0.003
+    clearance_floor_m: 0.006
+    clockwise_ring_inner_m: 0.40
+    clockwise_ring_outer_m: 0.80
+    clockwise_min_dot: -0.05
+    cache_routes: true              # plan once at startup, cache in the data root
+
+mission_logic:
+  ros__parameters:
+    rate_hz: 20.0
+    # Tunnel: base LiDAR trigger (/tunnel_detected) AND the route position.
+    tunnel_requires_route_zone: true
+    tunnel_zone_margin_m: 0.30
+    detection_max_age_s: 0.5
+    announce_banners: true
+
+corridor:
+  ros__parameters:
+    rate_hz: 5.0
+    horizon_m: 0.9
+    sample_every: 5
+    edge_search_min_m: 0.055
+    edge_search_max_m: 0.26
+    edge_search_step_m: 0.009
+    inside_probe_m: 0.027
+    edge_correction_m: 0.0045
+    lane_width_min_m: 0.23
+    lane_width_max_m: 0.38
+    prior_search_max_m: 0.32
+    prior_search_step_m: 0.005
+    shift_clamp_m: 0.025
+    shift_gain: 0.5
+    guide_points: 120
+    live_max_age_s: 0.30
+    evidence_max_age_s: 2.0
+    camera_corridor_min_observed: 3
+    lane_locked_min_observed: 3     # main tab paints lane lines blue
+    branch:
+      near_radius_m: 0.35
+      lane_change_margin_m: 0.1
+      look_min_m: 0.16
+      look_max_m: 0.40
+      min_points: 5
+      min_seen_ratio: 0.35
+      agree_min_m: 0.25
+      agree_sigma_mult: 3.0
+      visual_rank_min: 0.25
+
+local_planner:
+  ros__parameters:
+    rate_hz: 5.0
+    offsets_m: [-0.06, -0.04, -0.02, -0.008, 0.0, 0.008, 0.02, 0.04, 0.06]
+    rollout_steps: 55
+    rollout_ds_m: 0.01
+    lookahead_m: 0.095
+    rollout_speed_min_mps: 0.055
+    rollout_speed_max_mps: 0.12
+    check_every: 2
+    body_pad_m: 0.005
+    cost:
+      tracking: 900.0
+      unseen_memory: 0.006
+      unseen: 0.014
+      clearance: 0.00012
+      clearance_floor_m: 0.003
+      low_margin_m: 0.03
+      low_margin_weight: 140.0
+      offset: 25.0
+      outside: 1000.0
+      paint: 0.07
+      unknown: 0.003
+    paint_block_steps: 20
+    paint_block_cells: 5
+    relaxed_retry: true             # second pass with limits.line_tolerance_m
+    problem_tracking_error_m: 0.10
+
+parking_planner:
+  ros__parameters:
+    docking_tails_m: [0.15, 0.12, 0.08]
+    docking_step_m: 0.006
+    handoff_extensions_m: [-0.10, -0.05, 0.05, 0.10, 0.15, 0.20]
+    clearance_pad_m: 0.003
+    fallback_max_nodes: 250000
+    fallback_bounds: [-0.02, 2.65, 1.70, 3.70]   # x0 offset from bay, x1, y0, y1
+    reeds_shepp_families: 12
+    bay_observation:
+      edge_tolerance_m: 0.035
+      min_samples: 3
+    cusp_replan_distance_m: 0.025
+    max_cusp_replans: 4
+    heading_tolerance_rad: 0.045
+    max_corrections: 2
+    parked_heading_tolerance_rad: 0.05
+    parked_margin_m: 0.008
+
+recovery_planner:
+  ros__parameters:
+    enabled: true                   # V4 training override; judges: recovery must stay in section
+    reverse_max_m: 0.20
+    reverse_min_m: 0.03
+    problem_dwell_s: 0.45
+    max_attempts: 3
+    reset_attempts_after_m: 0.15
+    rescan_period_s: 2.0
+    align_s: 0.4
+    max_goals: 5
+    first_goal_m: 0.25
+    goal_spacing_m: 0.15
+    goal_clearance_m: 0.008
+    max_cost: 1.6
+    cost_reverse_weight: 0.7
+    cost_outside_weight: 150.0
+    rear_evidence_min_ratio: 0.55
+    lidar_max_age_s: 0.35
+    camera_max_age_s: 0.30
+    lookahead_points: 18
+    stopped_speed_mps: 0.003
+
+path_tracker:
+  ros__parameters:
+    rate_hz: 30.0
+    lookahead_road_m: 0.095
+    lookahead_parking_m: 0.065
+    speed_base_mps: 0.07            # v = min(vmax, base + curve / (1 + |curv|))
+    speed_curve_mps: 0.07
+    end_slowdown_gain: 1.8
+    end_min_speed_mps: 0.018
+    gear_window_points: 14
+    gear_window_speed_mps: 0.025
+    gear_stop_speed_mps: 0.006
+    gear_hold_s: 0.35
+    arrive_road_m: 0.020
+    arrive_parking_m: 0.006
+    arrive_lateral_road_m: 0.025
+    arrive_lateral_parking_m: 0.060
+    search_back_points: 12
+    search_ahead_points: 130
