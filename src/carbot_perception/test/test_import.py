@@ -1,7 +1,8 @@
 """Every node module must import and expose main() (no ROS graph needed)."""
 import importlib
 
-MODULES = ['road_perception', 'local_memory', 'camera_preview']
+MODULES = ['road_perception', 'local_memory', 'camera_preview', 'calib_intrinsics',
+           'calib_extrinsics']
 
 
 def test_modules_import():

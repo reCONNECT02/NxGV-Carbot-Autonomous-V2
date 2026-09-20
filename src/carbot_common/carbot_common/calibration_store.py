@@ -93,3 +93,52 @@ def data_override(session: Optional[str], filename: str) -> Optional[str]:
         return None
     path = os.path.join(session, 'data', filename)
     return path if os.path.isfile(path) else None
+
+
+# --------------------------------------------------------------------------- writers
+# Used by the phase-2 calibration tools (calib_intrinsics / calib_extrinsics)
+# and by the phase-8 wizard, so both write the same layout.
+def new_session_name() -> str:
+    import datetime
+    return datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+
+def open_session(root: str, name: str = '') -> str:
+    """Absolute path of session `name` (created if missing); a new timestamped
+    session when name is empty."""
+    name = name or new_session_name()
+    path = name if os.path.isabs(name) else os.path.join(calibration_dir(root), name)
+    os.makedirs(os.path.join(path, 'data'), exist_ok=True)
+    return path
+
+
+def write_yaml(path: str, doc: Dict) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=None)
+    os.replace(tmp, path)
+
+
+def update_step(session: str, step_id: str, status: str, file: str = '', **extra) -> Dict:
+    """Record one step result in summary.yaml (other steps untouched)."""
+    import datetime
+    summary = load_summary(session) or {}
+    summary.setdefault('session', os.path.basename(os.path.normpath(session)))
+    summary.setdefault('created', datetime.datetime.now().isoformat(timespec='seconds'))
+    entry = {'status': status, 'time': datetime.datetime.now().isoformat(timespec='seconds')}
+    if file:
+        entry['file'] = file
+    entry.update(extra)
+    summary.setdefault('steps', {})[step_id] = entry
+    write_yaml(os.path.join(session, 'summary.yaml'), summary)
+    return summary
+
+
+def set_active(root: str, session: str) -> None:
+    """Make `session` the one race mode loads (older sessions are kept)."""
+    name = os.path.basename(os.path.normpath(session))
+    d = calibration_dir(root)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, 'ACTIVE'), 'w', encoding='utf-8') as f:
+        f.write(name + '\n')

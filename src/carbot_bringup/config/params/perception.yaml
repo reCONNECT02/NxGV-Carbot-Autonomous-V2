@@ -30,6 +30,8 @@ road_perception:
       enabled: true                 # debug images are only encoded while someone subscribes
       jpeg_quality: 70
       max_rate_hz: 4.0
+      overlay_width: 320            # road mask drawn on each camera's footage (GUI perception tab)
+      bev_scale: 3                  # top-down debug images: 100 cells -> 300 px
 
 local_memory:
   ros__parameters:
@@ -43,6 +45,10 @@ local_memory:
     uncertainty_per_m: 0.006
     uncertainty_limit_m: 0.02
     publish_rate_hz: 5.0
+    window_m: 3.0                   # published memory grid: 3 m x 3 m around the car (120 x 120 cells)
+    ring_cells: 256                 # storage ring 256 x 2.5 cm = 6.4 m (older cells are overwritten)
+    odom_history_s: 2.0             # /odom kept to look up the pose at each camera timestamp
+    max_stamp_gap_s: 0.15           # skip a grid if /odom has nothing within this of its stamp
 
 camera_preview:
   ros__parameters:
@@ -55,3 +61,4 @@ camera_preview:
     record_width: 480
     record_max_fps: 10.0
     record_jpeg_quality: 70
+    check_period_s: 1.0             # how often to (un)subscribe raw cameras by viewer count

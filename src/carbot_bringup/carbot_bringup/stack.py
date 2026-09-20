@@ -131,23 +131,27 @@ def launch_cfg(share_dir: str, session: Optional[str]) -> Dict:
 
 
 def camera_static_tfs(cameras: Dict) -> List[Dict]:
-    """base_link -> cam_<role> transforms from cameras.yaml mounts.
+    """base_link -> cam_<role> -> cam_<role>_optical transforms from cameras.yaml mounts.
 
-    Frame convention: cam_<role> is a BODY-style frame (+x along the optical
-    axis, +y left, +z up). pitch_down > 0 tilts +x towards the ground, which is
-    a positive rotation about +y. The optical frame (z forward) is added in
-    phase 2 together with the intrinsics.
+    cam_<role> is a BODY-style frame (+x along the optical axis, +y left,
+    +z up). pitch_down > 0 tilts +x towards the ground, which is a positive
+    rotation about +y (R = Rz(yaw) Ry(pitch_down) Rx(roll), the same as
+    carbot_perception.camera_model.Mount). cam_<role>_optical is the ROS
+    optical frame (+z forward, +x right, +y down) the intrinsics refer to.
     """
     import math
     out = []
     for role, m in (cameras.get('mounts') or {}).items():
         out.append({
-            'child': f'cam_{role}',
+            'parent': 'base_link', 'child': f'cam_{role}',
             'x': float(m['x_m']), 'y': float(m['y_m']), 'z': float(m['z_m']),
             'yaw': math.radians(float(m['yaw_deg'])),
             'pitch': math.radians(float(m['pitch_down_deg'])),
             'roll': math.radians(float(m.get('roll_deg', 0.0))),
         })
+        out.append({'parent': f'cam_{role}', 'child': f'cam_{role}_optical',
+                    'x': 0.0, 'y': 0.0, 'z': 0.0,
+                    'yaw': -math.pi / 2, 'pitch': 0.0, 'roll': -math.pi / 2})
     return out
 
 
@@ -256,7 +260,10 @@ def build(context, mode: str):
             cmd = root_helper_cmd(cfg, share, 'run_mipi_cam.sh', [
                 s['namespace'], str(s['channel']), str(s['image_width']), str(s['image_height']),
                 domain, str(int(agent['localhost_only'])), shm_xml,
-                s.get('intrinsics_file', '') or ''], is_root)
+                # Intrinsics are NOT handed to mipi_cam: road_perception applies
+                # them itself (fisheye model included); a driver-side
+                # rectification would undistort twice.
+                ''], is_root)
             proc = ExecuteProcess(cmd=cmd, name=f'mipi_cam_{s["name"]}', output='screen')
             delay = float(cfg.get('delay_drivers_s', 0.0)) + i * float(cfg.get('delay_mipi_second_s', 2.0))
             drivers.append(TimerAction(period=delay, actions=[proc]) if delay > 0 else proc)
@@ -273,7 +280,8 @@ def build(context, mode: str):
 
     # static TFs (TF is always started: no hardware involved)
     t = cfg['carbot_tf'].get('base_to_laser', [0.0, 0.0, 0.12, 0.0, 0.0, 0.0])
-    tfs = [dict(child='laser_frame', x=t[0], y=t[1], z=t[2], yaw=t[3], pitch=t[4], roll=t[5])]
+    tfs = [dict(parent='base_link', child='laser_frame', x=t[0], y=t[1], z=t[2],
+                yaw=t[3], pitch=t[4], roll=t[5])]
     tfs += camera_static_tfs(cameras)
     for tf in tfs:
         drivers.append(Node(
@@ -282,7 +290,7 @@ def build(context, mode: str):
             arguments=['--x', str(tf['x']), '--y', str(tf['y']), '--z', str(tf['z']),
                        '--yaw', str(tf['yaw']), '--pitch', str(tf['pitch']),
                        '--roll', str(tf['roll']),
-                       '--frame-id', 'base_link', '--child-frame-id', tf['child']]))
+                       '--frame-id', tf['parent'], '--child-frame-id', tf['child']]))
     later += drivers
 
     # calibrate mode only: joystick for manual driving during calibration steps

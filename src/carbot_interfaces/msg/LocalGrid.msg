@@ -13,6 +13,8 @@ uint32 cols             # along +y
 uint8[] kind            # rows*cols, row-major
 uint8[] grown           # 1 = connected road region (4-neighbour growth from seed)
 uint8[] source_camera   # 0 none, 1 front, 2 left_rear, 3 right_rear (block 03 only)
-float32[] age_s         # block 04 only: age of each cell
+float32[] age_s         # block 04 only: age of each cell (-1 = empty)
+float32[] travel_since_m  # block 04 only: distance driven since the cell was seen (-1 = empty);
+                          # V4 uncertainty = uncertainty_base_m + uncertainty_per_m * travel_since_m
 float32 coverage        # fraction of cells seen by any camera
 uint32 connected        # number of grown road cells

@@ -7,8 +7,8 @@ never rename silently.
 | # | Phase | Status |
 |---|---|---|
 | 1 | Repo skeleton, packages, launch files, YAML structure | **done** |
-| 2 | Perception (3 cameras, IPM, stitch, road mask) | next |
-| 3 | Localization + UWB | |
+| 2 | Perception (3 cameras, IPM, stitch, road mask) | **done** |
+| 3 | Localization + UWB | next |
 | 4 | Global planner, mission logic, local planner | |
 | 5 | Parking, recovery, command owner + safety | |
 | 6 | Detectors (traffic light, boom gate, bump sign) | |
@@ -73,3 +73,51 @@ never rename silently.
 | `battery_min_v: 10.8` — confirm for the pack. | ops.yaml | 8 |
 | Challenge 4 boom-gate position is provisional — MEASURE ON SITE. | mission.yaml | 4/8 |
 | `bpu_detector.model_path` is relative to the repo root; resolve against the workspace in phase 6. | detectors.yaml | 6 |
+
+
+## Phase 2 — what exists
+
+* **`carbot_perception/camera_model.py`** (pure, unit tested): intrinsics in ROS
+  camera_info format with `plumb_bob`, `rational_polynomial` or `equidistant`
+  (fisheye); mounts in `base_link` (rear-axle centre on the ground),
+  `R = Rz(yaw) Ry(pitch_down) Rx(roll)` = the static TF. Ideal pinhole reproduces
+  V4 `projectionMap` exactly. Before step 3, an ideal pinhole from
+  `mounts.<role>.hfov_deg` is used (node reports WARN).
+* **Block 03 `road_perception`**: per camera one `cv2.remap` (fisheye correction +
+  top-down warp in one step) onto the V4 grid (100 x 1.8 cm, x -0.65..1.15,
+  y -0.9..0.9); strongest view per cell (1/(0.1+depth^2)) among fresh cameras;
+  V4 luma/chroma classes; 4-neighbour growth from the seed box. Publishes
+  `LocalGrid` on `/carbot/perception/road_grid` (base_link, camera stamp).
+  Debug JPEGs (warped, stitched, mask, overlay/<role>) only while subscribed.
+* **Block 04 `local_memory`**: V4 LocalMemory in the **odom** frame (`/odom`),
+  pose interpolated at each grid's stamp; publishes a 3 m window with `age_s`
+  and `travel_since_m`.
+* **`camera_preview`**: subscribes to a raw camera only while its preview or
+  record topic has a subscriber.
+* **Calibration steps 3 and 4** as CLI tools (the phase-8 wizard calls the same
+  functions in `calib_core.py`): `calib_intrinsics --sensor <s>` (auto view
+  capture, fits standard + fisheye, keeps the better, needs all 9 image
+  regions covered) and `calib_extrinsics` (floor boards from
+  `calibration_steps.yaml`, pose per camera, ground error, CAD delta,
+  `ipm_check.png`). Results go to the session layout of `calibration_store`.
+* **Boards**: `tools/calibration/make_boards.py` -> `docs/calibration/*.pdf`;
+  layout picture `tools/calibration/draw_mat.py` -> `docs/images/calib_mat.png`.
+
+### Phase 2 contract changes
+* `LocalGrid.msg`: + `float32[] travel_since_m` (additive).
+* `local_memory` subscribes `/odom` instead of `local_pose` (memory must live in
+  an uncorrected frame, as V4 `estimate.odom`).
+* `cameras.yaml`: CAD mounts (z + 0.0325 m), default roles left=imx219,
+  right=ov5647 (still unconfirmed), role keys unchanged.
+* Static TFs: + `cam_<role>_optical`.
+* `mipi_cam` no longer receives `intrinsics_file` (would undistort twice).
+* New YAML keys: `road_perception.debug.{overlay_width,bev_scale}`,
+  `local_memory.{window_m,ring_cells,odom_history_s,max_stamp_gap_s}`,
+  `camera_preview.check_period_s`, step 3 `pass.min_coverage_cells`,
+  step 3/4 `tool`, step 4 `target.boards` and warn limits.
+* `calibration_store`: + `open_session`, `write_yaml`, `update_step`, `set_active`.
+
+### For phase 3+
+* Memory consumers apply their own age limit (drive 3 s, corridor 2 s, parking
+  24 s) and the uncertainty rule `base + per_m * travel_since_m <= limit`.
+* The road grid is in base_link at the newest camera stamp used.

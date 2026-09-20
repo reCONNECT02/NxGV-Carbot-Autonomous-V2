@@ -22,6 +22,8 @@ setup(
             'road_perception = carbot_perception.road_perception:main',
             'local_memory = carbot_perception.local_memory:main',
             'camera_preview = carbot_perception.camera_preview:main',
+            'calib_intrinsics = carbot_perception.calib_intrinsics:main',
+            'calib_extrinsics = carbot_perception.calib_extrinsics:main',
         ],
     },
 )

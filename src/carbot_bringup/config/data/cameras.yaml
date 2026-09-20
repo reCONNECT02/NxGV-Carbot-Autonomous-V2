@@ -10,6 +10,9 @@
 # Calibration writes a copy of this file into the session folder:
 #   step 2 -> roles + roles_confirmed      step 3 -> intrinsics_file per sensor
 #   step 4 -> mounts (extrinsics) + ipm     step 5 -> lidar_to_camera
+# Phase 2 tools: ros2 run carbot_perception calib_intrinsics / calib_extrinsics
+# intrinsics_file: absolute path of a ROS camera_info yaml (plumb_bob or
+# equidistant = fisheye). It is read by road_perception, NOT passed to mipi_cam.
 # =============================================================================
 version: 1
 
@@ -47,21 +50,31 @@ sensors:
     intrinsics_file: ""
 
 # Role -> sensor. front is always the Astra Pro. Which MIPI camera is left and
-# which is right is NOT known yet: calibration step 2 shows the feeds, the user
-# confirms (or swaps), and only then roles_confirmed becomes true.
+# which is right is NOT known for sure: calibration step 2 shows the feeds, the
+# user confirms (or swaps), and only then roles_confirmed becomes true.
+# Default from the team (phase 2): the OV5647 is the RIGHT camera.
+# (Role keys keep the phase-1 names left_rear / right_rear although the MIPI
+# cameras now face sideways; renaming them would change topic names.)
 roles:
   front: astra
-  left_rear: ov5647          # UNCONFIRMED default
-  right_rear: imx219         # UNCONFIRMED default
+  left_rear: imx219          # UNCONFIRMED default
+  right_rear: ov5647         # UNCONFIRMED default
 roles_confirmed: false       # race mode refuses to arm while false
 
-# Extrinsics in base_link (rear-axle centre on the ground, +x fwd, +y left).
-# Defaults = V4 scene.js makeCameras (provisional mounts). yaw: 0 = forward.
-# pitch_down: downward tilt. hfov_deg is ASSUMED until step 3 gives intrinsics.
+# Extrinsics in base_link: rear-axle centre ON THE GROUND, +x fwd, +y left, +z up.
+# yaw: 0 = forward, +90 = left. pitch_down: downward tilt. roll: about the optical axis.
+# Nominal values = team CAD (phase 2). CAD origin is the rear axle at axle
+# height, so z_m = CAD z + 0.0325 (wheel diameter 65 mm / 2).
+#   front (Astra RGB lens) CAD (216.992, 11.390, 61.046) mm, 2-3 deg down
+#   right (OV5647)         CAD (114.474, -65.360, 108.103) mm, 5 deg back, 10 deg down
+#   left  (IMX219)         mirror of right
+# Calibration step 4 replaces these with MEASURED mounts (floor boards).
+# hfov_deg is only used until step 3 gives real intrinsics (ASSUMED values:
+# Astra Pro RGB ~60 deg; MIPI lenses unknown, 70 deg placeholder).
 mounts:
-  front:      {x_m: 0.225, y_m:  0.000, z_m: 0.18, yaw_deg:    0.0, pitch_down_deg: 25.0, roll_deg: 0.0, hfov_deg: 100.0}
-  left_rear:  {x_m: 0.015, y_m:  0.071, z_m: 0.15, yaw_deg:  135.0, pitch_down_deg: 50.0, roll_deg: 0.0, hfov_deg: 100.0}
-  right_rear: {x_m: 0.015, y_m: -0.071, z_m: 0.15, yaw_deg: -135.0, pitch_down_deg: 50.0, roll_deg: 0.0, hfov_deg: 100.0}
+  front:      {x_m: 0.2170, y_m:  0.0114, z_m: 0.0935, yaw_deg:   0.0, pitch_down_deg:  2.5, roll_deg: 0.0, hfov_deg: 60.0}
+  left_rear:  {x_m: 0.1145, y_m:  0.0654, z_m: 0.1406, yaw_deg:  95.0, pitch_down_deg: 10.0, roll_deg: 0.0, hfov_deg: 70.0}
+  right_rear: {x_m: 0.1145, y_m: -0.0654, z_m: 0.1406, yaw_deg: -95.0, pitch_down_deg: 10.0, roll_deg: 0.0, hfov_deg: 70.0}
 extrinsics_calibrated: false
 
 # Step 5 result: LiDAR scan points projected into the front camera.

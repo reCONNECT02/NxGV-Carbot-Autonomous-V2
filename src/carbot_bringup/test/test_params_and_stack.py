@@ -74,8 +74,11 @@ def test_mipi_sensors_follow_camera_setup():
 def test_camera_tfs():
     cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
     tfs = {t['child']: t for t in stack.camera_static_tfs(cams)}
-    assert set(tfs) == {'cam_front', 'cam_left_rear', 'cam_right_rear'}
-    assert tfs['cam_front']['pitch'] > 0
+    assert set(tfs) == {'cam_front', 'cam_left_rear', 'cam_right_rear', 'cam_front_optical',
+                        'cam_left_rear_optical', 'cam_right_rear_optical'}
+    assert tfs['cam_front']['pitch'] > 0 and tfs['cam_front']['parent'] == 'base_link'
+    assert tfs['cam_left_rear_optical']['parent'] == 'cam_left_rear'
+    assert tfs['cam_left_rear']['yaw'] > 0 > tfs['cam_right_rear']['yaw']
 
 
 def _make_session(root, name, overlay=None, cameras=None, active=True):

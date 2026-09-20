@@ -24,11 +24,23 @@ steps:
   - {index: 3,  id: camera_intrinsics, title: Camera intrinsics (per camera), required: true, tab: perception,
      writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file],
      per_sensor: [astra, ov5647, imx219],
+     tool: ros2 run carbot_perception calib_intrinsics --sensor <sensor>,
      target: {type: chessboard, inner_corners: [9, 6], square_m: 0.025},
-     pass: {min_views: 15, max_reprojection_px: 0.8}}
+     pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}}
   - {index: 4,  id: extrinsics_ipm,    title: 3-camera extrinsics + IPM,     required: true,  tab: perception,
      writes: [cameras.yaml mounts, cameras.yaml extrinsics_calibrated],
-     target: {type: floor_markers, layout: docs/images/calib_mat.png},
+     tool: ros2 run carbot_perception calib_extrinsics,
+     # Floor chessboards (tools/calibration/make_boards.py -> A3 PDF, 6x4 inner
+     # corners, 50 mm squares, 350 x 250 mm). centre_m = centre of the printed board in base_link
+     # (rear-axle centre on the ground); yaw_deg = direction of the board's long
+     # side. Defaults are where the CAD mounts should see each board fully; if a
+     # board is cut off, move it and MEASURE the new centre.
+     target: {type: floor_markers, layout: docs/images/calib_mat.png,
+              warn_nominal_offset_m: 0.03, warn_nominal_angle_deg: 5.0,
+              boards: [
+                {name: front, roles: [front],      inner_corners: [6, 4], square_m: 0.050, centre_m: [0.62, 0.0],   yaw_deg: 90.0},
+                {name: left,  roles: [left_rear],  inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, 0.47],  yaw_deg: 0.0},
+                {name: right, roles: [right_rear], inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, -0.47], yaw_deg: 0.0}]},
      pass: {max_ground_error_m: 0.02, max_seam_error_m: 0.03}}
   - {index: 5,  id: lidar_camera,      title: LiDAR-camera alignment,        required: true,  tab: memory_lidar,
      writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset],
