@@ -121,3 +121,14 @@ never rename silently.
 * Memory consumers apply their own age limit (drive 3 s, corridor 2 s, parking
   24 s) and the uncertainty rule `base + per_m * travel_since_m <= limit`.
 * The road grid is in base_link at the newest camera stamp used.
+
+## Repo housekeeping (after phase 2)
+
+* `tools/map/map_builder.py`, `tools/map/mission_planner.py`: the team's
+  offline block-01/07 tools, committed unchanged. They write `track_map.yaml` /
+  `mission.yaml` **version 2**; the stack's `config/data/` files are still the
+  phase-1 **version 1** layout. Phase 4 decides how the two meet (see
+  `tools/map/README.md`). The VS Code sandbox world also reads version 1.
+* `docs/reference/`: rulebook PDF, RISA Bot spec sheet, V4 simulator sources
+  (`v4_simulator/*.js`, the reference every port follows), GUI reference
+  screenshots (`gui/`, the look of the main tab for phase 7).
