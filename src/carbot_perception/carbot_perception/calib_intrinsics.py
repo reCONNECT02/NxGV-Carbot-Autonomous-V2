@@ -35,42 +35,54 @@ STEP = 'camera_intrinsics'
 RESULT = '03_camera_intrinsics.yaml'
 
 
-def collect_live(topic, cols, rows, target_views, min_cells, out_dir, timeout, novelty, still_px):
-    grab = FrameGrabber({'cam': topic})
+def collect_views(next_frame, cols, rows, target_views, min_cells, out_dir, timeout, novelty,
+                  still_px, label='camera', on_frame=None):
+    """Auto-capture loop, independent of where frames come from.
+
+    next_frame() -> BGR image or None (timeout). on_frame(img, corners, state,
+    collector) is called for every frame (the VS Code sandbox shows a window);
+    returning False stops early."""
     col = None
     prev = None
     t_end = time.monotonic() + timeout
     last_print = 0.0
+    while time.monotonic() < t_end:
+        img = next_frame()
+        if img is None:
+            print(f'[calib] no frames from {label} (is the camera running?)')
+            continue
+        if col is None:
+            col = ViewCollector(img.shape[1], img.shape[0], novelty)
+            print(f'[calib] {label}: {img.shape[1]}x{img.shape[0]}')
+        c = detect_chessboard(img, cols, rows, fast=True)
+        still = c is not None and prev is not None and \
+            float(np.mean(np.linalg.norm(c - prev, axis=1))) < still_px
+        prev = c
+        added = still and col.offer(c, cols, rows)
+        if added:
+            cv2.imwrite(os.path.join(out_dir, f'view_{len(col.views):02d}.png'), img)
+        state = 'NEW VIEW' if added else ('board: hold still' if c is not None and not still
+                                           else 'board seen' if c is not None else 'no board')
+        if on_frame is not None and on_frame(img, c, state, col) is False:
+            break
+        now = time.monotonic()
+        if added or now - last_print > 2.0:
+            last_print = now
+            cv2.imwrite(os.path.join(out_dir, 'live.jpg'), draw_corners(img, c, cols, rows, c is not None))
+            print(f'[calib] views {len(col.views)}/{target_views}  coverage '
+                  f'{col.coverage_cells()}/9  ({state})\n{col.coverage_text()}')
+        if len(col.views) >= target_views and col.coverage_cells() >= min_cells:
+            break
+    return col
+
+
+def collect_live(topic, cols, rows, target_views, min_cells, out_dir, timeout, novelty, still_px):
+    grab = FrameGrabber({'cam': topic})
     try:
-        while time.monotonic() < t_end:
-            img = grab.next('cam', 2.0)
-            if img is None:
-                print(f'[calib] no frames on {topic} (is the camera running?)')
-                continue
-            if col is None:
-                col = ViewCollector(img.shape[1], img.shape[0], novelty)
-                print(f'[calib] {topic}: {img.shape[1]}x{img.shape[0]}')
-            c = detect_chessboard(img, cols, rows, fast=True)
-            still = c is not None and prev is not None and \
-                float(np.mean(np.linalg.norm(c - prev, axis=1))) < still_px
-            prev = c
-            added = still and col.offer(c, cols, rows)
-            if added:
-                cv2.imwrite(os.path.join(out_dir, f'view_{len(col.views):02d}.png'), img)
-            now = time.monotonic()
-            if added or now - last_print > 2.0:
-                last_print = now
-                cv2.imwrite(os.path.join(out_dir, 'live.jpg'),
-                            draw_corners(img, c, cols, rows, c is not None))
-                state = 'NEW VIEW' if added else ('board: hold still' if c is not None and not still
-                                                   else 'board seen' if c is not None else 'no board')
-                print(f'[calib] views {len(col.views)}/{target_views}  coverage '
-                      f'{col.coverage_cells()}/9  ({state})\n{col.coverage_text()}')
-            if len(col.views) >= target_views and col.coverage_cells() >= min_cells:
-                break
+        return collect_views(lambda: grab.next('cam', 2.0), cols, rows, target_views, min_cells,
+                             out_dir, timeout, novelty, still_px, label=topic)
     finally:
         grab.close()
-    return col
 
 
 def collect_files(folder, cols, rows, novelty):

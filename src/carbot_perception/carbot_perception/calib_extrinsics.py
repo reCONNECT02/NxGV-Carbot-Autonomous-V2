@@ -228,7 +228,7 @@ def main(argv=None):
     for p in problems:
         print(f'  ! {p}')
     if ipm:
-        print(f'[calib] check {ipm}: red outlines = where the boards really are')
+        print(f'[calib] check {ipm}: red = true inner-corner rectangle of each board')
     return 0 if all_ok else 1
 
 

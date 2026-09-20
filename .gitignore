@@ -10,7 +10,10 @@ __pycache__/
 dist/
 .eggs/
 .pytest_cache/
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.DS_Store
 
@@ -34,3 +37,6 @@ tools/bpu_model/calibration_data/
 tools/bpu_model/model_output/main_graph_subgraph_0.html
 datasets/**/images/
 datasets/**/labels/
+
+# ---- VS Code sandbox output ----
+tools/sandbox/out/

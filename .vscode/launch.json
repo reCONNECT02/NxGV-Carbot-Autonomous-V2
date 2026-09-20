@@ -1,0 +1,87 @@
+{
+  // Phase-2 node sandboxes (no ROS). Run with F5 after picking one in the
+  // Run and Debug panel. Setup: tools/sandbox/README.md
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "03 road_perception: start line (synthetic)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
+      "cwd": "${workspaceFolder}", "args": []
+    },
+    {
+      "name": "03 road_perception: drive the demo route",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
+      "cwd": "${workspaceFolder}", "args": ["--drive"]
+    },
+    {
+      "name": "03 road_perception: drive 6 cm off-centre, 8 deg yaw error",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
+      "cwd": "${workspaceFolder}", "args": ["--drive", "--offset", "0.06", "--yaw-error", "8"]
+    },
+    {
+      "name": "03 road_perception: fisheye lens WITHOUT calibration (mismatch)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
+      "cwd": "${workspaceFolder}", "args": ["--lens", "fisheye", "--mismatch", "--drive"]
+    },
+    {
+      "name": "03 road_perception: recorded videos (edit paths)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--source", "video", "--video", "front=C:/videos/front.mp4",
+               "left_rear=C:/videos/left.mp4", "right_rear=C:/videos/right.mp4"]
+    },
+    {
+      "name": "04 local_memory: demo route",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_local_memory.py",
+      "cwd": "${workspaceFolder}", "args": []
+    },
+    {
+      "name": "04 local_memory: bad odometry (3% scale, 1.5 deg/s drift)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_local_memory.py",
+      "cwd": "${workspaceFolder}", "args": ["--drift-pct", "3", "--yaw-drift-deg-s", "1.5"]
+    },
+    {
+      "name": "camera_preview: synthetic",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_camera_preview.py",
+      "cwd": "${workspaceFolder}", "args": []
+    },
+    {
+      "name": "camera_preview: laptop webcam as front",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_camera_preview.py",
+      "cwd": "${workspaceFolder}", "args": ["--source", "webcam", "--webcam", "front=0"]
+    },
+    {
+      "name": "step 3 intrinsics: synthetic fisheye lens",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_calib_intrinsics.py",
+      "cwd": "${workspaceFolder}", "args": ["--synth", "fisheye"]
+    },
+    {
+      "name": "step 3 intrinsics: live laptop webcam",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_calib_intrinsics.py",
+      "cwd": "${workspaceFolder}", "args": ["--webcam", "0"]
+    },
+    {
+      "name": "step 4 extrinsics: synthetic floor boards",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_calib_extrinsics.py",
+      "cwd": "${workspaceFolder}", "args": ["--synth"]
+    },
+    {
+      "name": "step 4 extrinsics: synthetic, fisheye side lenses, 4 deg mount error",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_calib_extrinsics.py",
+      "cwd": "${workspaceFolder}", "args": ["--synth", "--lens", "fisheye", "--perturb-deg", "4"]
+    }
+  ]
+}
