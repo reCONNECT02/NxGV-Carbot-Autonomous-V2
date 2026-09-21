@@ -102,12 +102,21 @@ class PlanResult:
 
 def hybrid_plan(start, goal, course, g, cfg: PlanCfg, reverse: bool = False,
                 bounds: Optional[Sequence[float]] = None, clockwise: bool = False,
-                max_nodes: Optional[int] = None) -> PlanResult:
-    """Faithful port of V4 core.js hybridPlan (without the reverse Reeds-Shepp
-    connector, which only parking uses; block 11 has its own).
+                max_nodes: Optional[int] = None, connector=None,
+                time_budget_s: Optional[float] = None) -> PlanResult:
+    """Faithful port of V4 core.js hybridPlan.
 
     start/goal: (x, y, a). Returns the path sampled at step/4 (1 cm forward).
+
+    connector (phase 5, parking fallback only): V4 reverse mode tries a live
+    Reeds-Shepp connection every 12th expansion within 0.75 m of the goal.
+    connector(pose) -> N x 4 path (starting at pose) or None. Default None =
+    the phase-4 behaviour. time_budget_s: stop the search after this long
+    (the V4 node limit still applies).
     """
+    import time as _time
+    t_end = None if time_budget_s is None else _time.monotonic() + float(time_budget_s)
+    conn = None
     step = cfg.reverse_step if reverse else cfg.step
     xy = cfg.reverse_xy if reverse else cfg.xy
     angles = cfg.angles
@@ -138,6 +147,13 @@ def hybrid_plan(start, goal, course, g, cfg: PlanCfg, reverse: bool = False,
         exp += 1
         _, _, nid = heapq.heappop(heap)
         px, py, pa, pg, _, pdir, pk = nodes[nid]
+        if t_end is not None and (exp & 63) == 0 and _time.monotonic() > t_end:
+            break
+        if reverse and connector is not None and math.hypot(px - gx, py - gy) < 0.75 and exp % 12 == 0:
+            r = connector((px, py, pa))
+            if r is not None and len(r):
+                best, conn = nid, np.asarray(r, float)[:, :4]
+                break
         if math.hypot(px - gx, py - gy) < goal_xy and abs(wrap(pa - ga)) < goal_a:
             best = nid
             break
@@ -193,6 +209,8 @@ def hybrid_plan(start, goal, course, g, cfg: PlanCfg, reverse: bool = False,
         for j in range(1, 5):
             x, y, h = bicycle(a[0], a[1], a[2], b[5] * step * j / 4, b[6])
             out.append((x, y, h, b[5]))
+    if conn is not None:
+        return PlanResult(np.vstack([np.asarray(out, float), conn]), exp, 'Hybrid search + Reeds-Shepp connection')
     return PlanResult(np.asarray(out, float), exp, 'Validated sampled full footprint')
 
 

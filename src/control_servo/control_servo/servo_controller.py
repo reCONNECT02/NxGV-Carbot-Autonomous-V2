@@ -36,6 +36,7 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, String, Float32
 
 from Rosmaster_Lib import Rosmaster
+from . import carbot_extension  # Carbot phase 5: battery + arm topics (additive, see that file)
 from .topics import (
     AUTO_CMD_VEL_TOPIC,
     AUTO_MODE_TOPIC,
@@ -298,6 +299,7 @@ class ServoControllerV9(Node):
 
         self.get_logger().info("🎮 V9 Ready: Right Stick X = Steer | LB/RB = Challenges | A = Record/Stop | X = Play/Stop Playback")
         self._update_dash()
+        carbot_extension.attach(self)  # Carbot phase 5: /carbot/vehicle/battery_v + /carbot/vehicle/arm
 
     def _update_param_cache(self) -> None:
         """Cache frequently used parameters to avoid per-loop lookups."""

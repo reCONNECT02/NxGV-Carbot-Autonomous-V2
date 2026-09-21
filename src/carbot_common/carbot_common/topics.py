@@ -107,6 +107,10 @@ PARKING_CANDIDATES = '/carbot/parking/candidates'       # CandidateArray
 PARKING_PATH = '/carbot/parking/path'                   # nav_msgs/Path
 PARKING_BAY_JSON = '/carbot/parking/bay'                # String JSON (observed bay)
 RECOVERY_CANDIDATES = '/carbot/recovery/candidates'     # CandidateArray
+# phase 5: block 11 session state (String JSON, latched): state, stage, goal, done,
+# replans, observation. mission_logic completes a manoeuvre piece on done.
+PARKING_STATE = '/carbot/parking/state'
+RECOVERY_STATE = '/carbot/recovery/state'              # String JSON: state, reason, attempts (GUI)
 
 REQUEST_SOURCES = ('ROAD', 'TUNNEL', 'PARKING', 'RECOVERY')
 
@@ -121,6 +125,11 @@ SAFETY_STATUS = '/carbot/safety/status'                 # SafetyStatus
 OWNER_STATE = '/carbot/owner/state'                     # CommandOwnerState
 VEHICLE_BATTERY = '/carbot/vehicle/battery_v'           # Float32 (servo_controller extension, phase 5)
 VEHICLE_ARM = '/carbot/vehicle/arm'                     # Bool -> servo_controller AUTO (extension, phase 5)
+# phase 5: calibration steps 7/8 drive the car THROUGH the command owner (one writer).
+# MotionRequest, source CALIBRATION (m/s + rad through the speed PID and steering map)
+# or CALIBRATION_RAW (speed_mps = base duty, steer_rad = base angular.z). Accepted
+# only when command_owner.mode == calibrate and the race is not armed.
+CALIBRATION_REQUEST = '/carbot/calibration/request'
 
 # Detectors
 DETECTIONS = '/carbot/detections'                       # DetectionArray

@@ -34,6 +34,9 @@ servo_controller:
     odom_frame_id: "odom"
     base_frame_id: "base_link"
     auto_right_steer_boost: 1.3     # kept: the tunnel follower was tuned with it
+    # Carbot extension (control_servo/carbot_extension.py, phase 5; additive)
+    carbot_arm_enabled: true        # /carbot/vehicle/arm from the command owner -> AUTO / MANUAL
+    carbot_battery_rate_hz: 1.0     # /carbot/vehicle/battery_v
 
 tunnel_wall_follower:
   ros__parameters:

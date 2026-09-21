@@ -67,12 +67,38 @@ steps:
          sign and scale (block 05 needs yaw to increase turning left)."
     procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4}
     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0, max_spin_error_pct: 3.0}
-  - {index: 7,  id: servo_steering,    title: Servo centre + steering limits, required: true, tab: control,
-     writes: [params_overlay servo_controller.servo_center, servo_range_left, servo_range_right, command_owner.steering.*, vehicle.min_turning_radius_m],
-     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}}
-  - {index: 8,  id: speed_pid,         title: Speed PID,                     required: true,  tab: control,
-     writes: [params_overlay command_owner.speed_pid.*, command_owner.feedforward.*],
-     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}}
+  - index: 7
+    id: servo_steering
+    title: Servo centre + steering limits
+    required: true
+    tab: control
+    tool: ros2 run carbot_control calib_steering
+    instructions: >-
+      The car drives ITSELF slowly through the command owner (calibrate mode only):
+      clear flat floor of about 1.5 x 2.5 m, e-stop ready. It drives a full-LEFT
+      circle and a full-RIGHT circle until the IMU has turned circle_yaw_deg (radius
+      each side), then straight runs of straight_run_m; the residual curve sets the
+      integer servo_center live until the drift passes. If the servo strains or buzzes
+      at full lock, lower servo_range_left / right in the Tuning tab and redo.
+      Needs step 6 (IMU yaw) first.
+    # writes command_owner.steering (+ the tunnel_bridge copy); servo_range_* stay as set
+    writes: [params_overlay servo_controller.servo_center, command_owner.steering.*, tunnel_bridge.command_owner_steering.*, vehicle.min_turning_radius_m]
+    procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25}
+    pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
+  - index: 8
+    id: speed_pid
+    title: Speed PID
+    required: true
+    tab: control
+    tool: ros2 run carbot_control calib_speed
+    instructions: >-
+      The car drives ITSELF straight, forward and back alternately (about 1.5 m free
+      ahead and behind), e-stop ready. A duty sweep fits the feedforward (duty =
+      static + per_mps * speed), then closed-loop steps check steady error and
+      overshoot, retuning kp / ki if needed. Needs step 7 first.
+    writes: [params_overlay command_owner.speed_pid.*, command_owner.feedforward.*, tunnel_bridge.command_owner_feedforward.*]
+    procedure: {sweep_duties: [0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.22], step_targets_mps: [0.03, 0.075, 0.15], hold_s: 3.0, steady_s: 1.0, max_runs: 3}
+    pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}
   - {index: 9,  id: venue_thresholds,  title: Venue colour / lighting thresholds, required: true, tab: perception,
      writes: [params_overlay road_perception.classify.*, bpu_detector.thresholds.*],
      pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}}

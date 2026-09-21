@@ -33,9 +33,12 @@ joy_node:
 
 carbot_tf:
   ros__parameters:
-    # base_link -> laser_frame [x, y, z, yaw, pitch, roll]. Base repo value; the
-    # V4 model uses x 0.09 z 0.22. MEASURE and set (calibration step 5).
-    base_to_laser: [0.0, 0.0, 0.12, 0.0, 0.0, 0.0]
+    # base_link -> laser_frame [x, y, z, yaw, pitch, roll]. The V4 model uses x 0.09 z 0.22.
+    # MEASURE and set x/z (calibration step 5).
+    # phase 5: yaw 0 -> pi. The driver runs with reversion: true (scan angle 0 = car REAR);
+    # the base tunnel_wall_follower corrects that with lidar_angle_offset 3.1416. Blocks 10,
+    # 12 and 14 read the mount from this TF, so it must say the same.
+    base_to_laser: [0.0, 0.0, 0.12, 3.14159265, 0.0, 0.0]
 
 # -----------------------------------------------------------------------------
 # carbot_launch -- read by carbot_bringup/stack.py (race + calibrate launches).

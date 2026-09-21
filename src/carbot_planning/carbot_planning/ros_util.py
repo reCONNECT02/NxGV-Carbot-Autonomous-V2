@@ -166,3 +166,66 @@ def evidence_cfg(p) -> EvidenceCfg:
                        unc_base_m=float(p('memory_evidence.uncertainty_base_m')),
                        unc_per_m=float(p('memory_evidence.uncertainty_per_m')),
                        unc_limit_m=float(p('memory_evidence.uncertainty_limit_m')))
+
+
+def scan_hits(scan, pose, mount, max_range: float) -> Optional[np.ndarray]:
+    """LaserScan returns (< max_range) as track-frame points (M x 2), V4
+    obstaclesClear origin. mount = (x, y, yaw) of laser_frame in base_link.
+    Same conversion as local_planner._hits."""
+    if scan is None:
+        return None
+    r = np.asarray(scan.ranges, float)
+    ang = scan.angle_min + np.arange(len(r)) * scan.angle_increment
+    ok = np.isfinite(r) & (r > scan.range_min) & (r < max_range)
+    mx, my, myaw = mount
+    c, sn = math.cos(pose[2]), math.sin(pose[2])
+    ox, oy = pose[0] + mx * c - my * sn, pose[1] + mx * sn + my * c
+    a = pose[2] + myaw + ang[ok]
+    return np.column_stack([ox + r[ok] * np.cos(a), oy + r[ok] * np.sin(a)])
+
+
+class LaserMount:
+    """base_link -> laser_frame from the static TF (looked up once), else the
+    fallback (vehicle.lidar_x_m, 0, 0)."""
+
+    def __init__(self, node, use_tf: bool, base: str, laser: str, fallback):
+        self.mount = tuple(fallback)
+        self.base, self.laser = base, laser
+        self._buf = None
+        if use_tf:
+            from tf2_ros import Buffer, TransformListener
+            self._buf = Buffer()
+            self._listener = TransformListener(self._buf, node)
+
+    def get(self):
+        if self._buf is None:
+            return self.mount
+        try:
+            from rclpy.time import Time
+            tr = self._buf.lookup_transform(self.base, self.laser, Time())
+            q = tr.transform.rotation
+            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            self.mount = (tr.transform.translation.x, tr.transform.translation.y, yaw)
+            self._buf = None
+        except Exception:  # noqa: BLE001  static TF not there yet: keep the fallback
+            pass
+        return self.mount
+
+
+def memory_paint_xy(mem, t_track_odom, now: float, max_age: float) -> np.ndarray:
+    """Track-frame centres of memory PAINT cells younger than max_age (V4
+    bayObservation input: q.kind === 2 && t - q.stamp <= 24)."""
+    from .evidence import PAINT
+    if mem is None or t_track_odom is None:
+        return np.zeros((0, 2))
+    k = mem.kind == PAINT
+    if mem.age is not None:
+        k &= (mem.age >= 0) & (mem.age + max(0.0, now - mem.stamp) <= max_age)
+    r, c = np.nonzero(k)
+    if not len(r):
+        return np.zeros((0, 2))
+    ox = mem.x0 + (r + 0.5) * mem.res
+    oy = mem.y0 + (c + 0.5) * mem.res
+    x, y, a = t_track_odom
+    ca, sa = math.cos(a), math.sin(a)
+    return np.column_stack([x + ox * ca - oy * sa, y + ox * sa + oy * ca])

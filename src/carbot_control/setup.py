@@ -22,6 +22,8 @@ setup(
             'safety_monitor = carbot_control.safety_monitor:main',
             'command_owner = carbot_control.command_owner:main',
             'tunnel_bridge = carbot_control.tunnel_bridge:main',
+            'calib_steering = carbot_control.calib_steering:main',
+            'calib_speed = carbot_control.calib_speed:main',
         ],
     },
 )

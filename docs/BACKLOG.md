@@ -6,7 +6,7 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | # | Request | Phase | Status | Notes |
 |---|---|---|---|---|
 | 1 | Stack reads track_map.yaml + mission.yaml **version 2** (from tools/map), still reads version 1 | 4 | DONE (4) | v2 is the default; v1 kept in `config/data/v4_reference/` |
-| 2 | Leg 3: parallel bay -> perpendicular bay (Challenge 11) | 4 road part, 5 bay exit/entry | DOING | Road part + mission sequencing done (4). Un-park / park manoeuvres = block 11 (5) |
+| 2 | Leg 3: parallel bay -> perpendicular bay (Challenge 11) | 4 road part, 5 bay exit/entry | DONE (5) | Un-park = time-reversed parking search; park perpendicular via docking straight. Sim: both PARKED |
 | 3 | Boom gate open/closed model (front camera) | 6 | WAITING | Team is training its own model; plug it in when supplied. Mission logic reads `DetectionArray.boom_gate_state` (+ confidence) only |
 | 4 | Boom gate positions on the track (challenge4 + roundabout gate) | 4/8 | WAITING | `track_features.yaml boom_gates.*` (provisional, V4/rulebook values). Measure on site |
 | 5 | Show all speed zones on the map tab | 7 | TODO | Zones: `mission_rules.yaml speed_zones`; active zone in `MissionState.speed_zone` |
@@ -16,7 +16,9 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 9 | Map lap must also drive the parking road (parking_spur, parking_corner, perp_row not fitted) | map / 8 | WAITING | `track_map.yaml fit_report`; then re-run `mission_planner.py` |
 | 10 | Measure speed bump, hill, tunnel positions | on site | WAITING | `track_features.yaml` (provisional V4 values) |
 | 11 | After ANY map edit, re-run `mission_planner.py` | always | note | Otherwise block 07 fails: "planned on a different track_map.yaml" |
-| 12 | Parking previews are at the minimum turning radius: block 11 must replan from the actual pose | 5 | TODO | See docs/PHASES.md "For phase 5" |
+| 12 | Parking previews are at the minimum turning radius: block 11 must replan from the actual pose | 5 | DONE (5) | Plans from the pose, cusp + heading replans, `plan_radius_factor 1.08` |
+| 13 | Run calibration steps 7/8 on the car (feedforward / steering are placeholders) | 8 / on site | TODO | `calib_steering`, `calib_speed`; also confirm `vehicle.wheelbase_m` |
+| 14 | Measure planner / parking CPU on the RDK X5 | on site | TODO | Laptop: parking 0.04-0.5 s, recovery search ~0.3 s |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

@@ -108,3 +108,8 @@ def test_closed_loop_full_mission(team):
     assert names.index('LIGHT GREEN') > names.index('TRAFFIC HOLD')
     road = [mg for mg, pc in zip(log.margin, log.piece) if pc in (0, 1)]
     assert min(road) > -0.01                                    # lane driving stays within 1 cm of the edge
+    # phase 5: real block 11 (planned from the pose, one gear section at a time)
+    assert names.count('PARKING PASSED') == 2 and 'MANOEUVRE COMPLETE' in names
+    assert 'PARKING CHECK FAILED' not in names and 'HOLD' not in names
+    manoeuvre = [mg for mg, pc in zip(log.margin, log.piece) if r.pieces[pc]['kind'] == 'manoeuvre']
+    assert min(manoeuvre) > 0.0                                 # parking / un-parking stay on the map

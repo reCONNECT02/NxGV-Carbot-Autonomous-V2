@@ -13,7 +13,8 @@ started, mode is never IDLE again, so the localization reset stays locked.
 
 In : local/global pose, detections, /tunnel_detected, corridor, safety status,
      /carbot/race/armed, /e_stop, global route + route info, the road /
-     parking / recovery requests (arrived flags), parking path, road grid (age)
+     parking / recovery requests (arrived flags), parking path, road grid (age),
+     /carbot/parking/state (phase 5: block 11 DONE completes a manoeuvre piece)
 Out: /carbot/mission/state (latched), /carbot/mission/events,
      /carbot/mission/gate_route_mismatch, /carbot/mission/active_path (latched:
      the active piece; for a manoeuvre, the mission_planner preview or empty)
@@ -40,7 +41,8 @@ from .ros_util import path_from_msg, path_to_msg, pose_of
 REQUIRED = ['rate_hz', 'tunnel_requires_route_zone', 'tunnel_zone_margin_m', 'tunnel_exit_dwell_s',
             'tunnel_trigger_max_age_s', 'detection_max_age_s', 'arrive_check_m', 'parking_arrive_m',
             'request_max_age_s', 'safety_max_age_s', 'banner_hold_s', 'challenge_exit_dwell_s',
-            'reacquire_error_m', 'announce_banners', 'pose_max_age_s', 'data.mission',
+            'reacquire_error_m', 'announce_banners', 'pose_max_age_s', 'parking_requires_planner_done',
+            'data.mission',
             'data.mission_rules', 'data.track_map', 'data.track_features', 'data.challenges',
             'frames.track', 'limits.max_speed_mps']
 
@@ -80,6 +82,8 @@ class MissionLogic(CarbotNode):
         self.sub(MotionRequest, T.request_topic('PARKING'), self._on_park, 10)
         self.sub(MotionRequest, T.request_topic('RECOVERY'), self._on_rec, 10)
         self.sub(Path, T.PARKING_PATH, self._on_parking_path, LATCHED)
+        self.sub(String, T.PARKING_STATE, self._on_parking_state, LATCHED)
+        self.parking_done_keys = set()
         self.sub(LocalGrid, T.ROAD_GRID, self._on_grid, 10)
         self.create_timer(1.0 / max(self.cfg.rate_hz, 1.0), self._tick)
         self.set_status(NodeStatus.WARN, 'WAITING_ROUTE', 'waiting for the global route')
@@ -131,6 +135,16 @@ class MissionLogic(CarbotNode):
     def _on_parking_path(self, m: Path):
         pts = path_from_msg(m)
         self.inp.parking_end = (float(pts[-1, 0]), float(pts[-1, 1])) if len(pts) else None
+
+    def _on_parking_state(self, m: String):
+        """Block 11 DONE, once per manoeuvre session (receive time -> Inputs)."""
+        try:
+            d = json.loads(m.data)
+        except ValueError:
+            return
+        if d.get('done') and d.get('key') not in self.parking_done_keys:
+            self.parking_done_keys.add(d.get('key'))
+            self.inp.parking_done_t = self.now()
 
     def _on_grid(self, m):
         self.inp.camera_t = self.now()

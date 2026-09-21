@@ -19,3 +19,7 @@ RECORD_PLAYBACK_CMD_TOPIC = '/record_playback_cmd'
 ODOM_FRAME = 'odom'
 BASE_FRAME = 'base_link'
 
+
+# Carbot extension (carbot_extension.py, phase 5) - names must match carbot_common.topics
+VEHICLE_BATTERY_TOPIC = '/carbot/vehicle/battery_v'   # Float32, volts
+VEHICLE_ARM_TOPIC = '/carbot/vehicle/arm'             # Bool: True = AUTO, False = MANUAL + stop

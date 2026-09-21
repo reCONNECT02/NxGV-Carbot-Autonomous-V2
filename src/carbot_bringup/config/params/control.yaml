@@ -15,6 +15,12 @@ safety_monitor:
     lidar_max_age_s: 0.35
     hold_on_branch_conflict: true   # unresolved route identity holds (V4 branchCheck)
     # UWB is deliberately NOT a safety input: a WiFi dropout must never stop the car.
+    # phase 5
+    recoverable_branch_reason: Intended branch has insufficient local road evidence  # V4: block 12 problem, not a veto
+    localization_max_age_s: 0.5     # local_status older than this = local_sigma check fails
+    tunnel_zone_margin_m: 0.30      # tunnel check also active inside the map tunnel zone (V4 inTunnel)
+    corridor_max_age_s: 0.5         # stale corridor = no branch hold
+    lidar_mount: tf                 # tf (base_link -> laser_frame) | fallback (yaw pi, reversed mount)
 
 command_owner:
   ros__parameters:
@@ -33,8 +39,9 @@ command_owner:
       static_duty: 0.08             # UNCALIBRATED: duty needed to start rolling
     duty_max: 0.40
     duty_reverse_max: 0.30
-    duty_slew_per_s: 1.5
+    duty_slew_per_s: 1.5            # ramp-up limit; braking / stop is always immediate
     stop_speed_mps: 0.004
+    measured_max_age_s: 0.2         # /odom older than this: feedforward only (safety vetoes anyway)
     # ---- Steering map (calibration step 7).
     # steer_rad follows REP-103 (+ = left). The base servo_controller turns RIGHT
     # for positive angular.z (and multiplies right by auto_right_steer_boost), so:
@@ -46,6 +53,12 @@ command_owner:
       trim_rad: 0.0
       angular_limit: 1.0            # |angular.z| sent to the servo controller
     output_topic: /cmd_vel_auto     # base servo_controller input (unchanged name)
+    # phase 5
+    arm_publish_hz: 2.0             # /carbot/vehicle/arm True repeated while armed (False once on disarm)
+    estop_latch_in_race: true       # race: an e-stop is final (= manual intervention, 0 marks)
+    calibration:                    # calibrate mode only (steps 7/8 via /carbot/calibration/request)
+      max_speed_mps: 0.25
+      duty_max: 0.35
 
 tunnel_bridge:
   ros__parameters:
@@ -59,3 +72,17 @@ tunnel_bridge:
     #   base_duty -> the base node's linear.x passed straight through as duty
     speed_source: zone
     zone_speed_mps: 0.075
+    # phase 5
+    rate_hz: 20.0
+    use_zone_cap: true              # also respect MissionState.zone_max_speed_mps (lowest zone wins)
+    # MUST equal command_owner.steering / .feedforward (exact inverse mapping).
+    # Calibration step 7/8 writes both; test_params_and_stack checks they match.
+    command_owner_steering:
+      steer_sign: -1.0
+      left_max_rad: 0.495
+      right_max_rad: 0.495
+      trim_rad: 0.0
+      angular_limit: 1.0
+    command_owner_feedforward:
+      duty_per_mps: 1.0
+      static_duty: 0.08

@@ -75,6 +75,7 @@ class MissionCfg:
     challenge_exit_dwell_s: float = 1.0
     reacquire_error_m: float = 0.30
     announce_banners: bool = True
+    parking_requires_planner_done: bool = False     # phase 5: YAML true (block 11 decides DONE)
 
     @classmethod
     def from_params(cls, p) -> 'MissionCfg':
@@ -88,7 +89,8 @@ class MissionCfg:
                    banner_hold_s=float(p('banner_hold_s')),
                    challenge_exit_dwell_s=float(p('challenge_exit_dwell_s')),
                    reacquire_error_m=float(p('reacquire_error_m')),
-                   announce_banners=bool(p('announce_banners')))
+                   announce_banners=bool(p('announce_banners')),
+                   parking_requires_planner_done=bool(p('parking_requires_planner_done')))
 
 
 @dataclass
@@ -119,6 +121,7 @@ class Inputs:
     parking_end: Optional[Tuple[float, float]] = None
     recovery_t: float = -1e9
     recovery_arrived: bool = False
+    parking_done_t: float = -1e9        # phase 5: block 11 reported DONE (receive time)
 
 
 @dataclass
@@ -401,6 +404,10 @@ class MissionMachine:
             if p.kind == 'road' and inp.road_arrived and t - inp.road_t < self.cfg.request_max_age_s \
                     and inp.road_t > self.piece_t and len(p.points):
                 done = math.hypot(x - p.points[-1, 0], y - p.points[-1, 1]) < self.cfg.arrive_check_m
+            elif parking and self.cfg.parking_requires_planner_done:
+                # block 11 sequences the gear sections, cusp replans and the heading
+                # correction itself and reports DONE once for this piece
+                done = inp.parking_done_t > self.piece_t
             elif parking and inp.parking_arrived and t - inp.parking_t < self.cfg.request_max_age_s \
                     and inp.parking_t > self.piece_t and inp.parking_end is not None:
                 done = math.hypot(x - inp.parking_end[0], y - inp.parking_end[1]) < self.cfg.parking_arrive_m

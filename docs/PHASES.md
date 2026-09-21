@@ -10,8 +10,8 @@ never rename silently.
 | 2 | Perception (3 cameras, IPM, stitch, road mask) | **done** |
 | 3 | Localization + UWB | **done** |
 | 4 | Global planner, mission logic, local planner | **done** |
-| 5 | Parking, recovery, command owner + safety | next |
-| 6 | Detectors (traffic light, boom gate, bump sign) | |
+| 5 | Parking, recovery, command owner + safety | **done** |
+| 6 | Detectors (traffic light, boom gate, bump sign) | next |
 | 7 | GUI main tab + diagnostic tabs | |
 | 8 | Calibration wizard + race mode | |
 | 9 | Docs | |
@@ -289,3 +289,64 @@ command owner keeps publishing zeros.
 * Not yet measured on the car: roundabout exit tracking (0.6 cm over in the sim), real
   camera corridor stability, planner CPU (laptop: corridor 0.7 ms, local planner 11 ms,
   x2 when the relaxed pass runs; expect ~5x slower on the RDK X5 A55 cores, budget 200 ms at 5 Hz).
+
+## Phase 5 — what exists
+
+| Block | Node | Core (no ROS, tested) | Notes |
+|---|---|---|---|
+| 11 | `carbot_planning/parking_planner` | `parking_core.py`, `reeds_shepp.py` | V4 `parkingPlan` stages (docking 15/12/8 cm -> direct RS -> handoff extensions -> bounded hybrid + live RS connector). **Bit-identical to V4 JS** on the v1 course (stage, points to 1e-7, audit counts). Bay observed from memory tape (start/end/far edges); plans from the ACTUAL pose once stopped; one gear section at a time; cusp replan (> 2.5 cm, <= 4) and heading correction (> 0.045 rad, <= 2) from the pose; publishes DONE on `/carbot/parking/state` |
+| 12 | `carbot_planning/recovery_planner` | `recovery_core.py` | Port of `recovery.js`: BRAKE / WAIT / ALIGN / TRACK, reverse 3-20 cm first then forward, exactly 2 gear sections, cost <= 1.6, paint allowance, LiDAR-clear swept footprint, >= 55 % observed rear road, 3 cm/s, <= 3 attempts. Paused (never bypasses) by a safety veto or mission hold |
+| 13 | `carbot_control/tunnel_bridge` | `owner_core.SteeringMap.to_steer` | Base `tunnel_wall_follower` UNCHANGED; forwards `/tunnel_cmd_vel` as `/carbot/request/tunnel` only while `active_source == TUNNEL`, exact inverse of the owner's steering map |
+| 14 | `carbot_control/safety_monitor` | `safety_core.py` | V4 order: e_stop, motion_fresh 0.2 s, local_sigma 3.5 cm, camera_fresh 0.45 s, route_identity (recoverable reason excluded), road_mask (60 cells, 0.5 s dwell), tunnel_clearance (+-0.14 rad, 0.24 m). UWB is not an input |
+| 15/16 | `carbot_control/command_owner` | `owner_core.py` | Single writer of `/cmd_vel_auto` at 50 Hz. DISARMED -> SAFETY_STOP -> WATCHDOG (200 ms) -> HOLD -> active source. Feedforward + PID speed, slew on ramp-up only, stop immediate. Arms the base via `/carbot/vehicle/arm` |
+| 16 | `control_servo/carbot_extension.py` | `arm_decision()` | Additive: `servo_controller.py` touched by 2 lines. `/carbot/vehicle/arm` -> AUTO / MANUAL+stop; `/carbot/vehicle/battery_v` |
+| cal 7 | `ros2 run carbot_control calib_steering` | `calib_core.py` | Full-lock circles -> left/right_max_rad, min_turning_radius; straight runs -> integer servo_center (live) |
+| cal 8 | `ros2 run carbot_control calib_speed` | `calib_core.py` | Duty sweep -> feedforward least squares; closed-loop verify + retune |
+
+Closed-loop sim (`sim_core.simulate`, real blocks 08/09/10/11/12/13): the full team mission
+completes (~390 s sim): challenges 1-11 in order, both bays PARKED (estimated footprint
+inside, heading error < 1.1 deg), un-park via the time-reversed search, a stuck start
+recovers (13 cm reverse, rejoin). Manoeuvre body margins > 0.
+
+### Contract changes (additions unless marked)
+* topics: `PARKING_STATE` `/carbot/parking/state` (String JSON, latched), `RECOVERY_STATE`
+  `/carbot/recovery/state` (String JSON), `CALIBRATION_REQUEST` `/carbot/calibration/request`
+  (MotionRequest, sources `CALIBRATION` / `CALIBRATION_RAW`, calibrate mode only).
+* `MotionRequest.msg`: comment only (calibration sources). No field changes anywhere.
+* `mission_logic.parking_requires_planner_done: true` — a manoeuvre piece now completes on
+  block 11 DONE (not on the tracker's `arrived` + 3 cm, which is kept for `false`).
+* **CHANGED** `drivers.yaml carbot_tf.base_to_laser` yaw `0 -> 3.14159265`: the driver runs
+  `reversion: true` and the base tunnel follower already corrects with
+  `lidar_angle_offset 3.1416`; blocks 10/12/14 read the TF, so it must agree (test enforces).
+* New YAML keys: `control.yaml` (safety_monitor, command_owner `arm_publish_hz`,
+  `estop_latch_in_race`, `measured_max_age_s`, `calibration.*`; tunnel_bridge `rate_hz`,
+  `use_zone_cap`, `command_owner_steering.*` / `command_owner_feedforward.*` mirrors),
+  `planning.yaml` (parking_planner / recovery_planner phase-5 blocks), `base_nodes.yaml`
+  (`carbot_arm_enabled`, `carbot_battery_rate_hz`), `calibration_steps.yaml` steps 7/8
+  `tool` / `instructions` / `procedure` (step 7 `writes` no longer lists servo_range_*:
+  binding is checked by eye and set in Tuning).
+* Deliberate differences from V4 (all YAML, all documented inline):
+  `plan_radius_factor 1.08` (V4 1.0; sim un-park margin -3.0 -> +1.5 cm),
+  `reverse_time_unpark` (V4 has no un-park; 0.4 s vs 5 s hybrid),
+  `bay_observation.max_shift_m` / `fallback_after_s` (V4 holds forever = 0 marks),
+  `fallback_time_budget_s 6`.
+* `test_required_keys.py` (bringup): every `REQUIRED` key of the phase-4/5 nodes exists in
+  the YAML the launch supplies; tunnel_bridge mirrors == owner values.
+
+### For phase 6
+* Detectors publish `DetectionArray` on the existing topic; mission logic already reads
+  `traffic_light_state`, `boom_gate_state` (+ confidence) and the bump sign; nothing in
+  phases 4/5 needs to change. Gate-vs-route mismatch stays a log + GUI warning (block 07).
+* BPU load: planner CPU is unmeasured on the RDK. Parking/recovery searches run in their own
+  callback-group thread (MultiThreadedExecutor) so status/subscriptions keep flowing; the
+  hybrid fallback is time-boxed at 6 s. Keep detector inference off the planning cores.
+
+### Not tested on hardware (phase 5)
+* Nothing in phase 5 has run on the car. First drive: calibrate mode, steps 6 -> 7 -> 8.
+* Feedforward / steering limits in `control.yaml` are UNCALIBRATED placeholders until
+  steps 7/8 run. Wheelbase: base `wheel_base 0.14` vs V4 `0.216` still unreconciled —
+  step 7 measures the radius; check `vehicle.wheelbase_m` against the chassis with a ruler.
+* `/odom` speeds below `odom_velocity_deadband` (0.02 m/s) read as 0: creep speed checks
+  and recovery (3 cm/s) sit just above it.
+* Whether `Rosmaster.set_motor(0)` brakes or coasts (the speed controller never reverses
+  the motor to brake inside one gear).

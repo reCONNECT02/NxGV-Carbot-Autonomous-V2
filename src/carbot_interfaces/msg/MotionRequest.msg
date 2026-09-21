@@ -3,7 +3,7 @@
 # The command owner only listens to the source that mission logic marks active,
 # and rejects any request older than command_owner.request_expiry_s.
 std_msgs/Header header  # stamp = time the request was computed
-string source           # ROAD | TUNNEL | PARKING | RECOVERY | HOLD
+string source           # ROAD | TUNNEL | PARKING | RECOVERY | HOLD (+ CALIBRATION | CALIBRATION_RAW on /carbot/calibration/request, calibrate mode only)
 float32 speed_mps       # signed: + forward, - reverse
 float32 steer_rad       # front-wheel angle, REP-103: + = turn LEFT
 bool arrived            # tracker reached the end of its path

@@ -6,8 +6,12 @@ local_core, tracker_core, mission_core) drive a simple V4-style plant
 Sensors are ideal: the road grid is rendered from the prior map like V4
 scene.js (road where clearance >= 0, paint just outside), localization is the
 true pose. Detectors are scripted (traffic light turns GREEN after
-`light_red_s` of waiting, the boom gate is OPEN). Manoeuvre pieces are driven
-along mission_planner's PREVIEW as a stand-in for block 11 (phase 5).
+`light_red_s` of waiting, the boom gate is OPEN).
+
+Phase 5: manoeuvre pieces are planned and sequenced by the real block 11
+ParkingSession (bay tape observed from the map paint = ideal memory), and the
+block 12 Recovery machine runs on the lane-planner problem signal, exactly as
+the ROS nodes wire them. parking='preview' keeps the phase-4 stand-in.
 
 Used by tools/sandbox/run_planning.py and src/carbot_planning/test.
 """
@@ -21,8 +25,22 @@ from .corridor_core import CorridorCfg, CorridorFinder
 from .evidence import Evidence, EvidenceCfg, Grid
 from .local_core import LocalCfg, LocalPlanner
 from .mission_core import Inputs, MissionCfg, MissionMachine, RoutePiece, Visit
+from .parking_core import ParkingCfg, ParkingSession
+from .recovery_core import RecInputs, Recovery, RecoveryCfg
 from .route_core import bicycle
 from .tracker_core import GearSequencer, Tracker, TrackerCfg
+
+
+def paint_points(course, pose, radius=1.2, step=0.02) -> np.ndarray:
+    """Ideal remembered tape: the map paint sampled every 2 cm near the car."""
+    pts = []
+    for pa, pb, _style, _w in getattr(course, 'paint', []):
+        n = max(1, int(math.hypot(pb[0] - pa[0], pb[1] - pa[1]) / step))
+        for i in range(n + 1):
+            x, y = pa[0] + (pb[0] - pa[0]) * i / n, pa[1] + (pb[1] - pa[1]) * i / n
+            if math.hypot(x - pose[0], y - pose[1]) < radius:
+                pts.append((x, y))
+    return np.asarray(pts, float).reshape(-1, 2)
 
 
 def render_grid(course, pose, stamp, rows=100, res=0.018, x0=-0.65, y0=-0.9, paint_m=0.10) -> Grid:
@@ -89,17 +107,28 @@ def pieces_from_route(route) -> (List[RoutePiece], List[Visit]):
 
 
 def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=1 / 30,
-             light_red_s=2.0, gate_open=True, stop_at_complete=True, verbose=False) -> SimLog:
+             light_red_s=2.0, gate_open=True, stop_at_complete=True, verbose=False,
+             parking: str = 'session', recovery: bool = True, start_pose=None) -> SimLog:
     pieces, visits = pieces_from_route(route)
-    mm = MissionMachine(course, pieces, visits, rules, challenges, MissionCfg(),
-                        float(limits['max_speed_mps']))
+    use_session = parking == 'session'
+    mm = MissionMachine(course, pieces, visits, rules, challenges,
+                        MissionCfg(parking_requires_planner_done=use_session), float(limits['max_speed_mps']))
+    session = ParkingSession(ParkingCfg(), course, g)
+    session_key = None
+    park_arrived_t = -1e9
+    section, section_key = None, 0
+    rec = Recovery(RecoveryCfg(recovery_speed=float(limits['recovery_speed_mps']),
+                               line_tolerance=float(limits['line_tolerance_m']), enabled=recovery), course, g)
+    rec_req = {'t': -1e9, 'arrived': False}
+    rec_cmd = None
+    problem = ''
     tcfg = TrackerCfg(max_speed=float(limits['max_speed_mps']), parking_speed=float(limits['parking_speed_mps']))
     tracker = Tracker(tcfg, g)
     gears = GearSequencer(Tracker(tcfg, g), 0.4)
     cf = CorridorFinder(CorridorCfg())
     lp = LocalPlanner(LocalCfg(line_tolerance=float(limits['line_tolerance_m'])), g)
     ev = Evidence(EvidenceCfg())
-    x, y, a = pieces[0].points[0, :3]
+    x, y, a = pieces[0].points[0, :3] if start_pose is None else start_pose
     plant = Plant(float(x), float(y), float(a))
     log = SimLog()
     t, last_cam, last_plan = 0.0, -1.0, -1.0
@@ -130,7 +159,9 @@ def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=
                      corridor_observed=corr.observed if corr else 0, corridor_t=t if corr else -1e9,
                      camera_t=last_cam, road_arrived=road_req['arrived'], road_t=road_req['t'],
                      parking_arrived=park_req['arrived'], parking_t=park_req['t'],
-                     parking_end=tuple(anchored[mm.i][-1, :2]) if mm.i in anchored else None)
+                     parking_end=tuple(anchored[mm.i][-1, :2]) if mm.i in anchored else None,
+                     recovery_t=rec_req['t'], recovery_arrived=rec_req['arrived'],
+                     parking_done_t=session.done_t if session.state == 'DONE' and session_key == mm.i else -1e9)
         inp.parking_arrived = park_req['arrived']
         out = mm.step(inp)
         for e in out.events:
@@ -161,8 +192,49 @@ def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=
                 local_path = lpth
             else:
                 local_path = np.zeros((0, 4))
+            problem = '' if win is not None else 'No feasible local candidate'
+            if win is not None and tracker.error > 0.10:
+                problem = 'Tracking error exceeds 10 cm'
+        # block 12 (V4 recovery.request) on the lane-planner problem
+        if not parking:
+            holds = ('TRAFFIC HOLD', 'GATE HOLD', 'GEAR / MISSION HOLD')
+            permitted = out.mode in ('ROAD', 'RECOVERY') and out.hold_reason not in holds
+            hard = out.hold_reason if (out.mode in ('SAFETY_STOP',) or (not permitted and rec.active)) else ''
+            ro = rec.update(RecInputs(t=t, pose=pose, speed=plant.speed, route=p.points, problem=problem,
+                                      hard_hold=hard, permitted=permitted, lidar_age=0.0,
+                                      camera_age=t - last_cam, hits=None, ev=ev))
+            for e in ro.events:
+                log.events.append((round(t, 2),) + e + (0,))
+                if verbose:
+                    print(f'{t:7.2f} {e[0]}: {e[1]}')
+            rec_cmd = ro.request
+            if ro.request is not None:
+                rec_req = {'t': t, 'arrived': bool(ro.request['arrived'])}
+                if ro.request['arrived']:
+                    tracker.index = rec.route_index
         # block 13
-        if parking:            # block 11 stand-in: follow the mission_planner preview, one gear at a time
+        if parking and use_session:   # block 11: one gear section at a time, replans from the pose
+            if session_key != mm.i:
+                session_key = mm.i
+                so = session.start(mm.i, tuple(p.points[-1, :3]), p.bay, t)
+                section = None
+            so = session.update(t, pose, plant.speed, park_arrived_t, lambda: paint_points(course, pose))
+            if so.publish is not None:
+                section = so.publish if len(so.publish) else None
+                section_key += 1
+            for e in so.events:
+                log.events.append((round(t, 2),) + e + (10,))
+                if verbose:
+                    print(f'{t:7.2f} {e[0]}: {e[1]}')
+            if section is None:
+                req = {'speed': 0.0, 'steer': 0.0, 'arrived': False, 'reason': 'NO PARKING PATH'}
+            else:
+                gears.set_path(section, section_key)
+                req = gears.update(pose, plant.speed, t)
+                if req['arrived']:
+                    park_arrived_t = t
+            anchored[mm.i] = section if section is not None else p.points
+        elif parking:            # phase-4 stand-in: follow the mission_planner preview, one gear at a time
             if gears.key != mm.i:
                 anchored[mm.i] = anchor(p.points, pose)
             gears.set_path(anchored[mm.i], mm.i)
@@ -183,6 +255,8 @@ def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=
         else:
             road_req = {'arrived': req['arrived'], 't': t}
         # block 15 stand-in: follow the active source, HOLD = stop
+        if out.source == 'RECOVERY' and rec_cmd is not None:
+            req = dict(rec_cmd)
         cmd = (0.0, req['steer'] * 0.0) if out.source == 'HOLD' or out.mode == 'SAFETY_STOP' \
             else (req['speed'], req['steer'])
         steer_est += max(-math.pi * dt, min(math.pi * dt, (cmd[1] - steer_est) / 0.12 * dt))

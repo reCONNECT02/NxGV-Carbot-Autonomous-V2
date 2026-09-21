@@ -59,6 +59,7 @@ mission_logic:
     banner_hold_s: 4.0
     challenge_exit_dwell_s: 1.0     # a challenge zone counts a new visit only after this long outside
     reacquire_error_m: 0.30         # route progress re-searched globally beyond this error
+    parking_requires_planner_done: true   # phase 5: a manoeuvre piece completes on block 11 DONE
 
 corridor:
   ros__parameters:
@@ -149,16 +150,37 @@ parking_planner:
     clearance_pad_m: 0.003
     fallback_max_nodes: 250000
     fallback_bounds: [-0.02, 2.65, 1.70, 3.70]   # x0 offset from bay, x1, y0, y1
-    reeds_shepp_families: 12
+    reeds_shepp_families: 12        # informational: the 12 V4 families are fixed in reeds_shepp.py
     bay_observation:
       edge_tolerance_m: 0.035
       min_samples: 3
+      max_age_s: 24.0               # V4: remembered tape up to 24 s old
+      max_shift_m: 0.10             # NOT V4: observed bay further than this from the map = rejected
+      fallback_after_s: 3.0         # NOT V4 (holds forever): use the map bay after this; -1 = V4 hold
     cusp_replan_distance_m: 0.025
     max_cusp_replans: 4
     heading_tolerance_rad: 0.045
     max_corrections: 2
     parked_heading_tolerance_rad: 0.05
     parked_margin_m: 0.008
+    # phase 5 (V4 values unless marked)
+    rate_hz: 10.0
+    rs_step_m: 0.006                # Reeds-Shepp sampling (V4 step)
+    fallback_enabled: true
+    fallback_margin_m: 0.45         # v2 map: hybrid bounds = box(start, goal, bay) + this (V4 box: fallback_bounds, v1 only)
+    fallback_time_budget_s: 6.0     # NOT V4: hard stop for the slow hybrid search
+    gear_hold_s: 0.4                # V4 transition(): hold between gear sections
+    stopped_speed_mps: 0.01         # plan / observe only once the car has stopped
+    section_arrive_m: 0.08          # tracker 'arrived' accepted this close to the section end
+    arrived_after_publish_s: 0.15   # ignore an 'arrived' older than the section
+    replan_retry_s: 1.0             # no path: retry from the pose this often (V4 retries every step)
+    reverse_time_unpark: true       # NOT V4: un-park = the time-reversed parking search (0.4 s vs 5 s)
+    plan_radius_factor: 1.08        # NOT V4 (1.0): steering reserve for the tracker; sim: -3.0 -> +1.5 cm un-park margin
+    request_max_age_s: 0.3
+    pose_max_age_s: 0.3
+    audit_point_stride: 3           # GUI audit: every 3rd point of each candidate
+    live_max_age_s: 0.30
+    grid_pose_max_gap_s: 0.15
 
 recovery_planner:
   ros__parameters:
@@ -182,6 +204,27 @@ recovery_planner:
     camera_max_age_s: 0.30
     lookahead_points: 18
     stopped_speed_mps: 0.003
+    # phase 5 (V4 recovery.js values)
+    rate_hz: 20.0
+    outside_step_m: 0.006           # cost: 150 * 0.006 * sum(outside margin)
+    rear_sample_every: 5
+    rear_offset_m: 0.025            # sample 2.5 cm behind the rear bumper
+    rear_lateral_fraction: 0.35     # at -0.35 w, 0, +0.35 w
+    evidence_max_age_s: 3.0
+    road_pad_m: 0.005               # roadClear pad
+    road_step_m: 0.025
+    obstacle_pad_m: 0.02
+    rs_step_m: 0.006
+    lidar_max_range_m: 2.0
+    lidar_mount: tf
+    candidates_max_age_s: 0.6       # local planner problem signal freshness
+    safety_max_age_s: 0.3
+    pose_max_age_s: 0.3
+    recoverable_branch_reason: Intended branch has insufficient local road evidence
+    permitted_holds_block: TRAFFIC HOLD, GATE HOLD, GEAR / MISSION HOLD   # V4: no recovery during these
+    audit_point_stride: 3
+    live_max_age_s: 0.30
+    grid_pose_max_gap_s: 0.15
 
 path_tracker:
   ros__parameters:
