@@ -21,6 +21,8 @@ setup(
         'console_scripts': [
             'local_pose = carbot_localization.local_pose:main',
             'global_pose = carbot_localization.global_pose:main',
+            'calib_odometry = carbot_localization.calib_odometry:main',     # step 6
+            'calib_map_uwb = carbot_localization.calib_map_uwb:main',       # step 11
         ],
     },
 )

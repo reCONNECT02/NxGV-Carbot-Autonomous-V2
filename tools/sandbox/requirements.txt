@@ -5,3 +5,4 @@ pyyaml>=5.4
 pytest>=7
 matplotlib>=3.5      # only for tools/calibration/draw_mat.py
 reportlab>=3.6       # only for tools/calibration/make_boards.py
+rosbags>=0.10         # only for run_localization.py --bag

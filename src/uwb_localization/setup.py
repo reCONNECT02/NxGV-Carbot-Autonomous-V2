@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'uwb_ranges = uwb_localization.uwb_ranges:main',
+            'calib_uwb = uwb_localization.calib_uwb:main',                  # step 10
         ],
     },
 )

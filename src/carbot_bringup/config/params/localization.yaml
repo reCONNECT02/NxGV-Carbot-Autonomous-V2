@@ -2,12 +2,23 @@
 # localization.yaml -- BLOCK 05 (smooth local pose), BLOCK 06 (coarse UWB-aided
 # pose) and the UWB range parser. Values = V4 vehicle.js Estimator + UWB_Handoff
 # section 11. Anchor positions/offsets are in data/uwb.yaml, not here.
+# Keys marked (bag) are first guesses: re-tune from a recorded run
+# (tools/sandbox/run_localization.py --bag ...).
 # =============================================================================
 local_pose:
   ros__parameters:
-    rate_hz: 50.0
-    motion_timeout_s: 0.2
-    heading_blend: 0.25             # odom.a += 0.25 * wrap(imu_yaw - odom.a)
+    rate_hz: 20.0                   # idle tick: sigma growth when no /odom (pose publishes per /odom msg)
+    motion_timeout_s: 0.2           # /odom older than this = "no fresh packet" (V4 idle growth)
+    heading_blend: 0.25             # odom.a += 0.25 * wrap(imu_yaw - odom.a)   (V4)
+    imu_timeout_s: 0.3              # /imu/rpy older -> heading from /odom yaw increments
+    pose_history_s: 2.0             # for registering a camera grid at its own timestamp
+    max_stamp_gap_s: 0.15           # grid stamp outside the history by more -> skip it
+    max_odom_step_m: 0.10           # one /odom step longer = servo_controller restart; ignored
+    heading_sigma_rad: 0.02         # reported heading std-dev (covariance only)
+    status_publish_hz: 10.0         # LocalizationStatus -> block 06 + GUI
+    publish_tf: true                # track -> base_link (nobody else publishes base_link's parent)
+    init:
+      source: start_pose            # start_pose (track_map.yaml) | origin
     sigma:
       initial_m: 0.003
       idle_growth_m_per_s: 0.004    # no fresh sensor packet
@@ -15,7 +26,7 @@ local_pose:
       per_sqrt_s: 0.00025
       floor_m: 0.004
       visual_decay: 0.94
-    visual:                         # camera edge -> prior-map boundary registration
+    visual:                         # camera edge -> prior-map boundary registration (V4 visualUpdate)
       enabled: true
       max_radius_m: 0.70
       max_edge_distance_m: 0.045
@@ -26,7 +37,7 @@ local_pose:
       prior_weight: 0.8
       weight_scale_m: 0.015
       step_cap: 0.12
-      step_gain: 0.0015
+      step_gain: 0.0015             # max 1.5 mm per frame -> the pose never jumps
       sample_stride: 2
       disable_pitch_rad: 0.045      # pause on steep pitch (hill)
       disable_in_parking: true
@@ -34,27 +45,41 @@ local_pose:
 global_pose:
   ros__parameters:
     rate_hz: 10.0
-    initial_variance_m2: 0.0001     # 0.01^2
-    growth_per_s_m2: 0.000008
-    growth_per_m_m2: 0.00002
+    initial_variance_m2: 0.0001     # 0.01^2 (V4)
+    growth_per_s_m2: 0.000008       # (V4)
+    growth_per_m_m2: 0.00002        # (V4)
+    max_variance_m2: 1.0            # cap (1 m std-dev)
     # Per-anchor range update (UWB_Handoff section 11): one EKF update per fresh
     # range, each individually innovation-gated.
-    range_sigma_m: 0.05
+    range_sigma_m: 0.05             # (bag) raise if too many good ranges are gated
     range_gate_chi2: 6.63           # 1-dof, 99 %
-    position_gate_chi2: 13.82       # V4 2-dof 99.9 % (used for whole-fix mode)
-    use_per_range_updates: true
+    position_gate_chi2: 13.82       # V4 2-dof 99.9 % (whole-fix mode only)
+    fix_sigma_m: 0.05               # whole-fix mode only
+    use_per_range_updates: true     # false = V4 whole-fix mode on /carbot/uwb/raw_fix
     skip_repeated_sample_seq: true
-    latency_compensation: true      # stamp = arrival - age_ms
+    latency_compensation: true      # use each range's estimated measurement time
     visual_landmark_min_rank: 0.25
     visual_landmark_sigma_m: 0.025
     max_uwb_age_s: 1.0
+    pose_history_s: 3.0
+    require_alignment: true         # no UWB updates until step 11 set track_to_venue.aligned
+    publish_venue_tf: true          # static TF track -> venue
+    reacquire:                      # NOT in V4: escape a gate lock-out (car misplaced at start)
+      reject_streak: 15             # consecutive gated ranges
+      inflate_variance_m2: 0.04     # add (0.2 m)^2 once
 
 uwb_ranges:
   ros__parameters:
     link_timeout_s: 1.0
     anchor_timeout_s: 1.0
     expected_rate_hz: 10.0
-    max_range_age_ms: 400
+    max_range_age_ms: 400           # = firmware OMIT_OLDER_THAN_MS
     min_range_m: 0.05
     max_range_m: 30.0
-    publish_raw_fix: true           # pairwise trilateration (uwb_xy.py method), GUI only
+    publish_raw_fix: true           # pairwise trilateration (uwb_xy.py method), GUI/calibration only
+    status_publish_hz: 2.0
+    latency:
+      mode: min_filter              # min_filter | arrival
+      window_s: 10.0
+      base_transit_ms: 5.0          # assumed one-way delay of the fastest packet
+      max_extra_ms: 300.0           # a report later than this -> fall back to arrival time

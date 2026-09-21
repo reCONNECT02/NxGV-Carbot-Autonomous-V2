@@ -83,5 +83,31 @@
       "program": "${workspaceFolder}/tools/sandbox/run_calib_extrinsics.py",
       "cwd": "${workspaceFolder}", "args": ["--synth", "--lens", "fisheye", "--perturb-deg", "4"]
     }
+    ,
+    {
+      "name": "05/06 localization: simulated lap",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_localization.py",
+      "cwd": "${workspaceFolder}", "args": []
+    },
+    {
+      "name": "05/06 localization: bad start + missing anchor + heavy multipath",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_localization.py",
+      "cwd": "${workspaceFolder}", "args": ["--start-error", "0.3", "--drop", "1783", "--spikes", "0.15"]
+    },
+    {
+      "name": "05/06 localization: cameras off (dead reckoning + UWB only)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_localization.py",
+      "cwd": "${workspaceFolder}", "args": ["--no-camera"]
+    },
+    {
+      "name": "05/06 localization: replay a rosbag from the car (edit paths)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_localization.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bag", "C:/bags/run_1", "--session", "C:/carbot_data/calibration/20260925_081500"]
+    }
   ]
 }

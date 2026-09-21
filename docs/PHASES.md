@@ -8,8 +8,8 @@ never rename silently.
 |---|---|---|
 | 1 | Repo skeleton, packages, launch files, YAML structure | **done** |
 | 2 | Perception (3 cameras, IPM, stitch, road mask) | **done** |
-| 3 | Localization + UWB | next |
-| 4 | Global planner, mission logic, local planner | |
+| 3 | Localization + UWB | **done** |
+| 4 | Global planner, mission logic, local planner | next |
 | 5 | Parking, recovery, command owner + safety | |
 | 6 | Detectors (traffic light, boom gate, bump sign) | |
 | 7 | GUI main tab + diagnostic tabs | |
@@ -139,3 +139,68 @@ never rename silently.
 * `docs/reference/`: rulebook PDF, RISA Bot spec sheet, V4 simulator sources
   (`v4_simulator/*.js`, the reference every port follows), GUI reference
   screenshots (`gui/`, the look of the main tab for phase 7).
+
+
+## Phase 3 — what exists
+
+* **`carbot_common/course.py`** (block 01 geometry): V4 `Course` rebuilt from
+  `track_map.yaml`; `clearance(x, y)` (> 0 drivable, = distance to the road edge),
+  `gradient`, `surface` (hill/bump), `in_tunnel`, `in_area`, `pose(key)`,
+  `load_course(path)` (cached by file sha1), `map_sha1`. Verified against V4
+  `core.js` run in Node: identical to 4e-8 m within 25 cm of the road.
+  **Phase 4 must use this, not a second map loader.**
+* **`uwb_ranges`** (`uwb_localization`): `/uwb3/input_json` (BEST_EFFORT) ->
+  `UwbRanges` per report, `UwbStatus` at 2 Hz, raw pairwise fix (GUI/calibration
+  only). Repeat `sample_seq` skipped, reboot detected, offsets + height
+  flattening applied, measurement time = WiFi-min-filtered encode time - age_ms.
+  Pure logic in `uwb_core.py` (also layout checks, HDOP, offset math, flip-flop).
+* **Block 05 `local_pose`**: V4 Estimator port. `/odom` distance + `/imu/rpy` yaw
+  (offset to the track frame taken at the first IMU sample after a reset; falls
+  back to `/odom` yaw if the IMU is stale), camera-edge-to-map registration at
+  the grid's own timestamp, <= 1.5 mm per frame. No UWB input at all. Publishes
+  `Odometry` on `/carbot/localization/local_pose` (track -> base_link, sigma^2 in
+  covariance[0]/[7]) and **TF track -> base_link** (the base servo_controller
+  publishes no TF).
+* **Block 06 `global_pose`**: offset EKF (2x2), one gated update per fresh anchor
+  range at the local pose of that range's time, using the **tag position**
+  (`uwb.yaml tag.mount_xy_m`), V4 landmark pull-back, re-acquire safety net.
+  Publishes `PoseWithCovarianceStamped` on `/carbot/localization/global_pose`,
+  merged `LocalizationStatus`, static TF track -> venue. **No UWB updates until
+  `track_to_venue.aligned` is true** (`require_alignment`).
+* **Calibration CLIs** (the phase-8 wizard calls the same functions):
+  step 6 `ros2 run carbot_localization calib_odometry`, step 10
+  `ros2 run uwb_localization calib_uwb`, step 11
+  `ros2 run carbot_localization calib_map_uwb [--mode points]`. All record raw
+  captures into the session and support `--replay` (no ROS).
+  Shared session helpers: `carbot_common/calib_tools.py`.
+* **Sandbox** `tools/sandbox/run_localization.py`: simulated lap or `--bag` replay
+  with a tuning report.
+
+### Contract changes (additions only, nothing renamed)
+
+* `UwbStatus`: + `anchors_surveyed`, `offsets_calibrated`, `latency_ms`, `reboots`,
+  `anchor_fresh_count[]`.
+* `LocalizationStatus`: + `visual_updates`, `imu_ok`, `heading_rad`, `uwb_accepted`,
+  `uwb_rejected`, `uwb_reacquires`, `state`.
+* Topic `/carbot/localization/reset` (`T.LOCALIZATION_RESET`,
+  PoseWithCovarianceStamped, track): re-seeds blocks 05 + 06; refused unless the
+  mission mode is IDLE / COMPLETE / empty.
+* YAML: new keys in `localization.yaml` (all three nodes); `uwb.yaml tag.mount_xy_m`;
+  `calibration_steps.yaml` steps 6/10/11 rewritten in block style with
+  `tool`, `instructions` and new procedure/pass keys (ids, indices, `writes`
+  targets unchanged in meaning; step 6 now writes `servo_controller.imu_yaw_scale`
+  and `odom_reverse_polarity` instead of `imu_*_offset`).
+
+### For phase 4
+
+* Plan and track on **`local_pose`** (smooth). Use **`global_pose`** only for
+  "where on the route am I" (checkpoint progress, roundabout branch identity,
+  preflight start check); it can move by a few cm per second when UWB corrects.
+  `LocalizationStatus.state == NO_ALIGNMENT` means global == local.
+* Preflight start check (phase 8): `carbot_localization.alignment.start_pose_error`
+  (raw UWB fix vs map start + tag lever arm).
+* Mission logic should publish `MissionState.mode` != IDLE once the run starts,
+  or `/carbot/localization/reset` stays accepted.
+* Known real-car points to watch: base `servo_controller` EMA-filters IMU yaw
+  (lag ~0.3 s in corners); `/odom` yaw comes from the servo command, not the IMU;
+  `wheel_base` 0.14 (base) vs 0.216 (V4) is still unreconciled (step 7).

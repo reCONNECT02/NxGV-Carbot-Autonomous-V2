@@ -12,3 +12,11 @@ uint32 visual_matches
 float32 visual_rank
 bool visual_enabled
 float32 distance_travelled_m
+# ---- added in phase 3 (extension, nothing renamed) ----
+uint32 visual_updates   # block 05: accepted camera-to-map corrections since start
+bool imu_ok             # block 05: /imu/rpy fresh (else heading from /odom yaw)
+float32 heading_rad     # block 05: local heading (track frame)
+uint32 uwb_accepted     # block 06: per-range updates accepted since start
+uint32 uwb_rejected     # block 06: per-range updates gated out since start
+uint32 uwb_reacquires   # block 06: gate lock-outs resolved by inflating the variance
+string state            # e.g. RUNNING, WAITING_INPUT, DEAD_RECKONING, NO_UWB

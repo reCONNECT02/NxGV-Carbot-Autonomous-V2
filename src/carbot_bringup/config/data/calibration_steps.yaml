@@ -48,10 +48,25 @@ steps:
   - {index: 5,  id: lidar_camera,      title: LiDAR-camera alignment,        required: true,  tab: memory_lidar,
      writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset],
      pass: {max_bearing_error_deg: 2.0}}
-  - {index: 6,  id: imu_odometry,      title: IMU + wheel odometry,          required: true,  tab: localization,
-     writes: [params_overlay servo_controller.ticks_per_meter, servo_controller.odom_distance_scale, servo_controller.imu_*_offset],
-     procedure: {straight_run_m: 2.0, spin_test: true},
-     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0}}
+  - index: 6
+    id: imu_odometry
+    title: IMU + wheel odometry
+    required: true
+    tab: localization
+    tool: ros2 run carbot_localization calib_odometry
+    writes: [params_overlay servo_controller.ticks_per_meter, servo_controller.odom_reverse_polarity,
+             servo_controller.imu_yaw_scale]
+    instructions:
+      - Put two tape marks exactly 2.00 m apart on a straight, flat part of the floor.
+      - "Distance test: rear axle on the first mark, push the car straight to the second.
+         If the distance is wrong the tool corrects ticks_per_meter (or the encoder
+         direction) live and asks for a verify run."
+      - "Drift test: hands off, car still for 60 s."
+      - "Spin test: line the car up with a tape mark, turn it by hand ONE full turn to the
+         LEFT (counter-clockwise seen from above) back onto the mark. Fixes the IMU yaw
+         sign and scale (block 05 needs yaw to increase turning left)."
+    procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4}
+    pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0, max_spin_error_pct: 3.0}
   - {index: 7,  id: servo_steering,    title: Servo centre + steering limits, required: true, tab: control,
      writes: [params_overlay servo_controller.servo_center, servo_range_left, servo_range_right, command_owner.steering.*, vehicle.min_turning_radius_m],
      pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}}
@@ -61,14 +76,51 @@ steps:
   - {index: 9,  id: venue_thresholds,  title: Venue colour / lighting thresholds, required: true, tab: perception,
      writes: [params_overlay road_perception.classify.*, bpu_detector.thresholds.*],
      pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}}
-  - {index: 10, id: uwb_survey,        title: UWB anchor survey + uwb_calib offsets, required: true, tab: localization,
-     writes: [uwb.yaml anchors, uwb.yaml anchors_surveyed, uwb.yaml offsets_calibrated],
-     procedure: {tool: tools/uwb/uwb_calib.py, seconds: 20, min_distance_from_anchor_m: 1.0, verify_spot: true},
-     pass: {max_verify_error_m: 0.15, all_anchors_seen: true}}
-  - {index: 11, id: map_uwb_alignment, title: Map-to-UWB alignment lap,      required: true,  tab: map,
-     writes: [uwb.yaml track_to_venue],
-     procedure: {drive: slow_manual_lap, mode: calibrate_only},
-     pass: {max_rms_m: 0.20}}
+  - index: 10
+    id: uwb_survey
+    title: UWB anchor survey + uwb_calib offsets
+    required: true
+    tab: localization
+    tool: ros2 run uwb_localization calib_uwb
+    writes: [uwb.yaml anchors, uwb.yaml tag.z_m, uwb.yaml tag.mount_xy_m, uwb.yaml anchors_surveyed,
+             uwb.yaml offsets_calibrated]
+    instructions:
+      - "LAYOUT: spread the anchors 2-7 m apart in a triangle around the track (current
+         layout: 1782 (0, 0), 1786 (7.50, 0), 1783 (7.50, 4.83), metres). Never nearly in a line."
+      - "HEIGHT: raise every anchor to 1.0-1.5 m on a stand with clear line of sight to the whole
+         track. Anchors on the floor cause the ~25 cm flip-flop seen in testing."
+      - "4th ANCHOR (optional, covers the corner at (0, 4.83) outside the triangle): add its ID to
+         ANCHOR_IDS and set ANCHOR_COUNT 4 in firmware/uwb_tag/TagMicroROS/RangeProtocol.h,
+         re-flash the tag, then add it when the tool asks for anchors."
+      - "SURVEY: tape-measure every anchor antenna (x, y, height) in METRES from anchor 1782,
+         +x towards 1786, +y from 1786 towards 1783. Enter them when asked."
+      - "TAG: measure the tag antenna on the car: height above the floor, and its position from
+         the rear-axle centre (forward +x, left +y)."
+      - "OFFSETS: put the tag still at a tape-measured spot inside the triangle, more than 1 m from
+         every anchor, antenna as on the car, nobody in the line of sight (20 s)."
+      - "VERIFY: move it to a DIFFERENT measured spot (20 s). The corrected fix must be within 15 cm."
+    procedure: {tool: tools/uwb/uwb_calib.py method (calib_uwb), seconds: 20, min_distance_from_anchor_m: 1.0,
+                verify_spot: true, link_check_s: 5, min_samples: 20, min_spacing_m: 2.0,
+                min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08}
+    pass: {max_verify_error_m: 0.15, all_anchors_seen: true, min_hdop_coverage: 0.9}
+  - index: 11
+    id: map_uwb_alignment
+    title: Map-to-UWB alignment lap
+    required: true
+    tab: map
+    tool: ros2 run carbot_localization calib_map_uwb
+    writes: [uwb.yaml track_to_venue]
+    instructions:
+      - Needs steps 4, 6 and 10 done (block 05 must hold the lane; UWB offsets applied).
+      - "LAP (best): put the car on the map start pose (bottom-right lane, facing west), press
+         Enter, then push or drive it SLOWLY once around the whole track and press Enter."
+      - "POINTS (quick, competition day): park the car on 2 or more known map poses far apart
+         (start, traffic-light stop, ...) for 10 s each."
+      - The fit uses every range directly; check the RMS and that the planned route overlays the
+        track on the Global map tab.
+    procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [lap, points], lap_min_s: 40,
+                min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2}
+    pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
   - {index: 12, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
      writes: [practice/<challenge>.yaml],
      pass: {}}

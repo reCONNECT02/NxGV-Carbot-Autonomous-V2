@@ -13,6 +13,10 @@
   <depend>carbot_interfaces</depend>
   <depend>carbot_common</depend>
   <depend>tf2_ros</depend>
+  <depend>uwb_localization</depend>
+  <depend>rcl_interfaces</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <test_depend>python3-pytest</test_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

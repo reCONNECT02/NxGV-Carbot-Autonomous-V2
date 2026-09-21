@@ -20,9 +20,17 @@ tag:
   input_topic: /uwb3/input_json   # std_msgs/String JSON, BEST_EFFORT, ~10 Hz
   name: RISA01
   mac: "7D:17:22:EA:82:60:3B:9C"
-  z_m: 0.0                    # tag antenna height (only the difference to anchor z matters)
+  z_m: 0.0                    # tag antenna height above the floor (step 10: measure)
+  # Tag antenna position on the car in base_link (rear-axle centre, +x forward,
+  # +y left), metres. UWB measures THIS point, not the rear axle. Step 10: measure.
+  mount_xy_m: [0.10, 0.00]
   omit_older_than_ms: 400     # firmware OMIT_OLDER_THAN_MS
 
+# Anchor layout rules (calibration step 10 checks them):
+#   * spacing >= 2 m, no three anchors nearly in a line
+#   * raise to 1.0-1.5 m with clear line of sight (on the floor = multipath flip-flop)
+#   * a 4th anchor at (0, 4.83) covers the corner outside the triangle: add it
+#     here AND to ANCHOR_IDS/ANCHOR_COUNT in firmware/uwb_tag/TagMicroROS/RangeProtocol.h
 # Venue frame: origin anchor 1782, +x towards 1786, +y from 1786 towards 1783.
 # UWB_Handoff.md section 10 gives the layout in cm; stored here in METRES.
 # range_offset_m = median(measured - true) from tools/uwb/uwb_calib.py (step 10),

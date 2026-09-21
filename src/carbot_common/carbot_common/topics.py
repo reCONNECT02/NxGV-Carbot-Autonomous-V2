@@ -77,6 +77,9 @@ LOCAL_POSE = '/carbot/localization/local_pose'          # nav_msgs/Odometry, fra
 GLOBAL_POSE = '/carbot/localization/global_pose'        # PoseWithCovarianceStamped, frame track (UWB-aided)
 LOCAL_STATUS = '/carbot/localization/local_status'     # LocalizationStatus (block 05 fields)
 LOCALIZATION_STATUS = '/carbot/localization/status'     # LocalizationStatus (merged, block 06)
+# phase 3: re-seed blocks 05+06 at a known track pose (preflight, calibration step 11, GUI).
+# PoseWithCovarianceStamped, frame track. Ignored in race mode once the run has started.
+LOCALIZATION_RESET = '/carbot/localization/reset'
 
 # UWB (uwb_localization)
 UWB_RANGES = '/carbot/uwb/ranges'                       # UwbRanges (parsed, offsets applied)
