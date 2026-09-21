@@ -15,10 +15,19 @@ to live inside that process:
                        'auto command stream stale' trip it re-arms only when
                        /cmd_vel_auto is fresh again.
               False -> MANUAL mode + stop (joystick driving again in calibrate).
+  playback  the base record/playback feature replays motor PWM + servo angle
+            straight into apply_hardware(), bypassing the command owner and the
+            safety veto (blocks 14-15). Parking is planned by block 11 (Reeds-
+            Shepp), never replayed, so playback is refused unless CARBOT_MODE
+            (exported by stack.py to every process) is in
+            carbot_playback_allowed_modes. CARBOT_MODE unset (servo_controller
+            run on its own, base-repo style) keeps the base behaviour. Recording
+            itself is untouched.
 
 The base auto_cmd_timeout watchdog, joy watchdog and hardware-failure trips
 stay exactly as they are and still win.
 """
+import os
 import time
 
 from .topics import AUTO_MODE_TOPIC, VEHICLE_ARM_TOPIC, VEHICLE_BATTERY_TOPIC
@@ -47,6 +56,13 @@ def arm_decision(manual_mode: bool, rp_state: str, want_auto: bool, last_auto_cm
     return True, 'to_manual'
 
 
+def playback_allowed(mode: str, allowed_modes) -> bool:
+    """Pure rule: may the base playback start? mode = CARBOT_MODE ('' = unset)."""
+    if not mode:
+        return True
+    return mode in [str(m) for m in (allowed_modes or [])]
+
+
 class CarbotVehicleExtension:
 
     def __init__(self, node):
@@ -63,6 +79,14 @@ class CarbotVehicleExtension:
         if self.enabled_arm:
             node.create_subscription(Bool, VEHICLE_ARM_TOPIC, self._on_arm, 10)
         self._last_action = ''
+        self.mode = os.environ.get('CARBOT_MODE', '')
+        allowed = list(_param(node, 'carbot_playback_allowed_modes', ['calibrate']))
+        self.playback_ok = playback_allowed(self.mode, allowed)
+        if not self.playback_ok and hasattr(node, '_start_playback'):
+            node._start_playback = self._blocked_playback   # joystick X and /record_playback_cmd both call this
+        node.get_logger().info(f'Carbot extension: playback '
+                               f'{"allowed" if self.playback_ok else "BLOCKED"} in mode '
+                               f'"{self.mode or "unset"}" (allowed: {allowed})')
         node.get_logger().info(f'Carbot extension: battery {rate:.1f} Hz on {VEHICLE_BATTERY_TOPIC}, '
                                f'arm on {VEHICLE_ARM_TOPIC} ({"enabled" if self.enabled_arm else "disabled"})')
 
@@ -73,6 +97,11 @@ class CarbotVehicleExtension:
             return
         if v > 0.0:
             self.battery_pub.publish(self.Float32(data=v))
+
+    def _blocked_playback(self) -> None:
+        self.node.get_logger().error(
+            f'PLAYBACK REFUSED in {self.mode} mode: recorded motion would bypass the command '
+            f'owner and safety veto. Parking is planned by block 11 (Reeds-Shepp).')
 
     def _on_arm(self, msg) -> None:
         n = self.node

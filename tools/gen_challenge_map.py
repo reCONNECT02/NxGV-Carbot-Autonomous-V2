@@ -31,8 +31,9 @@ def main():
         '',
         'Marks are EXCELLENT / COMPLETED / PARTIAL / FAIL from the rulebook rubric. '
         'Any manual intervention (touch, e-stop, reset, reposition) scores 0 for that '
-        'challenge; timer-based traffic-light logic scores 0; pre-recorded motion is '
-        'allowed for parking only.',
+        'challenge; timer-based traffic-light logic scores 0. The rulebook allows '
+        'pre-recorded motion for parking only, but we do not use it: parking (block 11) '
+        'is a Reeds-Shepp manoeuvre planned into the observed bay from the estimated pose.',
         '',
         f'Maximum total: **{total}** marks.',
         '',

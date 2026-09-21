@@ -9,6 +9,10 @@ levels: [EXCELLENT, COMPLETED, PARTIAL, FAIL]
 rules:
   manual_intervention_scores_zero: true   # touch, e-stop, controller reset, reposition
   timer_based_traffic_light_scores_zero: true
+  # RULEBOOK LIMIT, not our strategy: the most the rules would allow. We never
+  # replay motion. Parking = block 11 Reeds-Shepp plan into the observed bay;
+  # base-repo playback is blocked in race mode (base_nodes.yaml
+  # carbot_playback_allowed_modes). Key kept unchanged; nothing reads it.
   prerecorded_motion_allowed_only_for: parking
 challenges:
   - id: 1

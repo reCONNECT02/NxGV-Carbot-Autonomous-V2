@@ -28,6 +28,21 @@ def test_arm_rule():
     assert d(True, 'IDLE', False, 0.02, 0.4) == (True, 'none')
 
 
+def test_playback_blocked_in_race():
+    ok = _load().playback_allowed
+    assert ok('race', ['calibrate']) is False
+    assert ok('calibrate', ['calibrate']) is True
+    assert ok('race', []) is False
+    assert ok('', ['calibrate']) is True          # standalone base-repo use keeps base behaviour
+
+
+def test_race_config_blocks_playback():
+    import yaml
+    cfg = os.path.join(HERE, '..', '..', 'carbot_bringup', 'config', 'params', 'base_nodes.yaml')
+    p = yaml.safe_load(open(cfg))['servo_controller']['ros__parameters']
+    assert 'race' not in p['carbot_playback_allowed_modes']
+
+
 def test_topic_names_match_carbot_common():
     from carbot_common import topics as T
     ns = {}

@@ -37,6 +37,9 @@ servo_controller:
     # Carbot extension (control_servo/carbot_extension.py, phase 5; additive)
     carbot_arm_enabled: true        # /carbot/vehicle/arm from the command owner -> AUTO / MANUAL
     carbot_battery_rate_hz: 1.0     # /carbot/vehicle/battery_v
+    # base record/playback bypasses command owner + safety veto; parking is
+    # planned (block 11), never replayed. Modes where playback may start:
+    carbot_playback_allowed_modes: [calibrate]
 
 tunnel_wall_follower:
   ros__parameters:

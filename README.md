@@ -70,7 +70,14 @@ ros2 launch carbot_bringup calibrate.launch.py
 
 * Fully autonomous after START; the GUI e-stop is labelled
   "counts as manual intervention = 0 marks".
-* No timer-based traffic-light logic (scores 0); pre-recorded motion for parking only.
+* No timer-based traffic-light logic (scores 0). The traffic light is judged from
+  the detector's red/green state only.
+* Parking is planned, not replayed: block 11 plans a Reeds-Shepp manoeuvre (V4
+  `parkingPlan`) into the bay observed by local memory, from the car's actual
+  estimated pose, and replans at every gear change. (The rulebook would allow
+  pre-recorded motion for parking only; we don't use it anywhere.) The base
+  repo's record/playback feature is blocked in race mode because playback drives
+  the motors directly, bypassing the command owner and safety veto.
 * Roundabout exits are chosen by the global planner (block 07) from `mission.yaml`.
   The boom-gate detector only drives the Challenge 4 stop/proceed; a gate/route
   disagreement is logged and shown in the GUI but never changes the route.

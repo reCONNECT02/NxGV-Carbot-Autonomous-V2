@@ -350,3 +350,18 @@ recovers (13 cm reverse, rejoin). Manoeuvre body margins > 0.
   and recovery (3 cm/s) sit just above it.
 * Whether `Rosmaster.set_motor(0)` brakes or coasts (the speed controller never reverses
   the motor to brake inside one gear).
+
+### Phase 5 follow-up (before phase 6)
+
+* Wording fix: README / CHALLENGE_MAP / challenges.yaml said "pre-recorded motion
+  for parking only", which read as our strategy. It is only the rulebook limit.
+  Our parking is block 11: Reeds-Shepp planned into the observed bay, from the
+  estimated pose, replanned at each gear change. Nothing replays motion.
+* New guard: the base servo_controller record/playback writes straight to
+  apply_hardware() (bypasses command owner + safety veto). carbot_extension now
+  refuses playback unless CARBOT_MODE is in
+  `servo_controller.carbot_playback_allowed_modes` (default `[calibrate]`).
+  New YAML key only; no topic, message or existing key renamed.
+* Phase 6 note: the base signage_detector / parking_controller / auto_driver
+  "parking sign -> preset playback" chain stays NOT launched. The new BPU
+  detector must not publish /record_playback_cmd.
