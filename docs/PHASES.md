@@ -102,6 +102,13 @@ never rename silently.
   `ipm_check.png`). Results go to the session layout of `calibration_store`.
 * **Boards**: `tools/calibration/make_boards.py` -> `docs/calibration/*.pdf`;
   layout picture `tools/calibration/draw_mat.py` -> `docs/images/calib_mat.png`.
+* **Floor sheet** (step-4 alternative to three A3 boards):
+  `make_boards.py --sheet` -> `docs/calibration/floor_sheet.pdf`, one large
+  print (1310 x 940 mm with the default YAML, fits a 1067 mm / 42 in roll) with
+  all boards at their exact `centre_m` / `yaw_deg` plus the centre line and
+  rear-axle line for placing the car. Tests: `python3 -m pytest -q tools/calibration`
+  (rasterises the layout and the PDF and re-detects every board against
+  `FloorBoard.ground_points`). No YAML keys or calibration code changed.
 
 ### Phase 2 contract changes
 * `LocalGrid.msg`: + `float32[] travel_since_m` (additive).

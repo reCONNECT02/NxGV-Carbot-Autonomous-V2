@@ -13,6 +13,12 @@ from the cross along / across the line) with its long side along yaw_deg.
 If a board is not fully visible in its camera, move it, MEASURE the new
 centre and edit centre_m - the measurement is what matters, not the default.
 
+Or use the single floor sheet (tools/calibration/make_boards.py --sheet ->
+docs/calibration/floor_sheet.pdf): all boards printed at their exact centre_m /
+yaw_deg, with the car's centre line and rear-axle line on the sheet. Tape it
+flat, put the car on the lines, check the scale bars - nothing to measure. The
+sheet must be regenerated whenever centre_m / yaw_deg change.
+
 For every camera the tool averages the board corners over several frames,
 solves the camera pose, reports how well the pose maps the board back onto
 the floor (ground error) and how far it is from the CAD mount, writes the

@@ -35,6 +35,9 @@ steps:
      # (rear-axle centre on the ground); yaw_deg = direction of the board's long
      # side. Defaults are where the CAD mounts should see each board fully; if a
      # board is cut off, move it and MEASURE the new centre.
+     # Alternative: make_boards.py --sheet -> docs/calibration/floor_sheet.pdf,
+     # all boards on ONE large print at exactly these positions (no measuring).
+     # After editing centre_m / yaw_deg, regenerate and reprint the sheet.
      target: {type: floor_markers, layout: docs/images/calib_mat.png,
               warn_nominal_offset_m: 0.03, warn_nominal_angle_deg: 5.0,
               boards: [
