@@ -88,19 +88,21 @@ UWB_RAW_FIX = '/carbot/uwb/raw_fix'                     # PointStamped venue, tr
 
 # Blocks 01/07 map + global plan
 TRACK_MAP_JSON = '/carbot/map/track_json'               # String JSON, transient local
-GLOBAL_ROUTE = '/carbot/plan/global_route'              # nav_msgs/Path (all legs), transient local
-ROUTE_INFO_JSON = '/carbot/plan/route_info'             # String JSON: legs, checkpoints, exits
+GLOBAL_ROUTE = '/carbot/plan/global_route'              # nav_msgs/Path (all pieces, 1 cm), transient local
+# Every planning Path (global route, active path, local path, parking path, corridor
+# guide) is in the track frame with pose.position.z = direction (+1 forward, -1 reverse).
+ROUTE_INFO_JSON = '/carbot/plan/route_info'             # String JSON: ok/reason, pieces, visits (exits), legs; latched
 
 # Block 08 mission
 MISSION_STATE = '/carbot/mission/state'                 # MissionState, transient local
 MISSION_EVENTS = '/carbot/mission/events'               # MissionEvent
 GATE_ROUTE_MISMATCH = '/carbot/mission/gate_route_mismatch'  # GateRouteMismatch
-ACTIVE_PATH = '/carbot/mission/active_path'             # nav_msgs/Path the tracker follows
+ACTIVE_PATH = '/carbot/mission/active_path'             # nav_msgs/Path: the active route piece, latched
 
 # Blocks 09-13 planning
 CORRIDOR = '/carbot/plan/corridor'                      # Corridor
 LOCAL_CANDIDATES = '/carbot/plan/local_candidates'      # CandidateArray
-LOCAL_PATH = '/carbot/plan/local_path'                  # nav_msgs/Path (selected)
+LOCAL_PATH = '/carbot/plan/local_path'                  # nav_msgs/Path: guide + selected offset (empty = no feasible)
 PARKING_CANDIDATES = '/carbot/parking/candidates'       # CandidateArray
 PARKING_PATH = '/carbot/parking/path'                   # nav_msgs/Path
 PARKING_BAY_JSON = '/carbot/parking/bay'                # String JSON (observed bay)

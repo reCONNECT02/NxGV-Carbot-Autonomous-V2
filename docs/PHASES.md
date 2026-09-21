@@ -9,8 +9,8 @@ never rename silently.
 | 1 | Repo skeleton, packages, launch files, YAML structure | **done** |
 | 2 | Perception (3 cameras, IPM, stitch, road mask) | **done** |
 | 3 | Localization + UWB | **done** |
-| 4 | Global planner, mission logic, local planner | next |
-| 5 | Parking, recovery, command owner + safety | |
+| 4 | Global planner, mission logic, local planner | **done** |
+| 5 | Parking, recovery, command owner + safety | next |
 | 6 | Detectors (traffic light, boom gate, bump sign) | |
 | 7 | GUI main tab + diagnostic tabs | |
 | 8 | Calibration wizard + race mode | |
@@ -71,7 +71,7 @@ never rename silently.
 | `servo_controller` has no battery topic or arm topic yet (`/carbot/vehicle/battery_v`, `/carbot/vehicle/arm`): add as a wrapper/extension without changing its motor code. | topics.py | 5 |
 | `bpu_ratio_path` on RDK X5 unverified. | ops.yaml | 7 |
 | `battery_min_v: 10.8` — confirm for the pack. | ops.yaml | 8 |
-| Challenge 4 boom-gate position is provisional — MEASURE ON SITE. | mission.yaml | 4/8 |
+| Challenge 4 boom-gate position is provisional — MEASURE ON SITE. | track_features.yaml (phase 4) | 8 / on site |
 | `bpu_detector.model_path` is relative to the repo root; resolve against the workspace in phase 6. | detectors.yaml | 6 |
 
 
@@ -133,9 +133,8 @@ never rename silently.
 
 * `tools/map/map_builder.py`, `tools/map/mission_planner.py`: the team's
   offline block-01/07 tools, committed unchanged. They write `track_map.yaml` /
-  `mission.yaml` **version 2**; the stack's `config/data/` files are still the
-  phase-1 **version 1** layout. Phase 4 decides how the two meet (see
-  `tools/map/README.md`). The VS Code sandbox world also reads version 1.
+  `mission.yaml` **version 2**, which the stack reads directly since phase 4
+  (see `tools/map/README.md`).
 * `docs/reference/`: rulebook PDF, RISA Bot spec sheet, V4 simulator sources
   (`v4_simulator/*.js`, the reference every port follows), GUI reference
   screenshots (`gui/`, the look of the main tab for phase 7).
@@ -204,3 +203,89 @@ never rename silently.
 * Known real-car points to watch: base `servo_controller` EMA-filters IMU yaw
   (lag ~0.3 s in corners); `/odom` yaw comes from the servo command, not the IMU;
   `wheel_base` 0.14 (base) vs 0.216 (V4) is still unreconciled (step 7).
+
+
+## Phase 4 — what exists
+
+The team's own map and mission are now the stack's data. **Only these six
+nodes changed** from stubs to real code: `track_map_server` (01),
+`global_planner` (07), `mission_logic` (08), `corridor` (09), `local_planner` (10),
+`path_tracker` (13). Parking (11), recovery (12), safety (14) and the command
+owner (15) are still stubs, so **the car does not drive itself yet**: the
+command owner keeps publishing zeros.
+
+* **Data** (`config/data/`):
+  * `track_map.yaml` = the team's v2 map, `mission.yaml` = the team's v2 mission
+    (re-planned on this map: same poses, same exits; fingerprint fixed).
+  * NEW `track_features.yaml` (hand-edited): start + light stop poses as
+    `{mission_pose: P0 / P1}`, traffic light, both boom gates, bump, hill,
+    tunnel (along `tunnel_corner`). All marked `provisional`.
+  * NEW `mission_rules.yaml` (hand-edited): per-leg `end_behaviour` /
+    `parking_bay`, `roundabout_visits` (planned exits), `gate_route_check`,
+    `challenge4_gate`, `traffic_light`, `transitions`, `speed_zones`.
+  * `v4_reference/track_map.yaml` + `mission.yaml`: the phase-1 V4 files (v1),
+    MOVED here. Tests and the phase-2/3 sandboxes use them explicitly.
+* **`carbot_common`**: `course.py` reads v1 and v2 (v2 via `map_geometry.py`,
+  a verbatim port of `map_builder.py` section 3; centrelines and areas are
+  identical, the field agrees to < 1 cm at the edges) + V4 body checks
+  (`body_clear_many`, `body_margin_many`, `road_clear_many`), `crossable()`,
+  `in_area()` on polygons, `file_fingerprints()` (raw / LF / CRLF sha1),
+  `course_from_params()`. NEW `mission.py`: one `Mission` object for v1/v2
+  (pieces road / manoeuvre, rules, poses, `named_poses()`).
+* **Cores** (`carbot_planning/*_core.py`, pure Python, used by the nodes, the tests and
+  the sandbox): `route_core` (V4 hybridPlan port, v2 check, exits, 1 cm resample),
+  `evidence` (V4 evidence/support over the road grid + memory), `corridor_core`,
+  `local_core`, `tracker_core` (V4 Controller + splitGears sequencing), `mission_core`.
+* **Verified against the V4 JS in Node** (`tools/v4_harness/`, `test_v4_equivalence.py`):
+  hybridPlan/buildMission identical (1777 + 1017 points); local planner identical
+  to 1e-9 given the same guide; corridor within one 9 mm probe step (probes sit
+  exactly on cell edges, so 1e-7 route differences can flip one edge).
+* **Closed loop** (`tools/sandbox/run_planning.py`, `test_closed_loop_full_mission`): the whole
+  team mission completes in the sim: challenges 1-11 entered in order, observed-green
+  release, gate check against visit 1 only, 3 manoeuvres (stand-in), COMPLETE.
+  Lane driving body margin >= -0.6 cm (worst: roundabout west exit, 1.53, 0.78).
+* **Rules enforced in code**: no timer anywhere in the light / gate logic (tests hold 5 min
+  on RED and forever on a closed gate); gate-vs-route mismatch = GateRouteMismatch + banner,
+  route untouched; TUNNEL needs the base `/tunnel_detected` AND the tunnel zone; e-stop
+  -> SAFETY_STOP + event "MANUAL INTERVENTION ... = 0 marks".
+
+### Contract changes (additions unless marked)
+* **DATA_KEYS**: + `track_features`, `mission_rules` (every node gets `data.track_features`,
+  `data.mission_rules`; a session may override them like the others).
+* **MOVED**: phase-1 `config/data/track_map.yaml` + `mission.yaml` (v1) ->
+  `config/data/v4_reference/`. The default files are now v2.
+* **Path convention**: every planning Path is in `track`, `pose.position.z` = direction (+1/-1).
+* **Corridor.msg**: header frame is `track` (comment only, approved).
+* **ACTIVE_PATH** = the active route piece (road piece, or the manoeuvre preview / empty).
+  **LOCAL_PATH** = guide + selected offset; EMPTY = no feasible candidate / tracking problem.
+* **mission_logic** subscribes additionally to `/carbot/request/recovery` and the road grid
+  (camera age). **local_planner** to `/carbot/owner/state` (steering estimate) and TF
+  base_link -> laser_frame. **corridor** to `/odom` and route info.
+* **v1 mission.yaml**: `roundabout_visits[].direction`, `challenge4_gate.near_route_m` added.
+* **YAML**: new keys in `planning.yaml` (all six nodes, marked `# phase 4`) and
+  `common.yaml memory_evidence.*`. No existing key renamed or re-valued.
+* `local_pose` loads the map with `course_from_params` (v2 needs the features + mission);
+  `calib_map_uwb.named_poses` uses `carbot_common.mission.named_poses`.
+* `.gitattributes`: YAML/py/sh/md/js stored with LF.
+
+### For phase 5
+* **Parking (11)**: publish `/carbot/parking/path` (latched) for the active manoeuvre piece;
+  `path_tracker` already follows it one gear at a time (0.4 s holds) and sets `arrived` at the
+  end; `mission_logic` completes the piece when arrived AND within `parking_arrive_m` (3 cm)
+  of the path end. The team's previews are drawn at the minimum turning radius: replaying
+  them from a 1 cm / 3 deg start error ends 30 cm off, so plan from the ACTUAL pose (V4 does),
+  replan at cusps and for terminal heading (sim stand-in: 2.5-6 deg end error, up to 5 cm
+  over the edge leaving the parallel bay). Leg 3 = un-park (manoeuvre), road, park.
+  The v2 bay polygons come from the map (`course.area_polys`), the observed bay from memory.
+* **Recovery (12)**: publish `/carbot/request/recovery` while active (arrived = done);
+  mission logic switches to RECOVERY on a fresh request (ROAD only). Problem signals:
+  `local_candidates.selected_id == -1` / empty `local_path` (no feasible candidate or
+  tracking error > 10 cm).
+* **Safety (14)**: `corridor.branch_hold` + `branch_reason` is the V4 route-identity hold;
+  mission logic shows SAFETY_STOP from `SafetyStatus` but the veto itself is the owner's.
+* **Command owner (15)**: follow `MissionState.active_source`; `HOLD` = zero. Tracker requests
+  already carry the lowest speed-zone cap. Steering is REP-103 (+ left).
+* **Tunnel bridge**: activate while `MissionState.mode == TUNNEL` (`active_source` TUNNEL).
+* Not yet measured on the car: roundabout exit tracking (0.6 cm over in the sim), real
+  camera corridor stability, planner CPU (laptop: corridor 0.7 ms, local planner 11 ms,
+  x2 when the relaxed pass runs; expect ~5x slower on the RDK X5 A55 cores, budget 200 ms at 5 Hz).

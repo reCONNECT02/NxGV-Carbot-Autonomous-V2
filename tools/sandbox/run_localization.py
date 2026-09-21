@@ -409,7 +409,7 @@ def main():
     ap.add_argument('--seed', type=int, default=1)
     a = ap.parse_args()
     loc, uwb = load_params(os.path.expanduser(a.session))
-    with open(os.path.join(CONFIG, 'data', 'track_map.yaml')) as f:
+    with open(os.path.join(CONFIG, 'data', 'v4_reference', 'track_map.yaml')) as f:
         course = Course(yaml.safe_load(f))
     if not a.bag:
         # the sim assumes steps 10 + 11 are done (offsets applied, map aligned)

@@ -8,7 +8,7 @@ import yaml
 
 from carbot_common.course import Course, js_round, sample_arc
 
-TM = os.path.join(os.path.dirname(__file__), '..', '..', 'carbot_bringup', 'config', 'data', 'track_map.yaml')
+TM = os.path.join(os.path.dirname(__file__), '..', '..', 'carbot_bringup', 'config', 'data', 'v4_reference', 'track_map.yaml')
 
 
 @pytest.fixture(scope='module')

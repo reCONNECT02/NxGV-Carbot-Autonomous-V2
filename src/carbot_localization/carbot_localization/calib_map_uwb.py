@@ -34,18 +34,10 @@ STEP_ID = 'map_uwb_alignment'
 
 
 def named_poses(config_dir: str) -> Dict[str, Tuple[float, float, float]]:
-    """start_pose, light_goal_pose and every mission checkpoint with x/y/a."""
-    tm = ct.load_yaml(os.path.join(config_dir, 'data', 'track_map.yaml'))
-    mi = ct.load_yaml(os.path.join(config_dir, 'data', 'mission.yaml'))
-    out = {}
-    for k in ('start_pose', 'light_goal_pose'):
-        p = tm[k]
-        out[k] = (float(p['x']), float(p['y']), float(p['a']))
-    for leg in mi.get('legs', []):
-        for c in leg.get('checkpoints') or []:
-            if 'x' in c:
-                out.setdefault(c['name'], (float(c['x']), float(c['y']), float(c['a'])))
-    return out
+    """start_pose, light_goal_pose and every mission pose / checkpoint with x/y/a
+    (track_map + mission v1 or v2; phase 4 moved the logic to carbot_common.mission)."""
+    from carbot_common.mission import named_poses as _named
+    return _named(config_dir)
 
 
 class Recorder:

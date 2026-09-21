@@ -1,0 +1,15 @@
+# Keep YAML (and scripts) with LF line endings in the repo and on the robot.
+# mission.yaml stores the sha1 of the track_map.yaml it was planned on; the
+# stack accepts the LF and CRLF fingerprints, but mixed endings between
+# laptops are the easiest way to get "planned on a different map" otherwise.
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.py    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.js    text eol=lf
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.bin   binary

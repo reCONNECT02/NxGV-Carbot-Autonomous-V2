@@ -3,6 +3,7 @@ calibration steps). Tunable scalars live in ROS parameter files instead.
 
 Launch passes every node the resolved path of each data file as parameters
 data.track_map, data.mission, data.cameras, data.uwb, data.challenges,
+data.track_features, data.mission_rules (phase 4),
 data.calibration_steps (a calibration session may override the repo default).
 """
 import os
@@ -10,7 +11,8 @@ from typing import Any, Dict
 
 import yaml
 
-DATA_KEYS = ('track_map', 'mission', 'cameras', 'uwb', 'challenges', 'calibration_steps')
+DATA_KEYS = ('track_map', 'mission', 'cameras', 'uwb', 'challenges', 'calibration_steps',
+             'track_features', 'mission_rules')   # phase 4: + track_features, mission_rules (v2 companions)
 
 
 def load_yaml(path: str) -> Dict[str, Any]:

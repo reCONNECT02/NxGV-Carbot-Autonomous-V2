@@ -72,7 +72,7 @@ class TrackWorld:
     """track_map.yaml rasterised to a floor texture."""
 
     def __init__(self, res: float = 0.005, edge_m: float = 0.02):
-        t = load_yaml(os.path.join(CONFIG, 'data', 'track_map.yaml'))
+        t = load_yaml(os.path.join(CONFIG, 'data', 'v4_reference', 'track_map.yaml'))
         self.t = t
         self.res = res
         w, h = t['extent_m']

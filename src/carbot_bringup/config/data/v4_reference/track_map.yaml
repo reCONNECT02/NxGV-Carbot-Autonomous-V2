@@ -1,0 +1,112 @@
+# =============================================================================
+# track_map.yaml VERSION 1 -- V4 REFERENCE (tests, sandbox). The stack default is
+# config/data/track_map.yaml v2 (tools/map/map_builder.py) + track_features.yaml.
+#
+# BLOCK 01 prior map (track frame, metres, radians)
+#
+# Faithful port of V4 core.js `Course` + PHOTO_DIMENSIONS. V4 builds the course
+# procedurally; here every primitive is written out as data. The loader (phase 4)
+# must reproduce core.js exactly:
+#   * every x is multiplied by scale.sx, every y by scale.sy
+#   * sx = course_length_m / 7.00, sy = course_width_m / 5.00   (both 1.0 by default)
+#   * drivable field = max over (distance-to-centreline raster at lane_width/2,
+#     rects, flares), raster resolution field_resolution_m, search radius 31 cells
+#
+# Provenance: "Drawing reconstruction: 7 m main outer width; right spur extends
+# to 7.5 m. Drawing width and height are not a uniform screenshot scaling." (V4)
+# Source drawing: rulebook page 4. Re-check on site (Day 1) before the race.
+# =============================================================================
+version: 1
+frame: track
+course_length_m: 7.00        # V4 courseLengthCm (drawing x-axis)
+course_width_m: 5.00         # V4 courseWidthCm (drawing y-axis)
+extent_m: [7.65, 5.15]       # V4 w, h before scaling
+lane_width_m: 0.30           # measured
+field_resolution_m: 0.01
+field_search_cells: 31
+
+# ---- Road centrelines (each sampled every 0.025 m) --------------------------
+# line: [x0, y0, x1, y1]          arc: [cx, cy, r, a0, a1]  (radians, a0 -> a1)
+centrelines:
+  - {id: top_straight,      line: [1.00, 4.75, 6.00, 4.75]}
+  - {id: top_left_corner,   arc:  [1.00, 4.00, 0.75, 1.5707963, 3.1415927]}
+  - {id: left_straight,     line: [0.25, 4.00, 0.25, 1.50]}
+  - {id: bottom_left_corner_tunnel, arc: [1.00, 1.50, 0.75, 3.1415927, 4.7123890]}
+  - {id: gate_approach,     line: [1.00, 0.75, 1.90, 0.75]}
+  - {id: top_right_corner,  arc:  [6.00, 4.00, 0.75, 0.0, 1.5707963]}
+  - {id: right_straight,    line: [6.75, 4.00, 6.75, 2.05]}
+  - {id: bottom_right_corner, arc: [6.00, 2.05, 0.75, -1.5707963, 0.0]}
+  - {id: start_lane,        line: [4.35, 1.30, 7.50, 1.30]}   # y = upper_lane_y
+  - {id: roundabout_east,   line: [2.95, 0.80, 3.55, 0.80]}
+  - {id: roundabout_ring,   arc:  [2.40, 0.80, 0.60, 0.0, 6.2831853]}
+  - {id: parking_spur,      line: [2.40, 1.35, 2.40, 3.15]}
+  - {id: parking_corner,    arc:  [2.80, 3.15, 0.40, 1.5707963, 3.1415927]}
+  - {id: perpendicular_row, line: [2.80, 3.55, 3.91, 3.55]}
+
+# upper_lane_y = lane_change.y + lane_change.width - lane_width/2 = 0.65 + 0.80 - 0.15
+upper_lane_y_m: 1.30
+
+roundabout: {x: 2.40, y: 0.80, radius_m: 0.60}
+
+# Tapered junction mouths traced from the drawing (V4 flares). The second and
+# third are generated from `east`: mirror x -> 4.8 - x, and rotate about the
+# roundabout: (x, y) -> (2.4 - (y - 0.8), 0.8 + (x - 2.4)).
+flares:
+  east: [[2.90, 1.18], [3.18, 0.95], [3.50, 0.95], [3.50, 0.65], [3.18, 0.65], [2.90, 0.42]]
+  derived: [mirror_x_4p8, rotate_about_roundabout]
+
+# ---- Special areas (x0, x1, y0, y1) -----------------------------------------
+photo_dimensions:            # V4 PHOTO_DIMENSIONS (cm in V4, metres here)
+  lane_change_length_m: 0.80
+  lane_change_width_m: 0.80
+  lane_change_divider_m: 0.03
+  parallel_length_m: 0.69
+  parallel_width_m: 0.47
+  parking_border_m: 0.03
+  perpendicular_depth_m: 0.47
+  perpendicular_width_m: 0.45
+  perpendicular_left_space_m: 0.17
+  perpendicular_right_space_m: 0.24
+
+areas:
+  lane_change:          [3.55, 4.35, 0.65, 1.45]
+  parallel_bay:         [1.78, 2.25, 2.20, 2.89]    # px = 2.25 - 0.47, py = 2.20, top = py + 0.69
+  parallel_bay_outer:   [1.75, 2.28, 2.17, 2.92]    # bay +/- tape
+  parallel_opening:     [1.78, 2.40, 2.20, 2.89]    # drivable
+  perpendicular_bay:    [3.34, 3.79, 2.93, 3.40]    # vx = 3.34, depth 0.47
+  perpendicular_zone:   [3.14, 4.06, 2.93, 3.40]    # drivable: bay + side spaces + tape
+  perpendicular_apron:  [2.80, 4.06, 3.40, 3.70]    # drivable
+drivable_areas: [lane_change, parallel_opening, perpendicular_zone, perpendicular_apron]
+
+# ---- Paint markings (white; kind 'crossable' = dashed, may be driven over) --
+# rect: [x0, x1, y0, y1]; dashed: along axis from..to, dash length, period.
+markings:
+  - {id: lane_change_divider, kind: crossable, dashed: {axis: x, from: 3.55, to: 4.35, dash: 0.14, period: 0.20, across: [1.035, 1.065]}}
+  - {id: parallel_left,   kind: border, rect: [1.75, 1.78, 2.17, 2.92]}
+  - {id: parallel_bottom, kind: border, rect: [1.75, 2.28, 2.17, 2.20]}
+  - {id: parallel_top,    kind: border, rect: [1.75, 2.28, 2.89, 2.92]}
+  - {id: parallel_open_side, kind: crossable, dashed: {axis: y, from: 2.20, to: 2.89, dash: 0.12, period: 0.21, across: [2.25, 2.28]}}
+  - {id: perp_bay_left,  kind: crossable, dashed: {axis: y, from: 2.93, to: 3.40, dash: 0.11, period: 0.18, across: [3.31, 3.34]}}
+  - {id: perp_bay_right, kind: crossable, dashed: {axis: y, from: 2.93, to: 3.40, dash: 0.11, period: 0.18, across: [3.79, 3.82]}}
+  - {id: perp_zone_left,   kind: border, rect: [3.11, 3.14, 2.90, 3.40]}
+  - {id: perp_zone_right,  kind: border, rect: [4.06, 4.09, 2.90, 3.73]}
+  - {id: perp_zone_bottom, kind: border, rect: [3.11, 4.09, 2.90, 2.93]}
+# NOTE dash visual length/gap are V4 rendering assumptions; clear dimensions and
+# the 3 cm divider follow photos.
+
+# ---- Features ----------------------------------------------------------------
+start_pose:        {x: 7.18, y: 1.30, a: 3.1415927}     # bottom-right, facing west
+light_goal_pose:   {x: 6.75, y: 3.80, a: -1.5707963}    # traffic-light stop pose
+traffic_light:     {x: 6.98, y: 3.00, z: 0.28}
+boom_gates:
+  roundabout_exit1: {x: 0.99, y: 0.75, provisional: false}   # V4 gate (log-only, see mission.yaml)
+  challenge4:       {x: 1.95, y: 4.75, provisional: true}    # rulebook p.4 section A (left); MEASURE ON SITE
+speed_bump:        {x: 4.60, half_width_m: 0.02, y0: 4.53, y1: 4.97, height_m: 0.01}
+# Hill: raised-cosine ramp up 0.725 m, flat 0.50 m, ramp down 0.725 m, 0.155 m high
+elevation:         {x0: 1.9775, x1: 3.9275, y0: 4.49, y1: 5.01, height_m: 0.155, ramp_m: 0.725, flat_end_m: 1.225}
+# Tunnel: quarter annulus around (1.0, 1.5); inside when xx<=0.03, yy<=0.02 and
+# 0.485 < hypot(xx, yy) < 1.015 with xx = x - 1.0, yy = y - 1.5
+tunnel:            {cx: 1.00, cy: 1.50, r_in: 0.485, r_out: 1.015, x_max_rel: 0.03, y_max_rel: 0.02,
+                    inner_width_m: 0.53, clear_height_m: 0.27}
+parking_goal:      {bay: parallel_bay, heading: 1.5707963}   # centre of bay shifted by (front-rear)/2
+sign_height_m: 0.15

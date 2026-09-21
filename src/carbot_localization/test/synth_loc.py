@@ -20,7 +20,7 @@ OFFSETS = {'1782': 0.98, '1786': 1.05, '1783': 0.92}
 
 
 def track_map():
-    with open(os.path.join(CONFIG, 'data', 'track_map.yaml')) as f:
+    with open(os.path.join(CONFIG, 'data', 'v4_reference', 'track_map.yaml')) as f:
         return yaml.safe_load(f)
 
 

@@ -6,6 +6,7 @@
 track_map_server:
   ros__parameters:
     publish_period_s: 0.0           # 0 = latched once (transient local)
+    centreline_step_m: 0.05         # phase 4: map JSON centreline spacing (GUI)
 
 global_planner:
   ros__parameters:
@@ -20,6 +21,8 @@ global_planner:
     reverse_planning_margin_m: 0.006
     goal_tolerance_m: 0.025
     goal_tolerance_rad: 0.035
+    reverse_goal_tolerance_m: 0.01  # phase 4: V4 hybridPlan reverse goal (parking fallback)
+    reverse_goal_tolerance_rad: 0.02
     heuristic_heading_weight: 0.12
     heuristic_inflation: 1.25
     cost_reverse_factor: 1.07
@@ -32,6 +35,10 @@ global_planner:
     clockwise_ring_outer_m: 0.80
     clockwise_min_dot: -0.05
     cache_routes: true              # plan once at startup, cache in the data root
+    # phase 4: v2 mission.yaml routes are CHECKED, not replanned. Our raster and
+    # map_builder's differ by up to ~5 mm at the road edge, hence the tolerance.
+    route_check_tolerance_m: 0.005
+    densify_step_m: 0.01            # every route resampled to 1 cm (V4 path density)
 
 mission_logic:
   ros__parameters:
@@ -41,6 +48,17 @@ mission_logic:
     tunnel_zone_margin_m: 0.30
     detection_max_age_s: 0.5
     announce_banners: true
+    # phase 4
+    tunnel_exit_dwell_s: 0.5        # trigger off this long -> back to ROAD
+    tunnel_trigger_max_age_s: 0.5   # /tunnel_detected older than this = false
+    arrive_check_m: 0.05            # road piece done: tracker arrived AND this close to its end
+    parking_arrive_m: 0.03          # manoeuvre done: tracker arrived AND this close to the parking path end
+    request_max_age_s: 0.3
+    safety_max_age_s: 0.3
+    pose_max_age_s: 0.3
+    banner_hold_s: 4.0
+    challenge_exit_dwell_s: 1.0     # a challenge zone counts a new visit only after this long outside
+    reacquire_error_m: 0.30         # route progress re-searched globally beyond this error
 
 corridor:
   ros__parameters:
@@ -73,6 +91,9 @@ corridor:
       agree_min_m: 0.25
       agree_sigma_mult: 3.0
       visual_rank_min: 0.25
+    # phase 4
+    pose_max_age_s: 0.3
+    grid_pose_max_gap_s: 0.15       # road grid used only if the local pose at its stamp is known
 
 local_planner:
   ros__parameters:
@@ -101,6 +122,24 @@ local_planner:
     paint_block_cells: 5
     relaxed_retry: true             # second pass with limits.line_tolerance_m
     problem_tracking_error_m: 0.10
+    # phase 4 (V4 values)
+    end_points: 5                   # rollout stops within end_distance_m of the guide end ...
+    end_distance_m: 0.035           # ... once within the last end_points points
+    footprint:                      # guidance.footprintEvidence sampling
+      inset_m: 0.012
+      step_m: 0.035
+      crossable_pad_m: 0.025        # dashed paint (+ this) does not count as paint
+    evidence_max_age_s: 3.0         # footprint evidence (V4 evidence maxAge 3)
+    memory_cost_max_age_s: 25.0     # 'seen before' cost term (V4 LocalMemory.query 25 s)
+    obstacle_check_strict: false    # V4: LiDAR obstacles only checked in the relaxed pass
+    obstacle_pad_m: 0.02
+    lidar_max_range_m: 2.0          # V4: range >= 1.999 = no return
+    lidar_max_age_s: 0.35
+    lidar_mount: tf                 # tf (base_link -> laser_frame, once) | fallback (vehicle.lidar_x_m)
+    corridor_max_age_s: 0.5
+    pose_max_age_s: 0.3
+    live_max_age_s: 0.30
+    grid_pose_max_gap_s: 0.15
 
 parking_planner:
   ros__parameters:
@@ -163,3 +202,11 @@ path_tracker:
     arrive_lateral_parking_m: 0.060
     search_back_points: 12
     search_ahead_points: 130
+    # phase 4 (V4 Controller values)
+    end_index_points: 8             # 'near the end' = within the last 8 points
+    gear_lookahead_points: 2
+    arrive_behind_m: 0.004
+    arrived_speed_mps: 0.002
+    parking_gear_hold_s: 0.4        # V4 transition(): hold between parking gear sections
+    local_path_max_age_s: 0.5
+    pose_max_age_s: 0.3

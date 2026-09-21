@@ -27,8 +27,9 @@ src/
   carbot_common/        topics.py (ALL topic names), frames, QoS, CarbotNode base,
                         geometry (V4 core.js port), calibration folder layout
   carbot_bringup/       race/calibrate launches, config/params/*.yaml (tunables),
-                        config/data/*.yaml (map, mission, cameras, uwb, challenges,
-                        calibration steps), root helper scripts
+                        config/data/*.yaml (track_map + mission from tools/map, their
+                        hand-edited track_features + mission_rules, cameras, uwb,
+                        challenges, calibration steps, v4_reference/), root helpers
   carbot_perception/    03 road perception, 04 local memory, camera preview streams
   uwb_localization/     UWB range parser (feeds block 06 only)
   carbot_localization/  05 smooth local pose, 06 coarse global pose
@@ -42,6 +43,9 @@ src/
   ros2_astra_camera/ ydlidar_ros2_driver/ YDLidar-SDK/     <- base repo, UNCHANGED
 firmware/uwb_tag/       ESP32 + DW1000 micro-ROS tag (TagConfig.example.h only)
 tools/uwb/              uwb_xy.py (debug trilateration), uwb_calib.py (anchor offsets)
+tools/map/              map_builder.py (track_map.yaml), mission_planner.py (mission.yaml)
+tools/sandbox/          laptop runners of the real node code (no ROS)
+tools/v4_harness/       runs the V4 simulator JS in Node for the equivalence tests
 tools/bpu_model/        base repo BPU model + training/conversion scripts
 tools/setup/            install_root_helpers.sh (mipi_cam as root via sudoers)
 tools/systemd/          carbot-race.service (optional auto-start)

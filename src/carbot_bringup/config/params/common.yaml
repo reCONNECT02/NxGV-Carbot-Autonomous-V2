@@ -33,3 +33,9 @@
       recovery_speed_mps: 0.03    # V4 recovery controller parkingSpeedCms 3
       # V4 lineToleranceCm: training override, NOT a competition permission.
       line_tolerance_m: 0.05
+    # phase 4: memory evidence rule for blocks 09 / 10 (V4 guidance.evidence);
+    # same values as local_memory.uncertainty_* (block 04 publishes, consumers decide).
+    memory_evidence:
+      uncertainty_base_m: 0.004
+      uncertainty_per_m: 0.006
+      uncertainty_limit_m: 0.02

@@ -21,7 +21,7 @@ import time
 import numpy as np
 import rclpy
 from carbot_common import topics as T
-from carbot_common.course import load_course
+from carbot_common.course import course_from_params
 from carbot_common.node import CarbotNode
 from carbot_common.qos import LATCHED, SENSOR
 from carbot_interfaces.msg import LocalGrid, LocalizationStatus, MissionState, NodeStatus
@@ -42,7 +42,7 @@ REQUIRED = ['rate_hz', 'motion_timeout_s', 'heading_blend', 'sigma.initial_m',
             'visual.sample_stride', 'visual.disable_pitch_rad', 'visual.disable_in_parking',
             'publish_tf', 'imu_timeout_s', 'pose_history_s', 'max_stamp_gap_s',
             'max_odom_step_m', 'heading_sigma_rad', 'status_publish_hz', 'init.source',
-            'data.track_map', 'frames.track', 'frames.base']
+            'data.track_map', 'data.track_features', 'data.mission', 'frames.track', 'frames.base']
 
 IDLE_MODES = ('', MissionState.MODE_IDLE, MissionState.MODE_COMPLETE)
 
@@ -63,7 +63,7 @@ class LocalPoseNode(CarbotNode):
 
     def __init__(self):
         super().__init__('local_pose', '05', REQUIRED)
-        self.course = load_course(str(self.p('data.track_map')))
+        self.course = course_from_params(self.p)      # phase 4: v1 or v2 (+ track_features, mission)
         self.track = str(self.p('frames.track'))
         self.base = str(self.p('frames.base'))
         self.est = LocalEstimator(LocalCfg.from_params(self.p), *self._initial_pose())

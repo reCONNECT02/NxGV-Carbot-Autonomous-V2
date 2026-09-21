@@ -9,15 +9,15 @@ Maximum total: **105** marks.
 | # | Challenge | Marks | Nodes | Parameters | GUI tab |
 |---|---|---|---|---|---|
 | 1 | Lane change | 10 / 8 / 5 / 0 | `corridor`, `local_planner`, `path_tracker` | `local_planner.offsets_m`, `corridor.*`, `limits.line_tolerance_m` | Local planner |
-| 2 | Roundabout (1st exit) | 10 / 8 / 5 / 0 | `global_planner`, `mission_logic`, `corridor` | `mission.yaml roundabout_visits`, `global_planner.*`, `speed_zones.roundabout` | Global map |
+| 2 | Roundabout (1st exit) | 10 / 8 / 5 / 0 | `global_planner`, `mission_logic`, `corridor` | `mission_rules.yaml roundabout_visits`, `global_planner.*`, `speed_zones.roundabout` | Global map |
 | 3 | Tunnel | 15 / 12 / 8 / 0 | `tunnel_wall_follower (base, unchanged)`, `tunnel_bridge`, `mission_logic` | `tunnel_wall_follower.*`, `tunnel_bridge.*`, `safety_monitor.tunnel_*` | Local memory + LiDAR |
-| 4 | Boom gate | 5 / 4 / 2 / 0 | `bpu_detector`, `mission_logic` | `mission.yaml challenge4_gate`, `bpu_detector.boom_gate_*` | Detections |
-| 5 | Hill | 10 / 8 / 5 / 0 | `mission_logic`, `command_owner (speed PID)`, `local_pose` | `speed_zones.hill_and_bump`, `command_owner.speed_pid.*`, `local_pose.visual.disable_pitch_rad` | Control + safety |
-| 6 | Speed bump | 5 / 4 / 2 / 0 | `bpu_detector`, `mission_logic`, `command_owner` | `speed_zones.bump_sign`, `bpu_detector.speed_bump_*` | Detections |
-| 7 | Traffic light | 10 / 8 / 5 / 0 | `bpu_detector`, `mission_logic` | `mission.yaml traffic_light`, `bpu_detector.traffic_light_*` | Detections |
+| 4 | Boom gate | 5 / 4 / 2 / 0 | `bpu_detector`, `mission_logic` | `mission_rules.yaml challenge4_gate`, `bpu_detector.boom_gate_*` | Detections |
+| 5 | Hill | 10 / 8 / 5 / 0 | `mission_logic`, `command_owner (speed PID)`, `local_pose` | `mission_rules.yaml speed_zones.hill_and_bump`, `command_owner.speed_pid.*`, `local_pose.visual.disable_pitch_rad` | Control + safety |
+| 6 | Speed bump | 5 / 4 / 2 / 0 | `bpu_detector`, `mission_logic`, `command_owner` | `mission_rules.yaml speed_zones.bump_sign`, `bpu_detector.speed_bump_*` | Detections |
+| 7 | Traffic light | 10 / 8 / 5 / 0 | `bpu_detector`, `mission_logic` | `mission_rules.yaml traffic_light`, `bpu_detector.traffic_light_*` | Detections |
 | 8 | Lane change 2 | 10 / 8 / 5 / 0 | `corridor`, `local_planner`, `path_tracker` | `local_planner.*`, `corridor.*` | Local planner |
-| 9 | Roundabout (2nd exit) | 5 / 4 / 2 / 0 | `global_planner`, `mission_logic`, `corridor` | `mission.yaml roundabout_visits` | Global map |
+| 9 | Roundabout (2nd exit) | 5 / 4 / 2 / 0 | `global_planner`, `mission_logic`, `corridor` | `mission_rules.yaml roundabout_visits` | Global map |
 | 10 | Parallel parking | 10 / 8 / 5 / 0 | `parking_planner`, `path_tracker`, `local_memory` | `parking_planner.*`, `path_tracker.parking_*` | Local planner |
-| 11 | Perpendicular parking | 5 / 4 / 2 / 0 | `parking_planner`, `path_tracker` | `parking_planner.*`, `mission.yaml leg3_perpendicular` | Local planner |
+| 11 | Perpendicular parking | 5 / 4 / 2 / 0 | `parking_planner`, `path_tracker` | `parking_planner.*`, `mission.yaml leg3 + mission_rules.yaml legs.leg3` | Local planner |
 | 12 | Overall lane following | 5 / 4 / 2 / 0 | `road_perception`, `corridor`, `local_planner`, `path_tracker` | `road_perception.*`, `corridor.*`, `path_tracker.*` | Perception |
 | 13 | Mission completion time | 5 / 4 / 3 / 2 / 0 | `scoreboard` |  | Scoreboard |

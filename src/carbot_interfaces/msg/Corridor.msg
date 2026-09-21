@@ -1,6 +1,6 @@
 # Block 09 -> block 10 and GUI main tab (lane lines). /carbot/plan/corridor
-std_msgs/Header header  # frame_id odom
-nav_msgs/Path guide     # route-conditioned guide, shifted by the observed offset
+std_msgs/Header header  # frame_id track (phase 4: the local pose frame, V4 builds the guide on estimate.pose)
+nav_msgs/Path guide     # route-conditioned guide, shifted by the observed offset (pose z = direction)
 geometry_msgs/Point[] centres   # measured lane centres (z = measured width)
 geometry_msgs/Point[] left_edge
 geometry_msgs/Point[] right_edge

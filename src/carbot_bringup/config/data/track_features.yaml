@@ -1,0 +1,47 @@
+# =============================================================================
+# track_features.yaml  -- BLOCK 01 features for a track_map.yaml VERSION 2
+#
+# map_builder.py writes ROAD GEOMETRY ONLY (and rewrites the whole file on
+# save), mission_planner.py writes the poses and routes. Everything else the
+# stack needs to know about the course lives here, edited by hand.
+# Track frame, metres, radians. Used by course.py (read with track_map.yaml).
+#
+# PROVISIONAL = copied from the V4 simulator / rulebook drawing, NOT measured on
+# our mat. MEASURE ON SITE and set provisional: false (docs/BACKLOG.md).
+# (A v1 track_map.yaml carries these keys itself and ignores this file.)
+# =============================================================================
+version: 1
+frame: track
+field_resolution_m: 0.01          # clearance raster (V4 Course.res)
+field_search_cells: 31            # lane band search radius (V4)
+
+# ---- Poses: {mission_pose: Pn} = take it from mission.yaml poses ------------
+start_pose:      {mission_pose: P0}
+# End of leg 1 = where the car stops and waits for an OBSERVED green.
+# PROVISIONAL: confirm P1 is the traffic-light stop line (V4 used y = 3.80).
+light_goal_pose: {mission_pose: P1, provisional: true}
+
+# ---- Traffic light (GUI render + detector range gating only; the stop is the
+# light_goal_pose). V4 offset from its stop pose: 0.80 m ahead, 0.23 m left.
+traffic_light:   {x: 6.98, y: 1.67, z: 0.28, provisional: true}
+
+# ---- Boom gates --------------------------------------------------------------
+# roundabout_exit1: its state is only COMPARED with the planned roundabout exit
+#   (mission_rules.yaml gate_route_check); it never changes the route.
+# challenge4: Challenge 4 stop / proceed (mission_rules.yaml challenge4_gate).
+boom_gates:
+  roundabout_exit1: {x: 0.99, y: 0.75, provisional: true}   # V4 gate
+  challenge4:       {x: 1.95, y: 4.75, provisional: true}   # rulebook p.4 section A
+
+# ---- Floor shape (V4 Course.surface) ----------------------------------------
+speed_bump: {x: 4.60, half_width_m: 0.02, y0: 4.53, y1: 4.97, height_m: 0.01, provisional: true}
+# Hill: raised-cosine ramp up 0.725 m, flat 0.50 m, ramp down 0.725 m, 0.155 m high
+elevation:  {x0: 1.9775, x1: 3.9275, y0: 4.49, y1: 5.01, height_m: 0.155, ramp_m: 0.725,
+             flat_end_m: 1.225, provisional: true}
+
+# ---- Tunnel: along the tunnel_corner arc of track_map.yaml -------------------
+# V4: quarter annulus r 0.485 .. 1.015 around the corner centre = arc +- 0.265 m.
+tunnel: {section: tunnel_corner, half_width_m: 0.265, end_margin_m: 0.02,
+         inner_width_m: 0.53, clear_height_m: 0.27, provisional: true}
+
+sign_height_m: 0.15

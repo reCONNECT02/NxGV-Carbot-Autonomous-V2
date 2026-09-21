@@ -4,6 +4,24 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "07-13 planning: drive the whole mission (team map)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_planning.py",
+      "cwd": "${workspaceFolder}", "args": []
+    },
+    {
+      "name": "07-13 planning: V4 reference map (hybrid A* planning)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_planning.py",
+      "cwd": "${workspaceFolder}", "args": ["--v4"]
+    },
+    {
+      "name": "07-13 planning: boom gate stays closed (must hold, no timer)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/run_planning.py",
+      "cwd": "${workspaceFolder}", "args": ["--gate-closed", "--t-max", "200"]
+    },
+    {
       "name": "03 road_perception: start line (synthetic)",
       "type": "debugpy", "request": "launch", "console": "integratedTerminal",
       "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",

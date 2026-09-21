@@ -1,6 +1,6 @@
 # Node sandbox (VS Code, no ROS)
 
-Test every phase-2 and phase-3 node on a laptop (Windows, macOS or Linux) before it goes on
+Test every phase-2, phase-3 and phase-4 node on a laptop (Windows, macOS or Linux) before it goes on
 the car. The runners import the **real** code from `src/` and read the **real**
 YAML from `src/carbot_bringup/config/`. Only the ROS plumbing (topics, timers) is
 replaced by a plain loop, so a fix made here is a fix on the car.
@@ -32,6 +32,7 @@ needs ROS (`test_import`) is skipped on a laptop.
 | `camera_preview` | `run_camera_preview.py` | GUI preview after the real JPEG round trip, KB per frame, bandwidth. `p` switches to the rosbag record stream. |
 | step 3 `calib_intrinsics` | `run_calib_intrinsics.py` | `--synth fisheye`: calibrates a virtual lens and prints the error against the truth. `--webcam 0`: the real auto-capture with your laptop camera and the printed board. |
 | step 4 `calib_extrinsics` | `run_calib_extrinsics.py` | `--synth`: renders the floor boards through cameras with a known mount error and checks the tool recovers it; shows detections and the IPM check. |
+| 07-13 planning (`global_planner`, `mission_logic`, `corridor`, `local_planner`, `path_tracker`) | `run_planning.py` | the whole mission on the map in `config/data`: route check / exits, every mission event (holds, light, gate, challenges), min body margin per piece (negative = over the lane edge), tracking error; `out/planning/run.png`. `--v4` plans the V4 course with the hybrid A*, `--gate-closed` must hold forever (no timer), `--red 30` waits 30 s at the light, `--data <session>/data` tests a calibration session. Parking is a stand-in (block 11 is phase 5). |
 
 Every runner takes `--help`. `--headless` saves frames to `tools/sandbox/out/`
 instead of opening windows. `tools/sandbox/out/` is git-ignored.

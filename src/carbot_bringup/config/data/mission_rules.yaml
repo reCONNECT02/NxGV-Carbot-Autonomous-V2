@@ -1,0 +1,66 @@
+# =============================================================================
+# mission_rules.yaml  -- BLOCKS 07 + 08 rules for a mission.yaml VERSION 2
+#
+# mission_planner.py writes mission.yaml (poses + routes) and rewrites the
+# whole file on save, so the hand-edited mission RULES live here instead.
+# (A v1 mission.yaml carries these keys itself and ignores this file.)
+#
+# The GLOBAL PLANNER (block 07) takes the route and the roundabout exits from
+# mission.yaml and checks them against `roundabout_visits`; a different exit =
+# route FAIL (race refuses to arm). The boom-gate detector NEVER changes the
+# route: gate_route_check only logs + warns in the GUI.
+# Track frame, metres, seconds.
+# =============================================================================
+version: 1
+
+# Behaviour per mission.yaml leg id (the leg's pieces come from mission.yaml).
+legs:
+  leg1: {end_behaviour: traffic_light_stop}            # stop; continue only after OBSERVED green
+  leg2: {end_behaviour: parking_handoff, parking_bay: parallel_bay}       # challenge 10
+  leg3: {end_behaviour: parking_handoff, parking_bay: perpendicular_bay}  # challenge 11
+
+# Planned roundabout exits (block 07 verifies mission.yaml against these).
+# exit = west | north | east (the roundabout control point the route leaves by).
+roundabout_visits:
+  - {visit: 1, leg: leg1, exit: west}     # challenge 2 (1st exit, to the tunnel)
+  - {visit: 2, leg: leg2, exit: north}    # challenge 9 (2nd exit, to parking)
+
+gate_route_check:
+  gate: roundabout_exit1                  # track_features.yaml boom_gates.<name>
+  expected_exit_when_open: west           # rulebook text: OPEN -> tunnel exit
+  expected_exit_when_closed: north        #                CLOSED -> parking exit
+  observe_within_m: 0.90                  # only compare while this close to the gate
+  min_confidence: 0.60
+  action: log_and_warn                    # the only supported action (route never changes)
+
+# Challenge 4 stop / proceed uses the detector (never a timer). V4 app.js values.
+challenge4_gate:
+  gate: challenge4
+  hold_distance_m: 0.53                   # GATE HOLD within this unless OPEN observed
+  commit_distance_m: 0.65                 # OPEN observed within this (gate ahead) -> commit
+  hold_x_margin_m: 0.30                   # hold also this far past the gate line
+  near_route_m: 0.40                      # gate ignored if further than this from the route
+  observation_expiry_s: 0.40
+
+traffic_light:
+  stop_distance_m: 0.35                   # V4 lightDistance < .35
+  observation_expiry_s: 0.40
+  # Timer-based logic is PROHIBITED (rulebook 7.3 ch.7): proceed only on an observed GREEN.
+
+transitions:
+  mission_hold_s: 1.0                     # V4 hold after mission 1 completes
+  parking_start_hold_s: 0.5
+  gear_change_hold_s: 0.4
+
+# Speed zones (V4 app.js step). Speeds are caps; the LOWEST active one wins.
+# region types: track_feature (tunnel | elevation), roundabout (radius around the
+# ring centre), circle, rect, section (route on these map sections), detection,
+# condition. GUI tuning (phase 7) edits max_speed_mps here.
+speed_zones:
+  - {name: tunnel,        max_speed_mps: 0.075, region: {type: track_feature, feature: tunnel}}
+  - {name: roundabout,    max_speed_mps: 0.055, region: {type: roundabout, radius_m: 0.90}}
+  - {name: hill_and_bump, max_speed_mps: 0.090, region: {type: rect, x0: 1.80, x1: 4.80, y0: 4.45, y1: 99.0}}
+  # NOT IN V4 (V4 slows from the prior map only). Rulebook ch.6: slow on the detected sign.
+  - {name: bump_sign,     max_speed_mps: 0.060, region: {type: detection, detection: speed_bump_sign, hold_m: 0.60}}
+  - {name: low_guidance,  max_speed_mps: 0.075, region: {type: condition, condition: corridor_observed_lt_3}}
+  - {name: stale_camera,  max_speed_mps: 0.035, region: {type: condition, condition: camera_age_gt_0p25}}

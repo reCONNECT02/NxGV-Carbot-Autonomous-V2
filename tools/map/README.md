@@ -14,10 +14,27 @@ python tools/map/map_builder.py edit lap.csv  # fit + drag points, s = save
 python tools/map/mission_planner.py           # track_map.yaml -> mission.yaml
 ```
 
-## Open decision for phase 4 (not changed yet)
+## How the stack uses these files (phase 4)
 
-The ROS stack still reads `src/carbot_bringup/config/data/track_map.yaml` and
-`mission.yaml` in the phase-1 **version 1** layout (V4 `Course` written out as
-centrelines/areas). These scripts write **version 2**. Phase 4 must either make
-the loaders read version 2, or have these scripts export version 1 too. Until
-then, do not copy their output over the files in `config/data/`.
+The stack reads **version 2** directly. `src/carbot_bringup/config/data/` holds:
+
+| File | Written by | Edit by hand? |
+|---|---|---|
+| `track_map.yaml` (v2) | `map_builder.py` | no (the tool rewrites it) |
+| `mission.yaml` (v2) | `mission_planner.py` | no (the tool rewrites it) |
+| `track_features.yaml` | hand | yes: light, gates, bump, hill, tunnel positions (MEASURE ON SITE) |
+| `mission_rules.yaml` | hand | yes: leg behaviours, planned roundabout exits, speed zones, gate/light rules |
+| `v4_reference/` | phase 1 | no: the V4 simulator course (v1) for tests and sandboxes |
+
+Block 07 does **not** replan a v2 mission. It checks it: the map fingerprint,
+the whole car body on the road along every road piece (5 mm tolerance for the
+two rasters), and the roundabout exits against `mission_rules.yaml`. Any failure
+= route FAIL with the reason, and race mode refuses to arm.
+
+**After every map edit, re-run `mission_planner.py`** (otherwise: "planned on a
+different track_map.yaml"). Windows line endings are fine: the stack accepts
+the LF and CRLF fingerprint, and `.gitattributes` stores YAML with LF.
+
+Parking pieces in `mission.yaml` are previews. They are drawn at the minimum
+turning radius, so they cannot be replayed from a slightly different start:
+block 11 (phase 5) replans them from the car's actual pose and the observed bay.
