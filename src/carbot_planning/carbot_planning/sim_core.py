@@ -5,8 +5,14 @@ local_core, tracker_core, mission_core) drive a simple V4-style plant
 (vehicle.js Plant: servo lag + rate limit, first-order speed) around the map.
 Sensors are ideal: the road grid is rendered from the prior map like V4
 scene.js (road where clearance >= 0, paint just outside), localization is the
-true pose. Detectors are scripted (traffic light turns GREEN after
-`light_red_s` of waiting, the boom gate is OPEN).
+true pose. Detectors (phase 6, `detector=`):
+  scripted    traffic light turns GREEN after `light_red_s` of waiting, the
+              boom gate state is global (`gate_open`) - the phase-4 behaviour;
+  associated  as scripted, plus per-gate observations like bpu_detector: every
+              map gate inside the front camera's view (hfov_deg, max 1.5 m)
+              gives (state, 0.9, x, y, has_range) in base_link;
+  none        nothing is ever detected (light and gate UNKNOWN): what the car
+              sees if the model misses everything.
 
 Phase 5: manoeuvre pieces are planned and sequenced by the real block 11
 ParkingSession (bay tape observed from the map paint = ideal memory), and the
@@ -41,6 +47,22 @@ def paint_points(course, pose, radius=1.2, step=0.02) -> np.ndarray:
             if math.hypot(x - pose[0], y - pose[1]) < radius:
                 pts.append((x, y))
     return np.asarray(pts, float).reshape(-1, 2)
+
+
+def visible_gates(course, pose, state: str, hfov_deg: float, max_range: float = 1.5):
+    """Ideal bpu_detector gate observations: map gates in the front camera's view."""
+    out = []
+    x, y, a = pose
+    for name in (getattr(course, 'feat', {}) or {}).get('boom_gates', {}) or {}:
+        try:
+            gx, gy = course.point('boom_gates', name)[:2]
+        except (KeyError, TypeError):
+            continue
+        dx, dy = gx - x, gy - y
+        ex, ey = dx * math.cos(a) + dy * math.sin(a), -dx * math.sin(a) + dy * math.cos(a)
+        if ex > 0.05 and math.hypot(ex, ey) < max_range and abs(math.atan2(ey, ex)) < math.radians(hfov_deg / 2):
+            out.append((state, 0.9, ex, ey, True))
+    return tuple(out)
 
 
 def render_grid(course, pose, stamp, rows=100, res=0.018, x0=-0.65, y0=-0.9, paint_m=0.10) -> Grid:
@@ -108,7 +130,9 @@ def pieces_from_route(route) -> (List[RoutePiece], List[Visit]):
 
 def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=1 / 30,
              light_red_s=2.0, gate_open=True, stop_at_complete=True, verbose=False,
-             parking: str = 'session', recovery: bool = True, start_pose=None) -> SimLog:
+             parking: str = 'session', recovery: bool = True, start_pose=None,
+             detector: str = 'scripted', hfov_deg: float = 60.0) -> SimLog:
+    assert detector in ('scripted', 'associated', 'none'), detector
     pieces, visits = pieces_from_route(route)
     use_session = parking == 'session'
     mm = MissionMachine(course, pieces, visits, rules, challenges,
@@ -154,8 +178,13 @@ def simulate(course, route, rules, challenges, g, limits: Dict, t_max=400.0, dt=
         if in_hold and hold_started is None:
             hold_started = t
         light = 'GREEN' if hold_started is not None and t - hold_started > light_red_s else 'RED'
-        inp = Inputs(t=t, armed=True, pose=pose, gpose=pose, light=light, light_t=t,
-                     gate='OPEN' if gate_open else 'CLOSED', gate_conf=0.9, gate_t=t,
+        gstate = 'OPEN' if gate_open else 'CLOSED'
+        seen = detector != 'none'
+        gate_obs = visible_gates(course, pose, gstate, hfov_deg) if detector == 'associated' else ()
+        inp = Inputs(t=t, armed=True, pose=pose, gpose=pose,
+                     light=light if seen else 'UNKNOWN', light_t=t if seen else -1e9,
+                     gate=gstate if seen else 'UNKNOWN', gate_conf=0.9 if seen else 0.0,
+                     gate_t=t if seen else -1e9, gate_obs=gate_obs, gate_obs_t=t,
                      corridor_observed=corr.observed if corr else 0, corridor_t=t if corr else -1e9,
                      camera_t=last_cam, road_arrived=road_req['arrived'], road_t=road_req['t'],
                      parking_arrived=park_req['arrived'], parking_t=park_req['t'],

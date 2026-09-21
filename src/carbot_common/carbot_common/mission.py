@@ -28,7 +28,7 @@ import yaml
 Pose = Tuple[float, float, float]
 
 RULE_KEYS = ('roundabout_visits', 'gate_route_check', 'challenge4_gate', 'traffic_light',
-             'transitions', 'speed_zones')
+             'transitions', 'speed_zones', 'gate_association')
 END_BEHAVIOURS = ('traffic_light_stop', 'parking_handoff', 'finish', 'none')
 
 

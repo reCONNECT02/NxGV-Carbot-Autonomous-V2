@@ -11,7 +11,8 @@
   <depend>sensor_msgs</depend>
   <depend>carbot_interfaces</depend>
   <depend>carbot_common</depend>
-  <depend>cv_bridge</depend>
+  <depend>carbot_perception</depend>
+  <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <test_depend>python3-pytest</test_depend>

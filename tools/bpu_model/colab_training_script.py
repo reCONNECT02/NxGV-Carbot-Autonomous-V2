@@ -21,8 +21,11 @@
 from roboflow import Roboflow
 import os
 
-# Initialize Roboflow client.
-rf = Roboflow(api_key="wSO9oU6yFMszgFn0Aulv")
+# Initialize Roboflow client. The key comes from the environment / Colab secrets,
+# NEVER from this file (the old key was committed here and must be rotated).
+#   Colab: left sidebar -> key icon -> add ROBOFLOW_API_KEY, then:
+#   from google.colab import userdata; os.environ["ROBOFLOW_API_KEY"] = userdata.get("ROBOFLOW_API_KEY")
+rf = Roboflow(api_key=os.environ["ROBOFLOW_API_KEY"])
 
 # Download project dataset in YOLOv5 format
 project = rf.workspace("shamsuls-workspace").project("risabot")

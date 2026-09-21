@@ -19,6 +19,9 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 12 | Parking previews are at the minimum turning radius: block 11 must replan from the actual pose | 5 | DONE (5) | Plans from the pose, cusp + heading replans, `plan_radius_factor 1.08` |
 | 13 | Run calibration steps 7/8 on the car (feedforward / steering are placeholders) | 8 / on site | TODO | `calib_steering`, `calib_speed`; also confirm `vehicle.wheelbase_m` |
 | 14 | Measure planner / parking CPU on the RDK X5 | on site | TODO | Laptop: parking 0.04-0.5 s, recovery search ~0.3 s |
+| 15 | Collect boom gate footage (open + closed, several distances) from our Astra, validate, then set `challenge4_gate.enabled: true` | 6 / on site | TODO | Team model had 0 boom validation images. `docs/DETECTORS.md` |
+| 16 | Validate the light on the car, then set `traffic_light.enabled: true` | 6 / on site | TODO | While false, challenge 7 = 0 but the run never waits. Check `object_size_m` and `gate_association` tolerances too |
+| 17 | `run_planning.py --v4` crashes: v1 manoeuvre piece has no points, so `ParkingSession.start` has no goal | 5 | TODO | Found in phase 6. Team mission, race and tests unaffected. Fix: goal from the v1 bay, or `parking='preview'` for `--v4` |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

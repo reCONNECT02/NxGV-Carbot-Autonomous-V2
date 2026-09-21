@@ -1,0 +1,25 @@
+# Ultralytics dataset file for the unified14 model (same class ORDER as the team's
+# unified16.yaml and as detectors.yaml class_names). Paths are relative to `path`.
+# Layout (YOLO format, one .txt per image, "class cx cy w h" normalised 0..1):
+#   datasets/unified14/
+#     images/train/*.jpg   labels/train/*.txt
+#     images/val/*.jpg     labels/val/*.txt      <- MUST include boom gate images
+#     images/test/*.jpg    labels/test/*.txt     (optional)
+path: datasets/unified14
+train: images/train
+val: images/val
+names:
+  0: end_of_tunnel_sign
+  1: hill_sign
+  2: obstacle_sign
+  3: parallel_parking_sign
+  4: perpendicular_parking_sign
+  5: roundabout_sign
+  6: speed_bump_sign
+  7: traffic_signals_ahead_sign
+  8: tunnel_sign
+  9: traffic_red
+  10: traffic_yellow
+  11: traffic_green
+  12: boom_closed
+  13: boom_open

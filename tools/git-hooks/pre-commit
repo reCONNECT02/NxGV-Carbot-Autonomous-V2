@@ -27,6 +27,12 @@ for f in $staged; do
     echo "pre-commit: possible password in $f (line above). Use a placeholder."
     fail=1
   fi
+  # API keys assigned as literals, e.g. Roboflow api_key="..." (phase 6: one slipped through)
+  if git show ":$f" | grep -nEi '(api_?key|secret|token)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9_-]{16,}["'"'"']' \
+      | grep -viE 'YOUR_|CHANGE_ME|example|placeholder|environ' ; then
+    echo "pre-commit: possible API key in $f (line above). Read it from the environment instead."
+    fail=1
+  fi
   if git show ":$f" | grep -nE '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
     echo "pre-commit: token / private key in $f."
     fail=1

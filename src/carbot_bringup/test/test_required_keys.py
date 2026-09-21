@@ -29,6 +29,7 @@ NODES = {  # node name -> module file (phase-5 nodes + the phase-4 ones they tou
     'safety_monitor': 'carbot_control/carbot_control/safety_monitor.py',
     'command_owner': 'carbot_control/carbot_control/command_owner.py',
     'tunnel_bridge': 'carbot_control/carbot_control/tunnel_bridge.py',
+    'bpu_detector': 'carbot_detectors/carbot_detectors/bpu_detector.py',   # phase 6
 }
 
 

@@ -45,7 +45,7 @@ challenges:
     mandatory: true
     zone: {type: near_feature, feature: boom_gates.challenge4, radius_m: 0.8}
     nodes: [bpu_detector, mission_logic]
-    params: [mission_rules.yaml challenge4_gate, bpu_detector.boom_gate_*]
+    params: [mission_rules.yaml challenge4_gate.enabled, mission_rules.yaml challenge4_gate, mission_rules.yaml gate_association, bpu_detector thresholds.boom_gate_*]
     tab: detections
   - id: 5
     name: Hill
@@ -61,7 +61,7 @@ challenges:
     mandatory: true
     zone: {type: rect, x0: 4.10, x1: 5.10, y0: 4.45, y1: 5.05}
     nodes: [bpu_detector, mission_logic, command_owner]
-    params: [mission_rules.yaml speed_zones.bump_sign, bpu_detector.speed_bump_*]
+    params: [mission_rules.yaml speed_zones.bump_sign, mission_rules.yaml speed_zones.hill_and_bump, bpu_detector class_map (bump sign not trained yet)]
     tab: detections
   - id: 7
     name: Traffic light
@@ -69,7 +69,7 @@ challenges:
     mandatory: true
     zone: {type: near_pose, pose: light_goal_pose, radius_m: 0.6}
     nodes: [bpu_detector, mission_logic]
-    params: [mission_rules.yaml traffic_light, bpu_detector.traffic_light_*]
+    params: [mission_rules.yaml traffic_light.enabled, mission_rules.yaml traffic_light, bpu_detector thresholds.traffic_light_*]
     tab: detections
   - id: 8
     name: Lane change 2

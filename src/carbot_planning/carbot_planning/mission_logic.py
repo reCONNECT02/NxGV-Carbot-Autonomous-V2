@@ -104,6 +104,11 @@ class MissionLogic(CarbotNode):
         self.inp.gate, self.inp.gate_t = m.boom_gate_state or 'UNKNOWN', t
         conf = [d.confidence for d in m.detections if d.class_name.startswith('boom_gate')]
         self.inp.gate_conf = float(max(conf)) if conf else 0.0
+        # phase 6: this frame's gates in base_link, for per-map-gate association
+        self.inp.gate_obs = tuple(('OPEN' if d.class_name == 'boom_gate_open' else 'CLOSED', float(d.confidence),
+                                   float(d.position.x), float(d.position.y), d.distance_m > 0.0)
+                                  for d in m.detections if d.class_name in ('boom_gate_open', 'boom_gate_closed'))
+        self.inp.gate_obs_t = t
         if m.speed_bump_sign:
             self.inp.bump_sign_t = t
 

@@ -50,7 +50,7 @@ tools/bpu_model/        base repo BPU model + training/conversion scripts
 tools/setup/            install_root_helpers.sh (mipi_cam as root via sudoers)
 tools/systemd/          carbot-race.service (optional auto-start)
 tools/git-hooks/        pre-commit secret check
-docs/                   SETUP, CALIBRATION, RUN, TROUBLESHOOTING, CHALLENGE_MAP, reference/
+docs/                   SETUP, CALIBRATION, RUN, TROUBLESHOOTING, CHALLENGE_MAP, DETECTORS, reference/
 ```
 
 ## Quick start (full guide: `docs/SETUP.md`, written in phase 9)
@@ -78,6 +78,9 @@ ros2 launch carbot_bringup calibrate.launch.py
   pre-recorded motion for parking only; we don't use it anywhere.) The base
   repo's record/playback feature is blocked in race mode because playback drives
   the motors directly, bypassing the command owner and safety veto.
+* Navigation first (race week): the traffic-light and boom-gate stops are OFF in
+  `mission_rules.yaml` (`traffic_light.enabled`, `challenge4_gate.enabled`) so the car
+  always finishes the route. What each detection does: `docs/DETECTORS.md`.
 * Roundabout exits are chosen by the global planner (block 07) from `mission.yaml`.
   The boom-gate detector only drives the Challenge 4 stop/proceed; a gate/route
   disagreement is logged and shown in the GUI but never changes the route.

@@ -11,8 +11,17 @@ This machine walks the pieces in order and each cycle decides:
 Rules (rulebook + V4):
   * Traffic light: after the traffic_light_stop leg, while within 0.35 m of its
     end, HOLD until GREEN is OBSERVED (fresh detection). Never a timer.
-  * Challenge 4 boom gate: V4 GATE HOLD within 0.53 m unless OPEN is observed;
-    OPEN observed within 0.65 m with the gate ahead -> commit.
+    traffic_light.enabled: false -> no hold at all (drive through; ch.7 scores 0
+    but the run is never stuck waiting on the detector).
+  * Boom gates on OUR path (challenge4_gate.gate + extra_gates, each only on the
+    route pieces that pass within near_route_m of it): V4 GATE HOLD within
+    0.53 m unless OPEN is observed; OPEN within 0.65 m with the gate ahead ->
+    commit. challenge4_gate.enabled: false -> no gate holds.
+  * Gate association (phase 6): a boom-gate detection only counts for a map
+    gate when its direction (and range, if the detector estimated one) matches
+    where that gate should appear from the current pose. A gate seen off to the
+    side, e.g. the east exit's gate while we leave north, never holds us or
+    feeds the route check of another gate.
   * Roundabout exits are fixed by the route. The roundabout gate state is only
     compared with the planned exit: a disagreement is logged (GateRouteMismatch)
     and shown as a banner; the route never changes.
@@ -106,6 +115,10 @@ class Inputs:
     gate_conf: float = 0.0
     gate_t: float = -1e9
     bump_sign_t: float = -1e9
+    # phase 6: this frame's boom-gate detections, base_link:
+    # (state OPEN|CLOSED, confidence, x_m, y_m, has_range). has_range False -> (x, y) is a unit bearing.
+    gate_obs: Tuple = ()
+    gate_obs_t: float = -1e9            # arrival time of gate_obs (each message is counted once)
     tunnel: bool = False
     tunnel_t: float = -1e9
     corridor_observed: int = 0
@@ -258,6 +271,7 @@ class MissionMachine:
         self.recovering = False
         self.last_state = ''
         tl = rules['traffic_light']
+        self.light_enabled = bool(tl['enabled'])
         self.stop_distance = float(tl['stop_distance_m'])
         self.light_expiry = float(tl['observation_expiry_s'])
         light_legs = [p for p in pieces if p.end_behaviour == 'traffic_light_stop']
@@ -272,6 +286,18 @@ class MissionMachine:
         self.label_dir = {str(v['exit']): str(v.get('direction', v['exit']))
                           for v in rules.get('roundabout_visits', [])}
         self.gate4_near = [self._near_piece(p, self.gate4, float(g4['near_route_m'])) for p in pieces]
+        # phase 6: every map gate that can hold us, and the pieces whose route passes it
+        self.gate_enabled = bool(g4['enabled'])
+        self.hold_gates = {}
+        for name in [str(g4['gate'])] + [str(n) for n in (g4['extra_gates'] or [])]:
+            pt = self._feature_point('boom_gates', name)
+            if pt is not None:
+                self.hold_gates[name] = (pt, [self._near_piece(p, pt, float(g4['near_route_m'])) for p in pieces])
+        self.gate_commit = {}                # gate name -> piece index where OPEN was committed
+        ga = rules['gate_association']
+        self.ga = ga
+        self.gate_seen = {}                  # gate name -> (state, conf, t, consecutive)
+        self._obs_used = {}                  # gate name -> gate_obs_t already counted
         # the roundabout gate belongs to the visit whose exit point is nearest to it
         self.gate_visit = None
         if self.gate_rt is not None and visits:
@@ -296,6 +322,46 @@ class MissionMachine:
         if pt is None or not len(p.points):
             return False
         return float(np.min(np.hypot(p.points[:, 0] - pt[0], p.points[:, 1] - pt[1]))) < dist
+
+    def associate_gate(self, inp: 'Inputs', name: str, pt) -> None:
+        """Feed this frame's detections that match map gate `name` (phase 6)."""
+        if inp.pose is None or self._obs_used.get(name) == inp.gate_obs_t:
+            return
+        self._obs_used[name] = inp.gate_obs_t
+        if not inp.gate_obs:
+            return
+        x, y, a = inp.pose
+        dx, dy = pt[0] - x, pt[1] - y
+        ex, ey = dx * math.cos(a) + dy * math.sin(a), -dx * math.sin(a) + dy * math.cos(a)
+        rng = math.hypot(ex, ey)
+        if ex <= 0.0 or rng > float(self.ga['max_range_m']):
+            return
+        eb = math.atan2(ey, ex)
+        best = None
+        for state, conf, ox, oy, has_range in inp.gate_obs:
+            if abs(math.atan2(oy, ox) - eb) > math.radians(float(self.ga['bearing_tol_deg'])):
+                continue
+            if has_range and abs(math.hypot(ox, oy) - rng) > float(self.ga['range_tol_m']):
+                continue
+            if best is None or conf > best[1]:
+                best = (state, conf)
+        if best is None:
+            return
+        prev = self.gate_seen.get(name)
+        n = prev[3] + 1 if prev and prev[0] == best[0] else 1
+        self.gate_seen[name] = (best[0], best[1], inp.t, n)
+
+    def gate_state(self, inp: 'Inputs', name: str, expiry: float):
+        """(OPEN | CLOSED | UNKNOWN, confidence) of one map gate. Association off -> the
+        detector's global debounced state (phase-4 behaviour)."""
+        if not bool(self.ga['enabled']):
+            if inp.t - inp.gate_t < expiry and inp.gate in ('OPEN', 'CLOSED'):
+                return inp.gate, inp.gate_conf
+            return 'UNKNOWN', 0.0
+        s = self.gate_seen.get(name)
+        if s is None or inp.t - s[2] > expiry or s[3] < int(self.ga['min_frames']):
+            return 'UNKNOWN', 0.0
+        return s[0], s[1]
 
     def direction_of(self, label: str) -> str:
         return self.label_dir.get(label, label)
@@ -373,6 +439,11 @@ class MissionMachine:
                 out.path_changed = True
                 out.events.append(('RUN STARTED', 'Armed: fully autonomous from here. No further input.', 0))
                 self._banner(t, 'RUN STARTED', 0)
+                off = [n for n, on in (('traffic light', self.light_enabled), ('boom gate', self.gate_enabled)) if not on]
+                if off:
+                    out.events.append(('DETECTION HOLDS OFF', ' + '.join(off) + ' hold disabled in mission_rules.yaml: '
+                                       'the car will not stop for them', 0))
+                    self._banner(t, 'NAV ONLY: no ' + ' / '.join(off) + ' stop', 1)
             else:
                 out.mode, out.source = IDLE, 'HOLD'
                 out.hold_reason = 'Waiting for START' if inp.pose is not None else 'Waiting for local pose'
@@ -461,24 +532,29 @@ class MissionMachine:
         if t < self.hold_until:
             hold = self.hold_label or 'GEAR / MISSION HOLD'
         # traffic light: after the light leg, near its end, until OBSERVED green
-        if self.light_goal is not None and self.i > self.light_piece and not self.light_commit:
+        if self.light_enabled and self.light_goal is not None and self.i > self.light_piece \
+                and not self.light_commit:
             if math.hypot(x - self.light_goal[0], y - self.light_goal[1]) < self.stop_distance:
                 if inp.light == 'GREEN' and t - inp.light_t < self.light_expiry:
                     self.light_commit = True
                     out.events.append(('LIGHT GREEN', 'Observed GREEN: proceeding', 7))
                 elif not hold:
                     hold = 'TRAFFIC HOLD'
-        # challenge 4 boom gate
-        if self.gate4 is not None and self.gate4_near[self.i] and not parking and self.gate_commit_piece != self.i:
-            gx, gy = self.gate4
+        # boom gates on our path (challenge 4 + extra_gates), each judged from its OWN associated state
+        for name, (gpt, near) in self.hold_gates.items():
+            self.associate_gate(inp, name, gpt)
+            if not self.gate_enabled or not near[self.i] or parking or self.gate_commit.get(name) == self.i:
+                continue
+            gx, gy = gpt
             dist = math.hypot(x - gx, y - gy)
             ra = float(p.points[min(self.progress, len(p.points) - 1), 2]) if len(p.points) else a
             along = (gx - x) * math.cos(ra) + (gy - y) * math.sin(ra)       # > 0: gate ahead
-            fresh = t - inp.gate_t < float(self.g4['observation_expiry_s'])
-            is_open = fresh and inp.gate == 'OPEN'
-            if dist < float(self.g4['commit_distance_m']) and along > 0 and is_open:
-                self.gate_commit_piece = self.i
-                out.events.append(('GATE OPEN', 'Observed OPEN boom gate: proceeding', 4))
+            state, _conf = self.gate_state(inp, name, float(self.g4['observation_expiry_s']))
+            if dist < float(self.g4['commit_distance_m']) and along > 0 and state == 'OPEN':
+                self.gate_commit[name] = self.i
+                if name == str(self.g4['gate']):
+                    self.gate_commit_piece = self.i
+                out.events.append(('GATE OPEN', f'Observed OPEN boom gate {name}: proceeding', 4))
             elif dist < float(self.g4['hold_distance_m']) and along > -float(self.g4['hold_x_margin_m']) \
                     and not hold:
                 hold = 'GATE HOLD'
@@ -541,7 +617,9 @@ class MissionMachine:
         if nxt.leg != p.leg:
             if p.end_behaviour == 'traffic_light_stop':
                 out.events.append((f'{p.leg_id.upper()} COMPLETE', 'Stopped at the traffic-light approach. '
-                                   'The next leg starts from this pose after an observed GREEN.', 7))
+                                   + ('The next leg starts from this pose after an observed GREEN.'
+                                      if self.light_enabled else
+                                      'traffic_light.enabled=false: continuing without waiting.'), 7))
             else:
                 out.events.append((f'{p.leg_id.upper()} COMPLETE', f'next: {nxt.leg_id}', 0))
             self._hold(t, self.t_mission, 'GEAR / MISSION HOLD')
@@ -558,26 +636,28 @@ class MissionMachine:
     def _gate_route_check(self, inp: Inputs, out: Output) -> None:
         if self.gate_rt is None:
             return
+        name = str(self.grc['gate'])
+        if name not in self.hold_gates:
+            self.associate_gate(inp, name, self.gate_rt)
+        gate, conf = self.gate_state(inp, name, self.cfg.detection_max_age_s)
         x, y, _ = inp.pose
         if math.hypot(x - self.gate_rt[0], y - self.gate_rt[1]) > float(self.grc['observe_within_m']):
             return
-        if inp.gate not in ('OPEN', 'CLOSED') or inp.t - inp.gate_t > self.cfg.detection_max_age_s:
-            return
-        if inp.gate_conf < float(self.grc['min_confidence']):
+        if gate not in ('OPEN', 'CLOSED') or conf < float(self.grc['min_confidence']):
             return
         v = self.gate_visit
         if v is None or v.visit in self.reported_visits or v.piece != self.i:
             return
         self.reported_visits.add(v.visit)
-        exp_label = str(self.grc['expected_exit_when_open' if inp.gate == 'OPEN' else 'expected_exit_when_closed'])
+        exp_label = str(self.grc['expected_exit_when_open' if gate == 'OPEN' else 'expected_exit_when_closed'])
         expected = self.direction_of(exp_label)
         if expected == v.direction:
-            out.events.append(('GATE AGREES', f'Gate {inp.gate} matches planned exit {v.direction} '
+            out.events.append(('GATE AGREES', f'Gate {gate} matches planned exit {v.direction} '
                                f'(visit {v.visit})', 0))
             return
-        out.mismatches.append({'visit': v.visit, 'planned': v.label, 'gate': inp.gate,
-                               'expected': exp_label, 'confidence': inp.gate_conf,
+        out.mismatches.append({'visit': v.visit, 'planned': v.label, 'gate': gate,
+                               'expected': exp_label, 'confidence': conf,
                                'note': 'Route NOT changed (global planner owns the exits)'})
-        out.events.append(('GATE / ROUTE MISMATCH', f'Gate {inp.gate} suggests {expected}, planned exit is '
+        out.events.append(('GATE / ROUTE MISMATCH', f'Gate {gate} suggests {expected}, planned exit is '
                            f'{v.direction} (visit {v.visit}); route unchanged', 0))
-        self._banner(inp.t, f'Gate {inp.gate} disagrees with planned exit {v.direction}: route unchanged', 1)
+        self._banner(inp.t, f'Gate {gate} disagrees with planned exit {v.direction}: route unchanged', 1)

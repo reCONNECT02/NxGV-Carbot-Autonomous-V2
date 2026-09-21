@@ -11,6 +11,8 @@ stand-in for block 11 (phase 5).
   python tools/sandbox/run_planning.py                  # team map + mission (v2)
   python tools/sandbox/run_planning.py --v4             # V4 reference (v1, plans with hybrid A*)
   python tools/sandbox/run_planning.py --gate-closed    # Challenge 4 gate never opens -> GATE HOLD
+  python tools/sandbox/run_planning.py --detector none  # phase 6: detector sees NOTHING (race-day holds from YAML)
+  python tools/sandbox/run_planning.py --detector associated --holds on   # per-gate association
   python tools/sandbox/run_planning.py --data ~/carbot_data/calibration/<session>/data
 
 Writes tools/sandbox/out/planning/run.png (map, route, driven path coloured by
@@ -77,6 +79,10 @@ def main():
     ap.add_argument('--v4', action='store_true', help='use config/data/v4_reference (V4 simulator, v1 files)')
     ap.add_argument('--red', type=float, default=2.0, help='seconds of RED at the traffic light')
     ap.add_argument('--gate-closed', action='store_true', help='Challenge 4 gate stays CLOSED')
+    ap.add_argument('--detector', choices=('scripted', 'associated', 'none'), default='scripted',
+                    help='phase 6: none = nothing is ever detected (proves the route runs without the detector)')
+    ap.add_argument('--holds', choices=('yaml', 'on', 'off'), default='yaml',
+                    help='traffic-light + gate holds: as in mission_rules.yaml, or force on/off')
     ap.add_argument('--t-max', type=float, default=600.0)
     ap.add_argument('--quiet', action='store_true')
     a = ap.parse_args()
@@ -97,8 +103,16 @@ def main():
     print('  pieces:', ', '.join(f'{p["leg_id"]}:{p["kind"]}' for p in route.pieces))
     print('  roundabout exits:', ', '.join(f'visit {v["visit"]} {v["exit"]}' for v in route.visits))
     t0 = time.time()
-    log = simulate(course, route, mission.rules, challenges, g, common['limits'], t_max=a.t_max,
-                   light_red_s=a.red, gate_open=not a.gate_closed, verbose=not a.quiet)
+    rules = mission.rules
+    if a.holds != 'yaml':
+        import copy
+        rules = copy.deepcopy(rules)
+        rules['traffic_light']['enabled'] = rules['challenge4_gate']['enabled'] = a.holds == 'on'
+    print(f"  holds: traffic_light={rules['traffic_light']['enabled']} gate={rules['challenge4_gate']['enabled']}"
+          f"  detector={a.detector}")
+    log = simulate(course, route, rules, challenges, g, common['limits'], t_max=a.t_max,
+                   light_red_s=a.red, gate_open=not a.gate_closed, verbose=not a.quiet,
+                   detector=a.detector)
     print(f'\nsimulated {log.t[-1]:.0f} s in {time.time() - t0:.0f} s wall')
     M, Pc, E = np.array(log.margin), np.array(log.piece), np.array(log.track_error)
     for pi in sorted(set(Pc)):

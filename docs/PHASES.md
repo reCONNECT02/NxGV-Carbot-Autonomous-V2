@@ -365,3 +365,59 @@ recovers (13 cm reverse, rejoin). Manoeuvre body margins > 0.
 * Phase 6 note: the base signage_detector / parking_controller / auto_driver
   "parking sign -> preset playback" chain stays NOT launched. The new BPU
   detector must not publish /record_playback_cmd.
+
+## Phase 6 — what exists
+
+| Piece | Where | Notes |
+|---|---|---|
+| Detector node | `carbot_detectors/bpu_detector.py` | Replaces the stub. Team YOLO11n unified14 model (installed as `share/carbot_detectors/models/`), front camera only, newest frame at 10 Hz, NV12 in, `DetectionArray` out, debug JPEG only while subscribed |
+| Detector core | `carbot_detectors/detector_core.py` | YOLO11 6-output decode (tensors found by SHAPE, NHWC or NCHW), class-wise NMS, class map, debounce, bearing/range per detection. Tested on synthetic BPU outputs |
+| Gate association | `carbot_planning/mission_core.py` | Team idea: every detection is matched to a MAP gate by bearing + range from the pose; only gates on the current route pieces can hold; the route check uses the roundabout gate's own associated state |
+| Navigation first | `mission_rules.yaml` | `traffic_light.enabled: false`, `challenge4_gate.enabled: false` (race week). Banner + event `DETECTION HOLDS OFF` at START |
+| Sim | `sim_core.simulate(detector=...)`, `run_planning.py --detector none|associated|scripted --holds yaml|on|off` | `--detector none` with the shipped YAML completes the whole mission (test enforces) |
+| Model tooling | `tools/bpu_model/unified14/` | Dataset layout, `train_yolo11.py`, `export_rdk_onnx.py` (6-output head), `make_calibration.py`, `rdk_bpu_config.yaml`, `compile_model.sh`, board smoke test. Export + compile NOT run in CI |
+| Docs | `docs/DETECTORS.md` | Every class, what it triggers, the wiring, the switches, what was not taken from the team package |
+
+### Contract changes (additions unless marked)
+* **CHANGED** `detectors.yaml`: `model_path` (now the unified14 model, relative to the
+  package share dir), `class_names` / `class_map` (14 classes). New keys: `reg_max`,
+  `thresholds.traffic_light_yellow`, `info_threshold`, `object_size_m.*`. All phase-1 keys
+  kept. The base YOLOv5 model stays at `tools/bpu_model/model_output/` (unused).
+* `DetectionArray` / `Detection`: no field changes. `position` (base_link) and
+  `distance_m` (-1 = bearing only) are now filled; `boom_gate_state` is any gate in view.
+* `mission_rules.yaml` (and `v4_reference/mission.yaml`): new `traffic_light.enabled`,
+  `challenge4_gate.enabled`, `challenge4_gate.extra_gates`, new section `gate_association`
+  (now a required rule key in `carbot_common/mission.py`). V4 reference keeps V4 behaviour
+  (holds on, association off).
+* `mission_core.Inputs`: new `gate_obs`, `gate_obs_t` (mission_logic fills them from
+  `DetectionArray`).
+* `/traffic_light_state` now RED/GREEN/UNKNOWN (as `topics.py` already documented);
+  `/boom_gate_open` only while the state is known.
+* `tools/git-hooks/pre-commit`: also refuses literal API keys / secrets / tokens.
+  `tools/bpu_model/colab_training_script.py` reads `ROBOFLOW_API_KEY` from the environment.
+  **The key that was committed must be rotated on Roboflow** (it is in git history).
+
+### For phase 7 (GUI)
+* Detections tab: `/carbot/detections` (boxes, class, confidence, `distance_m`),
+  `/carbot/detections/debug/compressed` (subscribe only while the tab is open: the node
+  encodes nothing otherwise), `/carbot/mission/gate_route_mismatch`.
+* Main tab: `detections[].position` is base_link for rendering the light and gates;
+  `traffic_light_state` / `boom_gate_state` for the labels. Show the `NAV ONLY` banner
+  prominently (it comes in `MissionState.banner`).
+* Tuning tab: `traffic_light.enabled` / `challenge4_gate.enabled` are the two switches the
+  team will flip after validating the detector.
+
+### For phase 8 (race mode)
+* Preflight must **not** refuse to arm because `bpu_detector` reports `NO_MODEL` /
+  `MODEL_MISMATCH` while both holds are disabled: show it as a warning. If a hold is
+  enabled, a detector ERROR should block arming (the car would wait forever).
+
+### Not tested on hardware (phase 6)
+* `bpu_detector` has not run on the RDK (no ROS / BPU here): linted, core tested. First
+  check: `ros2 topic hz /carbot/detections` and the node status (`docs/DETECTORS.md`).
+* `pyeasy_dnn` output buffers are assumed float32 (as in the team node). If the model
+  was compiled with quantised outputs, `MODEL_MISMATCH` will not catch it: the scores
+  will look wrong on the debug image.
+* Boom classes: 0 validation images in the team package. Association tolerances and
+  `object_size_m` are provisional.
+* CPU: detector decode + resize is on the CPU; planner CPU on the RDK is still unmeasured.

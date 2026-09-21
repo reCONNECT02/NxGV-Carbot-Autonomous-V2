@@ -35,7 +35,15 @@ gate_route_check:
 
 # Challenge 4 stop / proceed uses the detector (never a timer). V4 app.js values.
 challenge4_gate:
+  # NAVIGATION FIRST (phase 6, team decision for 25-26 Sept): false = the car never
+  # stops for a boom gate. Set true once the gate detector is validated on the car.
+  # While false, a CLOSED gate on the route is driven into (the arm is 5.5 cm high,
+  # below the LiDAR plane, so the safety veto will not see it either).
+  enabled: false
   gate: challenge4
+  # Other map gates that can hold us, but only on route pieces passing within
+  # near_route_m. roundabout_exit1 sits on the visit-1 (west, tunnel) exit.
+  extra_gates: [roundabout_exit1]
   hold_distance_m: 0.53                   # GATE HOLD within this unless OPEN observed
   commit_distance_m: 0.65                 # OPEN observed within this (gate ahead) -> commit
   hold_x_margin_m: 0.30                   # hold also this far past the gate line
@@ -43,6 +51,11 @@ challenge4_gate:
   observation_expiry_s: 0.40
 
 traffic_light:
+  # NAVIGATION FIRST (phase 6): false = no traffic-light hold, the car drives
+  # through (challenge 7 = 0 marks, but the run can never be stuck waiting).
+  # true = hold until an OBSERVED green. There is deliberately NO timeout: a
+  # "give up after N s" is timer-based logic, which the rulebook scores 0 anyway.
+  enabled: false
   stop_distance_m: 0.35                   # V4 lightDistance < .35
   observation_expiry_s: 0.40
   # Timer-based logic is PROHIBITED (rulebook 7.3 ch.7): proceed only on an observed GREEN.
@@ -64,3 +77,14 @@ speed_zones:
   - {name: bump_sign,     max_speed_mps: 0.060, region: {type: detection, detection: speed_bump_sign, hold_m: 0.60}}
   - {name: low_guidance,  max_speed_mps: 0.075, region: {type: condition, condition: corridor_observed_lt_3}}
   - {name: stale_camera,  max_speed_mps: 0.035, region: {type: condition, condition: camera_age_gt_0p25}}
+
+# Phase 6: which boom-gate detection belongs to which map gate. A detection
+# counts for a gate only if it points where that gate should be from the current
+# pose (and, when the detector estimated a range, at about the right distance).
+# PROVISIONAL tolerances: check them on the Detections + Localization tabs.
+gate_association:
+  enabled: true
+  bearing_tol_deg: 20.0     # gate arm is 37.5 cm wide: ~20 deg either side at 0.5 m
+  range_tol_m: 0.35         # detector range comes from the arm's apparent size (rough)
+  max_range_m: 1.50         # gates further than this are not judged
+  min_frames: 2             # consecutive associated frames with the same state
