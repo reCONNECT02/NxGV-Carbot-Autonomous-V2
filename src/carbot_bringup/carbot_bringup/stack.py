@@ -61,8 +61,8 @@ CARBOT_NODES = {
         ('carbot_control', 'command_owner'),          # 15 -> 16
         ('carbot_detectors', 'bpu_detector'),
         ('carbot_ops', 'system_monitor'),
-        ('carbot_ops', 'scoreboard'),
-        ('carbot_ops', 'run_recorder'),
+        # phase 7: scoreboard and run_recorder are NOT launched (CPU; team decision
+        # 2026-09-22). Code kept in carbot_ops: add the two lines back to re-enable.
     ],
     'calibrate': [('carbot_ops', 'calibration_wizard')],
     'race': [('carbot_ops', 'race_supervisor')],
@@ -215,6 +215,7 @@ def build(context, mode: str):
     extra = dict(dpaths)
     extra['data_root'] = root
     extra['mode'] = mode
+    extra['session'] = session or ''
 
     actions = [
         SetEnvironmentVariable('ROS_DOMAIN_ID', domain),
@@ -293,8 +294,9 @@ def build(context, mode: str):
                        '--frame-id', tf['parent'], '--child-frame-id', tf['child']]))
     later += drivers
 
-    # calibrate mode only: joystick for manual driving during calibration steps
-    if mode == 'calibrate' and truthy('start_joy'):
+    # joystick: manual driving during calibration, and the GUI "Manual control"
+    # button in both modes (phase 7; race: after START it counts as intervention)
+    if truthy('start_joy'):
         later.append(node('joy', 'joy_node', extra_params=False))
 
     # ---------------------------------------------------------------- 5. base nodes

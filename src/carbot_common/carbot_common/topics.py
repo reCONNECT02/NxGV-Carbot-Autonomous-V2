@@ -130,6 +130,10 @@ VEHICLE_ARM = '/carbot/vehicle/arm'                     # Bool -> servo_controll
 # or CALIBRATION_RAW (speed_mps = base duty, steer_rad = base angular.z). Accepted
 # only when command_owner.mode == calibrate and the race is not armed.
 CALIBRATION_REQUEST = '/carbot/calibration/request'
+# phase 7: GUI "Manual control" button. Bool, latched. True = command_owner releases
+# base AUTO (winner MANUAL, zero /cmd_vel_auto) so the base servo_controller drives
+# from /joy. In race mode after START this counts as manual intervention.
+MANUAL_TAKEOVER = '/carbot/manual/takeover'
 
 # Detectors
 DETECTIONS = '/carbot/detections'                       # DetectionArray

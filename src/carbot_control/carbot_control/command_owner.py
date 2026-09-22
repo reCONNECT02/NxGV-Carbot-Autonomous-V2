@@ -61,6 +61,7 @@ class CommandOwner(CarbotNode):
         self.mission = None
         self.race_armed = False
         self.estop = False
+        self.manual = False
         self.meas, self.meas_t = 0.0, -1e9
         self.base_armed = None             # what we last told servo_controller
         self.last_arm_pub = 0.0
@@ -76,6 +77,7 @@ class CommandOwner(CarbotNode):
         self.sub(Odometry, T.ODOM, self._on_odom, SENSOR)
         self.sub(Bool, T.RACE_ARMED, self._on_armed, LATCHED)
         self.sub(Bool, T.E_STOP, self._on_estop, 10)
+        self.sub(Bool, T.MANUAL_TAKEOVER, self._on_manual, LATCHED)
         self.create_timer(1.0 / max(float(self.p('rate_hz')), 1.0), self._tick)
         self.create_timer(1.0, self._refresh)
         self.set_status(NodeStatus.OK, 'DISARMED', f'mode {self.mode}')
@@ -126,6 +128,15 @@ class CommandOwner(CarbotNode):
         elif self.mode == 'calibrate' or not bool(self.p('estop_latch_in_race')):
             self.estop = False
 
+    def _on_manual(self, m: Bool):
+        on = bool(m.data)
+        if on != self.manual:
+            self.get_logger().warn('MANUAL control ' + ('ON: base AUTO released, joystick drives'
+                                                        + (' (race: counts as manual intervention)'
+                                                           if self.mode == 'race' and self.race_armed else '')
+                                                        if on else 'OFF: handed back'))
+        self.manual = on
+
     # ------------------------------------------------------------------ cycle
     def _arm(self, want: bool, t: float) -> None:
         period = 1.0 / max(float(self.p('arm_publish_hz')), 0.1)
@@ -142,9 +153,10 @@ class CommandOwner(CarbotNode):
         dt = 0.02 if self.last_t is None else t - self.last_t
         self.last_t = t
         armed = self.race_armed and not self.estop
-        d = arbitrate(t, armed, self.estop, self.safety, self.mission, self.requests, self.calib, self.cfg)
+        d = arbitrate(t, armed, self.estop, self.safety, self.mission, self.requests, self.calib, self.cfg,
+                      manual=self.manual)
         calib_active = d.winner in ('CALIBRATION', 'CALIBRATION_RAW')
-        self._arm((armed or calib_active) and not self.estop, t)
+        self._arm((armed or calib_active) and not self.estop and not self.manual, t)
         meas = self.meas if t - self.meas_t <= self.speed_cfg.measured_max_age_s else None
         if d.drive and d.raw:
             self.speed.reset()

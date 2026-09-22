@@ -12,11 +12,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, 'src', 'carbot_bringup', 'config', 'data', 'challenges.yaml')
 OUT = os.path.join(ROOT, 'docs', 'CHALLENGE_MAP.md')
 
-TAB_NAMES = {
-    'main': 'Main', 'map': 'Global map', 'perception': 'Perception', 'planner': 'Local planner',
-    'memory_lidar': 'Local memory + LiDAR', 'localization': 'Localization',
+TAB_NAMES = {   # phase 7 GUI tab titles (YAML ids unchanged; see carbot_gui.gui_core.YAML_TAB_ALIASES)
+    'main': 'Drive', 'map': 'Global map', 'perception': 'Perception + planner',
+    'planner': 'Perception + planner', 'memory_lidar': 'Memory + LiDAR', 'localization': 'Localization',
     'detections': 'Detections', 'control': 'Control + safety', 'health': 'System health',
-    'tuning': 'Tuning', 'recording': 'Recording', 'scoreboard': 'Scoreboard',
+    'tuning': 'Tuning', 'events': 'Events + log', 'scoreboard': 'Events + log', 'recording': 'Events + log',
 }
 
 

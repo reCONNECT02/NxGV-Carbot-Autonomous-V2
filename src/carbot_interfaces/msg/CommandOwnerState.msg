@@ -2,7 +2,7 @@
 # Priority: SAFETY STOP -> WATCHDOG (stale request) -> active request.
 std_msgs/Header header
 string active_source    # source mission logic selected
-string winner           # SAFETY_STOP | WATCHDOG | ROAD | TUNNEL | PARKING | RECOVERY | HOLD | DISARMED
+string winner           # SAFETY_STOP | WATCHDOG | ROAD | TUNNEL | PARKING | RECOVERY | HOLD | DISARMED | MANUAL (phase 7)
 string reason
 bool armed
 MotionRequest request   # the request that was considered (may be empty)

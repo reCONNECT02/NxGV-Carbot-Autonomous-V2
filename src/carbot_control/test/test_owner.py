@@ -97,3 +97,14 @@ def test_slew_limits_ramp_up_not_braking():
     assert d2 < high - 0.05
     assert sc.update(-0.05, 0.02, 0.02) == 0.0              # direction change passes through zero
     assert sc.update(-0.05, 0.0, 0.02) < 0
+
+
+def test_manual_takeover_phase7():
+    """GUI Manual control: owner stops driving (base drives from /joy); e-stop still wins."""
+    reqs = {'ROAD': req('ROAD', 9.95)}
+    m = ('ROAD', 'ROAD', 9.99)
+    d = arbitrate(10.0, True, False, OK, m, reqs, None, CFG, manual=True)
+    assert d.winner == 'MANUAL' and not d.drive and d.speed == 0.0
+    assert arbitrate(10.0, True, True, OK, m, reqs, None, CFG, manual=True).winner == 'SAFETY_STOP'
+    assert arbitrate(10.0, False, False, OK, m, reqs, None, CFG, manual=True).winner == 'MANUAL'
+    assert arbitrate(10.0, True, False, OK, m, reqs, None, CFG).winner == 'ROAD'   # hand back

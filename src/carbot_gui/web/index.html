@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RISA Bot console</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <header class="strip">
+    <div class="brand">RISA Bot<small id="modeLabel">connecting…</small></div>
+    <span class="modebig" id="modeChip">—</span>
+    <span class="chip grey" id="armedChip"><span class="dot"></span>—</span>
+    <div class="running" id="running" aria-label="Code running now" aria-live="polite"></div>
+    <div class="stat"><b id="battery">—</b><span>battery</span></div>
+    <button class="manbtn" id="manualBtn" aria-pressed="false"><b>Manual control</b><span id="manualSub">Drive with the controller</span></button>
+    <button class="estop" id="estopBtn"><b>E-STOP</b><span id="estopSub"></span></button>
+  </header>
+  <nav class="rail" id="rail" aria-label="Tabs"></nav>
+  <main>
+    <div class="manualbar" id="manualBar" hidden role="status">
+      <b>Manual control</b><span>Autonomy is paused. The controller drives through the base servo_controller.</span>
+      <span id="manualCmd" class="muted"></span>
+      <span class="muted">No /joy for joy_timeout (base_nodes.yaml) stops the car.</span>
+    </div>
+    <div id="panes">
+      <div class="pane focus" data-pane="0"><div class="panebar"><span>Left</span><select aria-label="Left pane tab"></select></div><div class="panebody"></div></div>
+      <div class="pane" data-pane="1" hidden><div class="panebar"><span>Right</span><select aria-label="Right pane tab"></select></div><div class="panebody"></div></div>
+    </div>
+  </main>
+</div>
+<span class="chip bad conn" id="conn">Connection to the car lost: retrying</span>
+<dialog id="takeover" aria-labelledby="tkh">
+  <h2 id="tkh">Take manual control?</h2>
+  <p>The run has started. Taking control with the controller counts as manual intervention and the run scores 0 marks. Autonomy pauses until you press Hand back.</p>
+  <div class="row"><button class="btn" id="tkCancel">Keep autonomous</button><button class="btn danger" id="tkGo">Take control, 0 marks</button></div>
+</dialog>
+<dialog id="estopDlg" aria-labelledby="esh">
+  <h2 id="esh">Press E-STOP?</h2>
+  <p id="estopText">The car stops immediately.</p>
+  <div class="row"><button class="btn" id="esCancel">Cancel</button><button class="btn danger" id="esGo">E-STOP</button></div>
+</dialog>
+<div class="toast" id="toast" role="status"></div>
+<script src="draw.js"></script>
+<script src="tabs.js"></script>
+<script src="tabs_diag.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

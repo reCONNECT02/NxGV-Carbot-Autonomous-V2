@@ -50,8 +50,13 @@ system_monitor:
     # Watched topics and expected rates (parallel arrays).
     watch_topics: [/camera/color/image_raw, /cam_ov5647/image_raw, /cam_imx219/image_raw,
                    /scan, /odom, /imu/rpy, /uwb3/input_json, /carbot/perception/road_grid,
-                   /carbot/localization/local_pose, /carbot/owner/state]
-    watch_expected_hz: [30.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 50.0]
+                   /carbot/localization/local_pose, /carbot/owner/state,
+                   # phase 7 additions (values only, no key renamed)
+                   /carbot/localization/global_pose, /carbot/uwb/ranges, /carbot/memory/grid,
+                   /carbot/plan/corridor, /carbot/plan/local_path, /carbot/detections,
+                   /carbot/safety/status]
+    watch_expected_hz: [30.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 50.0,
+                        10.0, 10.0, 8.0, 5.0, 5.0, 10.0, 50.0]   # corridor/local_path 5 Hz (planning.yaml), safety 50 Hz
     soc_temp_path: /sys/class/thermal/thermal_zone0/temp
     bpu_ratio_path: /sys/devices/system/bpu/bpu0/ratio   # UNVERIFIED on RDK X5: check in phase 7
     camera_process_patterns: [mipi_cam, astra_camera, hobot_codec, websocket]

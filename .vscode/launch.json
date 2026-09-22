@@ -126,6 +126,18 @@
       "program": "${workspaceFolder}/tools/sandbox/run_localization.py",
       "cwd": "${workspaceFolder}",
       "args": ["--bag", "C:/bags/run_1", "--session", "C:/carbot_data/calibration/20260925_081500"]
+    },
+    {
+      "name": "GUI mock: race mode, car stopped (open http://localhost:8081)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/gui_mock_server.py",
+      "cwd": "${workspaceFolder}", "args": ["--mode", "race", "--scenario", "stop"]
+    },
+    {
+      "name": "GUI mock: calibrate mode (open http://localhost:8081)",
+      "type": "debugpy", "request": "launch", "console": "integratedTerminal",
+      "program": "${workspaceFolder}/tools/sandbox/gui_mock_server.py",
+      "cwd": "${workspaceFolder}", "args": ["--mode", "calibrate"]
     }
   ]
 }

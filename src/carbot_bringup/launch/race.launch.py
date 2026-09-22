@@ -7,16 +7,19 @@
   arm while any required calibration is missing/failed, naming it.
 * GUI (http://<robot_ip>:8080/) opens in race mode: Preflight -> READY -> one
   START button -> fully autonomous run. Diagnostic tabs read-only + throttled,
-  tuning disabled, every run auto-recorded to <data_root>/bags.
-* No joystick node is started in race mode.
+  tuning disabled. (phase 7: run recording and the scoreboard are not launched.)
+* joy_node runs for the GUI "Manual control" button (after START = manual
+  intervention, 0 marks). start_joy:=false removes it.
 """
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 
 from carbot_bringup.stack import build, declare_arguments
 
 
 def generate_launch_description():
     return LaunchDescription(declare_arguments() + [
+        DeclareLaunchArgument('start_joy', default_value='true',
+                              description='joy_node for the GUI Manual control button'),
         OpaqueFunction(function=lambda context: build(context, 'race')),
     ])

@@ -11,9 +11,9 @@ never rename silently.
 | 3 | Localization + UWB | **done** |
 | 4 | Global planner, mission logic, local planner | **done** |
 | 5 | Parking, recovery, command owner + safety | **done** |
-| 6 | Detectors (traffic light, boom gate, bump sign) | next |
-| 7 | GUI main tab + diagnostic tabs | |
-| 8 | Calibration wizard + race mode | |
+| 6 | Detectors (traffic light, boom gate, bump sign) | **done** |
+| 7 | GUI main tab + diagnostic tabs | **done** |
+| 8 | Calibration wizard + race mode | next |
 | 9 | Docs | |
 
 ## Phase 1 — what exists
@@ -421,3 +421,89 @@ recovers (13 cm reverse, rejoin). Manoeuvre body margins > 0.
 * Boom classes: 0 validation images in the team package. Association tolerances and
   `object_size_m` are provisional.
 * CPU: detector decode + resize is on the CPU; planner CPU on the RDK is still unmeasured.
+
+
+## Phase 7 — GUI (done)
+
+Agreed design (mockup: claude.ai artifact "RISA Bot console mockup", v4):
+race tabs Drive · 1 Global map (with legs strip) · 2 Perception + planner (candidates drawn on the
+stitched drivable area) · 3 Memory + LiDAR · 4 Localization · 5 Detections · 6 Control + safety ·
+7 System health · 8 Events + log; split view (2 tabs side by side) in race mode; header shows
+"code running now" (Driving chain / Limiting / Stopped by / Faults), battery, Manual control
+button, e-stop. Calibrate mode: Calibration (steps, phase 8 builds the pages) + Tuning + the same
+diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
+
+### Checkpoint (verified against the files on disk)
+- [x] `MANUAL_TAKEOVER` topic, command_owner winner `MANUAL` (+ test), joy_node in both modes
+- [x] stack: scoreboard + run_recorder not launched; `session` param passed to nodes
+- [x] ops.yaml system_monitor watch list extended (values only)
+- [x] `carbot_gui/gui_core.py` + `test/test_gui_core.py` (8 tests pass)
+- [x] `carbot_gui/gui_server.py` (lazy topic groups, /api/*, manual, start, e-stop) + `params_api.py` (tuning)
+- [x] gui.yaml phase-7 keys, setup.py installs web/, package.xml deps
+- [x] web/index.html, web/app.css, web/draw.js, web/app.js (shell)
+- [x] web/tabs.js: drive, map (+ legs), percplan, memory, loc
+- [x] web/tabs_diag.js: det, control, health, events, calibration (overview), tuning
+- [x] tools/sandbox/gui_mock_server.py (no ROS, real web/ + synthetic data)
+- [x] render test in headless Chromium (mock server): all 9 race tabs, calibrate overview + tuning, split view, manual confirm dialog, manual ON state: 0 JS errors
+- [x] docs: handoff notes below, CHALLENGE_MAP regenerated with the new tab names
+
+### What exists
+* **`carbot_gui/gui_server`** (port 8080, both modes). JSON API: `GET /api/config`, `/api/core`
+  (header + Drive), `/api/tab/<id>`, `/api/img/<key>` (JPEG or 204), `/api/events?since=N`,
+  `/api/params`; `POST /api/estop`, `/api/estop_release` (calibrate), `/api/manual {on, confirm}`,
+  `/api/start` (race, calls `/carbot/race/start`), `/api/params/get|set|save` (calibrate).
+* **Lazy topic groups** (`gui_core.TAB_GROUPS`, `gui_server._build_groups`): `core` always
+  (status, mission, owner, safety, battery, events, /rosout, armed, e-stop, /cmd_vel, local pose,
+  global route + route_info, corridor, gate mismatch, preflight or calibration state); every other
+  group only while a browser polls that tab (+ `idle_unsubscribe_s`). Images: one group per image
+  key (`gui_core.IMAGE_KEYS`).
+* **Header "running now"** = `gui_core.running_now()` from CommandOwnerState + SafetyStatus +
+  MissionState + NodeStatus: Driving chain / Limiting / Stopped by (every blocker) / Faults (ERROR
+  or silent nodes). Each item names its block and the tab that explains it.
+* **Legs**: `gui_core.leg_progress()` = MissionState.route_leg + route_info pieces + nearest
+  global-route index to the local pose (leg %, piece n of m, piece kind).
+* **Tabs** (web/): race = drive, map, percplan, memory, loc, det, control, health, events;
+  calibrate = calibration (overview from CalibrationState), tuning, + the same diagnostics.
+  Split view in race mode (`gui.yaml race.split_view`).
+* **Tuning** (`params_api.py`): catalogue of `config/params/*.yaml` (not drivers.yaml, not `/**`),
+  live values via each node's parameter services (helper node, base-dashboard pattern), typed like
+  the live value, Save merges into `<session>/params_overlay.yaml` (refused if no session).
+* **Manual control**: GUI publishes `/carbot/manual/takeover` (Bool, latched). command_owner:
+  winner `MANUAL`, zero `/cmd_vel_auto`, `/carbot/vehicle/arm` False, so the base servo_controller
+  drives from `/joy` (its own joy_timeout watchdog). E-stop still wins. Race after START:
+  `race.manual_confirm` requires a confirm and the event is logged as manual intervention.
+* **Mock**: `tools/sandbox/gui_mock_server.py` (no ROS) + 2 VS Code entries.
+
+### Contract changes (additions only)
+* Topic `/carbot/manual/takeover` (`T.MANUAL_TAKEOVER`); CommandOwnerState.winner value `MANUAL`.
+* Node parameter `session` (absolute session path or "") passed to every node by stack.py.
+* gui.yaml phase-7 keys; ops.yaml system_monitor watch list: 7 topics appended (values only).
+* challenges.yaml #13: `nodes` / `tab` values changed (scoreboard not launched). `tab:` ids in
+  YAML are unchanged; `gui_core.YAML_TAB_ALIASES` maps them to GUI tab ids.
+* stack.py: `scoreboard`, `run_recorder` NOT launched; joy_node in both modes (`start_joy`,
+  race.launch.py default true).
+
+### For phase 8
+* The wizard pages go in `web/tabs_diag.js` `TABS.calibration` (currently the overview table).
+  Data: `/api/tab/calibration` (CalibrationState). Add `POST /api/calibration/action` in
+  gui_server -> CalibrationAction.srv. Each step's live view = embed an existing tab's renderer
+  (`TABS[YAML_TAB_ALIASES[step.tab]].create(el, ctx)`); they are self-contained.
+* Wizard is 13 steps (agreed in chat: 11 build map from a lap, 12 mission planner, 13 practice).
+  calibration_steps.yaml still has 12: renumbering is a phase-8 contract change to announce.
+* race_supervisor must serve `/carbot/race/start` (std_srvs/Trigger) and publish PreflightReport
+  states 0-7; the Drive tab START button is enabled only at STATE_READY (4) and not in manual.
+* Preflight should also refuse READY while `/carbot/manual/takeover` is true.
+* `bpu_ratio_path` still unverified (System health shows BPU from SystemHealth.bpu_percent).
+
+### PENDING ON CAR
+1. `colcon build --symlink-install && source install/setup.bash`
+2. `ros2 launch carbot_bringup calibrate.launch.py`, open http://<robot_ip>:8080 on a laptop.
+3. Open each tab; `ros2 topic info /carbot/perception/road_grid -v` shows gui_server as a
+   subscriber only while Perception + planner is open, and gone ~5 s after leaving it.
+4. `top` on the RDK with the Drive tab open vs. no browser: gui_server < 10 % of one core.
+5. Tuning: change `local_planner.lookahead_m`, Apply live, check `ros2 param get`; Save, check
+   `<session>/params_overlay.yaml`.
+6. Wheels off the ground: Manual control -> controller drives; Hand back -> owner resumes.
+   E-stop while manual -> motors stop.
+7. `ros2 launch carbot_bringup race.launch.py`: header shows "Waiting" (DISARMED) before START;
+   after START (phase 8) Manual control asks for confirmation.

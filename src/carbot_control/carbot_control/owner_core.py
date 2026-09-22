@@ -172,10 +172,14 @@ class Decision:
 
 def arbitrate(t: float, armed: bool, estop: bool, safety: Optional[Tuple[bool, str, float]],
               mission: Optional[Tuple[str, str, float]], requests: Dict[str, Req],
-              calibration: Optional[Req], cfg: OwnerCfg) -> Decision:
-    """safety = (motion_allowed, reason, receive time); mission = (mode, active_source, receive time)."""
+              calibration: Optional[Req], cfg: OwnerCfg, manual: bool = False) -> Decision:
+    """safety = (motion_allowed, reason, receive time); mission = (mode, active_source, receive time).
+    manual = GUI Manual control (phase 7): the owner stops writing and releases base AUTO,
+    so the base servo_controller drives from the joystick. The e-stop still wins."""
     if estop:
         return Decision('SAFETY_STOP', 'E-stop (counts as manual intervention = 0 marks)')
+    if manual:
+        return Decision('MANUAL', 'Manual control: controller drives through servo_controller')
     # calibration mode (steps 7/8): supervised, never while the race is armed
     if cfg.calibration_allowed and not armed and calibration is not None:
         age = t - calibration.t

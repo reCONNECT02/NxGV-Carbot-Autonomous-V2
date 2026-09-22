@@ -1,5 +1,5 @@
 # =============================================================================
-# gui.yaml -- Browser GUI (extends the base dashboard in phase 7).
+# gui.yaml -- Browser GUI (carbot_gui/gui_server.py, phase 7).
 # The GUI must not starve autonomy: every stream is throttled and downscaled,
 # and each tab's topics are subscribed ONLY while that tab is open.
 # =============================================================================
@@ -10,18 +10,35 @@ gui_server:
     lazy_subscriptions: true
     idle_unsubscribe_s: 5.0         # drop a tab's subscriptions this long after it closes
     max_clients: 4
-    state_rate_hz: 10.0             # main tab
+    state_rate_hz: 10.0             # header + Drive tab poll
     map_rate_hz: 2.0
     lidar_rate_hz: 5.0
     candidates_rate_hz: 5.0
     health_rate_hz: 1.0
-    image_max_fps: 5.0
-    image_width: 320
+    image_max_fps: 5.0              # browser fetch rate per image (camera_preview caps the source)
+    image_width: 320                # informational: camera_preview.preview_width does the downscale
     image_jpeg_quality: 60
+    # phase 7
+    web_root: ""                    # empty = installed share/carbot_gui/web
+    grid_rate_hz: 2.0               # road / memory grid refresh in the browser
+    grid_stride: 2                  # memory grid decimation (cells) before sending
+    control_history_s: 12.0         # Control + safety plots
+    control_history_hz: 10.0
+    events_max: 300                 # Events + log ring buffer
+    rosout_min_level: 30            # 30 WARN, 40 ERROR (rcl_interfaces/Log)
+    stale_after_s: 3.0              # a node with no heartbeat for this long is "silent"
+    trail_points: 400               # pose trails on the map / localization tabs
+    scan_max_points: 360
+    path_max_points: 120
+    drive:
+      obstacle_max_m: 1.5           # Drive tab: nearest LiDAR hit ahead within this range
+      obstacle_half_width_m: 0.20   #   and within this lateral half width
     race:
       diagnostics_read_only: true
       tuning_enabled: false
       diagnostic_rate_scale: 0.5    # halve diagnostic rates while racing
       estop_label: "E-STOP - counts as manual intervention = 0 marks"
+      manual_confirm: true          # Manual control after START asks for confirmation
+      split_view: true              # two tabs side by side
     calibrate:
       tuning_enabled: true
