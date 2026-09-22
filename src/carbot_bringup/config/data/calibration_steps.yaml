@@ -15,9 +15,27 @@
 # =============================================================================
 version: 1
 steps:
-  - {index: 1,  id: sensor_health,     title: Sensor health check,           required: true,  tab: health,
-     writes: [summary only],
-     pass: {camera_rate_min_ratio: 0.8, lidar_min_hz: 6.0, odom_min_hz: 15.0, imu_min_hz: 15.0, uwb_min_hz: 7.0, battery_min_v: 10.8}}
+  - index: 1
+    id: sensor_health
+    title: Sensor health check
+    required: true
+    tab: health
+    writes: [summary only]
+    # Wizard page (phase 8). Reads what system_monitor, uwb_ranges and the servo_controller
+    # extension already publish; subscribes to nothing extra.
+    instructions:
+      - Power on the car (battery switch ON), all three UWB anchors and the UWB tag.
+      - Wait until every row in the table turns green (about 10 s after the launch).
+      - "If a row stays red, read its Why / Fix. For a camera or duplicate-process row, press
+         Restart camera drivers."
+      - Press Run check (it measures for a few seconds), then Save.
+    procedure: {measure_s: 5.0, min_samples: 3, min_ok_fraction: 0.8}
+    pass: {camera_rate_min_ratio: 0.8, lidar_min_hz: 6.0, odom_min_hz: 15.0, imu_min_hz: 15.0, uwb_min_hz: 7.0,
+           battery_min_v: 10.8,
+           # phase 8 additions
+           max_age_s: 1.0,           # every sensor must have published within this
+           processes: {mipi_pattern: mipi_cam, astra_pattern: astra_camera,   # exactly one each
+                       forbidden: [hobot_codec, websocket]}}                  # old one-camera viewer
   - {index: 2,  id: camera_identity,   title: Camera identity (front / left / right), required: true, tab: perception,
      writes: [cameras.yaml roles, cameras.yaml roles_confirmed],
      pass: {user_confirmed: true}}
@@ -147,6 +165,21 @@ steps:
     procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [lap, points], lap_min_s: 40,
                 min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2}
     pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
-  - {index: 12, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
+  # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
+  # on the saved map. required: false UNTIL its wizard page exists, otherwise race mode could
+  # never arm (no page = no way to pass it). Set true when the page is built.
+  - index: 12
+    id: mission_planner
+    title: Mission planner (route + roundabout exits)
+    required: false
+    tab: map
+    tool: python3 tools/map/mission_planner.py
+    writes: [mission.yaml]
+    instructions:
+      - Needs step 11 saved. Routes and roundabout exits are planned on that exact map.
+      - Place P0 (start), P1, P2 (parking) and P3 (finish); every car pose must be fully on the road.
+      - Check all routes and their roundabout exits, then save the mission.
+    pass: {}
+  - {index: 13, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
      writes: [practice/<challenge>.yaml],
      pass: {}}

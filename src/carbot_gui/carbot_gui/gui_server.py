@@ -22,6 +22,7 @@ API
   POST /api/estop_release          calibrate only
   POST /api/manual  {on, confirm}  Manual control (race after START: confirm required)
   POST /api/start                  race START (std_srvs/Trigger on /carbot/race/start)
+  POST /api/calibration/action     {step, action, argument} -> CalibrationAction (calibrate only, phase 8)
 """
 import http.server
 import json
@@ -105,6 +106,9 @@ class GuiServer(CarbotNode):
         self.pub_manual.publish(Bool(data=False))
         from std_srvs.srv import Trigger
         self.start_cli = self.create_client(Trigger, T.RACE_START_SRV) if self.race else None
+        from carbot_interfaces.srv import CalibrationAction
+        self.calib_cli = None if self.race else self.create_client(CalibrationAction, T.CALIBRATION_ACTION_SRV)
+        self.calib_steps = self._load_steps()
         self.create_timer(1.0, self._update_groups)
         self.params = None
         if not self.race and bool(self.p('calibrate.tuning_enabled')):
@@ -119,6 +123,18 @@ class GuiServer(CarbotNode):
                 return yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError):
             return {}
+
+    def _load_steps(self):
+        """Step list for the navigation rail, straight from the data file (works even if the wizard is down)."""
+        doc = self._load_yaml(str(self.p('data.calibration_steps', '')))
+        out = []
+        for st in doc.get('steps', []) or []:
+            try:
+                out.append({'index': int(st['index']), 'id': str(st['id']), 'title': str(st['title']),
+                            'required': bool(st.get('required', True))})
+            except (KeyError, TypeError, ValueError):
+                continue
+        return sorted(out, key=lambda x: x['index'])
 
     # ------------------------------------------------------------------ topic groups
     def _build_groups(self):
@@ -158,6 +174,8 @@ class GuiServer(CarbotNode):
             'det': [('detections', DetectionArray, T.DETECTIONS, 5)],
             'control': [(f'req_{s.lower()}', MotionRequest, T.request_topic(s), 5) for s in T.REQUEST_SOURCES],
             'health': [('health', SystemHealth, T.SYSTEM_HEALTH, 5)],
+            # phase 8: wizard pages (open step's live view + sessions); only while a calibration page is open
+            'calibration': [('calib_live', String, T.CALIBRATION_LIVE, L)],
         }
         imgs = {'cam_front': T.cam_preview('front'), 'cam_left_rear': T.cam_preview('left_rear'),
                 'cam_right_rear': T.cam_preview('right_rear'), 'ov_front': T.perception_overlay('front'),
@@ -322,6 +340,9 @@ class GuiServer(CarbotNode):
             cur = next((x for x in cst.steps if x.index == cst.current_index), cst.steps[0])
             calib = {'index': cur.index, 'text': f'{cur.title} · {cur.status}'}
         running = G.running_now(self.mode, owner, safety, mission, nodes, self.manual, legs, calib)
+        calib_flags = None
+        if cst is not None:
+            calib_flags = [{'i': x.index, 'st': x.status, 'adv': x.can_advance} for x in cst.steps]
         b, armed, cv, cor = self.get('battery', 5.0), self.get('armed'), self.get('cmd_vel', 1.0), \
             self.get('corridor', 1.0)
         out = {'mode': self.mode, 'mission': mission, 'owner': owner, 'safety': safety, 'running': running,
@@ -329,7 +350,7 @@ class GuiServer(CarbotNode):
                'manual': self.manual, 'estopped': self.estopped, 'legs': legs,
                'lane_locked': bool(cor.lane_locked) if cor else False,
                'manual_cmd': {'lin': _r(cv.linear.x, 2), 'ang': _r(cv.angular.z, 2)} if cv and self.manual else None,
-               'events_seq': self.events.seq}
+               'events_seq': self.events.seq, 'calib_steps': calib_flags}
         pf = self.get('preflight')
         if pf is not None:
             out['preflight'] = {'state': pf.state, 'summary': pf.summary, 'session': pf.calibration_session,
@@ -593,12 +614,55 @@ class GuiServer(CarbotNode):
 
     def tab_calibration(self, q):
         c = self.get('calib')
-        if c is None:
-            return {'session': '', 'steps': []}
-        return {'session': c.session, 'current': c.current_index,
-                'steps': [{'index': s.index, 'id': s.id, 'title': s.title, 'status': s.status,
-                           'required': s.required, 'can_advance': s.can_advance, 'summary': s.result_summary,
-                           'file': s.result_file, 'previous': s.previous_session} for s in c.steps]}
+        out = {'session': '', 'steps': [], 'live': None, 'wizard': self._wizard_up()}
+        if c is not None:
+            out.update({'session': c.session, 'current': c.current_index,
+                        'steps': [{'index': s.index, 'id': s.id, 'title': s.title, 'status': s.status,
+                                   'required': s.required, 'can_advance': s.can_advance,
+                                   'summary': s.result_summary, 'file': s.result_file,
+                                   'previous': s.previous_session} for s in c.steps]})
+        lv = self.get('calib_live')
+        if lv is not None:
+            try:
+                out['live'] = json.loads(lv.data)
+            except ValueError:
+                out['live'] = {'error': 'calibration_wizard sent unreadable live data'}
+        return out
+
+    def _wizard_up(self):
+        with self.lock:
+            v = self.nodes.get('calibration_wizard')
+        if v is None:
+            return {'up': False, 'detail': 'no heartbeat from calibration_wizard yet'}
+        stale = time.monotonic() - v[0] > float(self.p('stale_after_s'))
+        return {'up': not stale, 'level': v[1].level, 'detail': v[1].detail,
+                'state': 'SILENT' if stale else v[1].state}
+
+    def calibration_action(self, body):
+        """GUI button -> CalibrationAction. Never blocks the HTTP thread for more than timeout."""
+        if self.race or self.calib_cli is None:
+            return {'ok': False, 'message': 'Calibration actions exist in calibrate mode only'}
+        from carbot_interfaces.srv import CalibrationAction
+        action = str(body.get('action', '')).upper()
+        if not action:
+            return {'ok': False, 'message': 'no action given'}
+        if not self.calib_cli.wait_for_service(timeout_sec=0.5):
+            return {'ok': False, 'message': 'calibration_wizard is not running: look for its error in the launch '
+                                            'terminal (ros2 node list | grep calibration_wizard)'}
+        req = CalibrationAction.Request(step_id=str(body.get('step', '')), action=action,
+                                        argument=str(body.get('argument', '')))
+        fut = self.calib_cli.call_async(req)
+        end = time.time() + 5.0
+        while not fut.done() and time.time() < end:
+            time.sleep(0.02)
+        if not fut.done():
+            return {'ok': False, 'message': 'calibration_wizard did not answer within 5 s (busy or stuck)'}
+        r = fut.result()
+        if r is None:
+            return {'ok': False, 'message': 'calibration_wizard call failed'}
+        if action not in ('SELECT',):
+            self.events.add('calibration', 'info' if r.ok else 'warn', 'wizard', f'{action} {req.step_id}: {r.message}')
+        return {'ok': bool(r.ok), 'message': r.message, 'passed': bool(r.passed), 'result_yaml': r.result_yaml}
 
     # ------------------------------------------------------------------ actions
     def image(self, key):
@@ -667,7 +731,8 @@ class GuiServer(CarbotNode):
                           'grid': float(self.p('grid_rate_hz')) * scale,
                           'health': float(self.p('health_rate_hz')),
                           'image': float(self.p('image_max_fps')) * scale},
-                'session': os.path.basename(self.session.rstrip('/')) if self.session else ''}
+                'session': os.path.basename(self.session.rstrip('/')) if self.session else '',
+                'calib_steps': [] if race else self.calib_steps}
 
 
 # ---------------------------------------------------------------------- HTTP
@@ -757,6 +822,8 @@ def serve(node: GuiServer, web_dir: str):
                 if path == '/api/start':
                     ok, msg = node.start()
                     return self._send(200, {'ok': ok, 'message': msg})
+                if path == '/api/calibration/action':
+                    return self._send(200, node.calibration_action(body))
                 if path.startswith('/api/params/'):
                     return self._params(path[12:], body)
                 return self._send(404, {'error': 'not found'})

@@ -6,6 +6,22 @@ calibration_wizard:
   ros__parameters:
     session_format: "%Y%m%d_%H%M%S"
     allow_keep_previous: true
+    # phase 8
+    resume_max_age_h: 12.0          # relaunch within this -> resume the newest UNFINISHED session (0 = always new)
+    live_rate_hz: 2.0               # /carbot/calibration/live (open step's live view)
+    state_rate_hz: 1.0              # /carbot/calibration/state (also sent on every change)
+    tick_hz: 5.0                    # running-step update
+    refresh_period_s: 2.0           # re-read summary.yaml (results written by the terminal tools)
+    input_timeout_s: 3.0            # SystemHealth / UwbStatus / battery older than this = missing
+    restart_cameras:                # step 1 "Restart camera drivers" button
+      enabled: true
+      kill_patterns: [mipi_cam, hobot_codec, websocket, astra_camera_container]   # camera ones only
+      grace_s: 2.0                  # SIGINT, wait, then SIGKILL (kill_stale.sh)
+      root_helper_dir: /usr/local/lib/carbot   # = drivers.yaml carbot_launch.root_helper_dir
+      delay_mipi_second_s: 2.0      # = drivers.yaml carbot_launch.delay_mipi_second_s
+      settle_s: 6.0                 # wait before checking the drivers are still alive
+      timeout_s: 20.0               # kill helper time limit
+      log_dir: /tmp/carbot_camera_restart
 
 race_supervisor:
   ros__parameters:
@@ -61,6 +77,16 @@ system_monitor:
     bpu_ratio_path: /sys/devices/system/bpu/bpu0/ratio   # UNVERIFIED on RDK X5: check in phase 7
     camera_process_patterns: [mipi_cam, astra_camera, hobot_codec, websocket]
     uwb_agent_pattern: micro_ros_agent
+    # phase 8 (real node; calibration step 1 + race preflight read its output)
+    rate_window_s: 2.0              # rate = messages in the last 2 s
+    ok_rate_ratio: 0.8              # TopicHealth.ok: rate >= 80 % of expected ...
+    max_age_s: 1.0                  # ... and a message within the last 1 s
+    latency_max_abs_ms: 60000.0     # |now - header.stamp| above this = driver not on wall clock -> -1
+    process_scan_period_s: 2.0
+    process_wrapper_names: [sudo, bash, sh, ros2, python3, timeout]   # same cmdline as the driver: not counted
+    battery_min_v: 10.8             # SystemHealth.battery_ok (CONFIRM for your pack)
+    image_watch_while_armed: false  # race: stop watching camera frames after START (saves CPU)
+    discovery_period_s: 2.0         # subscribe watched topics as soon as they appear
 
 scoreboard:
   ros__parameters:

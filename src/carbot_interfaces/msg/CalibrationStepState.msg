@@ -1,4 +1,4 @@
-uint8 index             # 1..12
+uint8 index             # 1..13 (phase 8: 13 steps)
 string id               # key in calibration_steps.yaml
 string title
 string status           # PENDING | RUNNING | PASS | FAIL | KEPT_PREVIOUS | SKIPPED_OPTIONAL

@@ -263,3 +263,14 @@ td input[type=text]{width:110px;border:1px solid var(--line);border-radius:6px;p
 .scene .hud,.scene .banner{z-index:1}
 .scene .banner{top:150px;bottom:auto}
 .cam img:not([src]){visibility:hidden}
+
+/* phase 8: calibration check tables wrap (long Why / Fix text) */
+table.calcheck{width:100%;table-layout:fixed}
+table.calcheck th:first-child{width:52%}
+table.calcheck td{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
+table.calcheck tr.badrow td{background:var(--bad-bg)}
+table.calcheck td.whyfix{font-size:12.5px;padding-top:0;line-height:1.45}
+table.metric td,.alert dd{white-space:normal;overflow-wrap:anywhere}
+.alert .failitem{margin:8px 0 0;padding:8px 0 0;border-top:1px solid var(--line);white-space:normal;overflow-wrap:anywhere}
+.alert .failitem > b{display:block;margin-bottom:2px}
+table.calcheck td:not(:first-child),table.calcheck th{overflow-wrap:normal}

@@ -31,7 +31,7 @@ TAB_TITLES = {
 TAB_GROUPS = {
     'drive': ['drive'], 'map': ['map'], 'percplan': ['percplan'], 'memory': ['memory'],
     'loc': ['loc', 'map'], 'det': ['det'], 'control': ['control'], 'health': ['health'],
-    'events': [], 'calibration': [], 'tuning': [],
+    'events': [], 'calibration': ['calibration'], 'tuning': [],
 }
 # `tab:` ids used in challenges.yaml / calibration_steps.yaml (phase 1 names, kept) -> GUI tab ids
 YAML_TAB_ALIASES = {'main': 'drive', 'map': 'map', 'perception': 'percplan', 'planner': 'percplan',

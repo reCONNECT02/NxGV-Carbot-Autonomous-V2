@@ -14,7 +14,7 @@ unchanged.
 
 | Command | Mode | GUI |
 |---|---|---|
-| `ros2 launch carbot_bringup calibrate.launch.py` | Guided calibration wizard (12 numbered steps) | `http://<robot_ip>:8080/` in calibrate mode |
+| `ros2 launch carbot_bringup calibrate.launch.py` | Guided calibration wizard (13 numbered steps) | `http://<robot_ip>:8080/` in calibrate mode |
 | `ros2 launch carbot_bringup race.launch.py` | Start line: preflight → READY → one START → autonomous run | `http://<robot_ip>:8080/` in race mode |
 
 Rollback to an older calibration: `ros2 launch carbot_bringup race.launch.py session:=20260924_170200`.

@@ -22,6 +22,10 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 15 | Collect boom gate footage (open + closed, several distances) from our Astra, validate, then set `challenge4_gate.enabled: true` | 6 / on site | TODO | Team model had 0 boom validation images. `docs/DETECTORS.md` |
 | 16 | Validate the light on the car, then set `traffic_light.enabled: true` | 6 / on site | TODO | While false, challenge 7 = 0 but the run never waits. Check `object_size_m` and `gate_association` tolerances too |
 | 17 | `run_planning.py --v4` crashes: v1 manoeuvre piece has no points, so `ParkingSession.start` has no goal | 5 | TODO | Found in phase 6. Team mission, race and tests unaffected. Fix: goal from the v1 bay, or `parking='preview'` for `--v4` |
+| 18 | Run calibration step 1 on the car; check system_monitor CPU with 3 raw camera subscriptions | 8 / on site | TODO | `top`: system_monitor should be well under 10 % of a core. If high, lower watch set or add a sampled mode |
+| 19 | `bpu_ratio_path` (BPU load) still unverified | 8 / on site | TODO | system_monitor logs one warning and reports -1 if the file is missing |
+| 20 | Make step 12 `mission_planner` required once its page exists | 8 | TODO | calibration_steps.yaml `required: false` for now |
+| 21 | KEEP_PREVIOUS for data-writing steps must copy their data files | 8 | TODO | Disabled for placeholders until each page implements it |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

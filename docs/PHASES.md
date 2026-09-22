@@ -13,7 +13,7 @@ never rename silently.
 | 5 | Parking, recovery, command owner + safety | **done** |
 | 6 | Detectors (traffic light, boom gate, bump sign) | **done** |
 | 7 | GUI main tab + diagnostic tabs | **done** |
-| 8 | Calibration wizard + race mode | next |
+| 8 | Calibration wizard + race mode | **in progress** (page by page: step 1 done) |
 | 9 | Docs | |
 
 ## Phase 1 — what exists
@@ -507,3 +507,41 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
    E-stop while manual -> motors stop.
 7. `ros2 launch carbot_bringup race.launch.py`: header shows "Waiting" (DISARMED) before START;
    after START (phase 8) Manual control asks for confirmation.
+
+
+## Phase 8 — calibration wizard, page by page
+
+Built one wizard page per chat. Status: **step 1 (sensor health) done**; steps 2-13 are
+placeholder pages; race mode (preflight / READY / START) not started.
+
+### Page 1 — sensor health check (done, untested on the car)
+| Piece | Where | Notes |
+|---|---|---|
+| system_monitor | `carbot_ops/system_monitor.py` (+ `monitor_core.py`) | REAL now (was a stub). Raw subscriptions (never deserialises images; stamp read from the CDR header), topics subscribed as they appear, rates/age/latency, CPU/RAM/temp/BPU, battery, agent, camera PIDs (sudo / bash / `ros2 run` wrappers filtered). Image checks pause after START (`image_watch_while_armed: false`) |
+| Wizard node | `carbot_ops/calibration_wizard.py` | REAL now. Service actions SELECT/RUN/REDO/SAVE/KEEP_PREVIOUS/CANCEL/ROLLBACK/RESTART_CAMERAS; `/e_stop` cancels a running step; config errors reported (status, every reply, live JSON), never a crash |
+| Wizard logic | `carbot_ops/wizard_core.py` | Order enforced on RUN; Save only a PASS; re-save moves the old file aside; session created on first Save; ACTIVE only when every required step passes; resume unfinished session (`resume_max_age_h`); picks up results the terminal CLIs write into the session; rollback |
+| Step 1 | `step_sensor_health.py` + `sensor_checks.py` | 11 checks: 3 cameras (roles from cameras.yaml, "?" until step 2 confirms), LiDAR, odom, IMU, UWB tag, all anchors, battery, duplicate / old-viewer processes, ROS network env. Every failure has Why + Fix (Camera_Setup / UWB_Handoff gotchas). Run = 5 s, pass if each check ok in >= 80 % of samples. `sensor_checks` is meant for race preflight too |
+| Restart camera drivers | `camera_restart.py` | Kill helper with camera patterns only, both MIPI cameras as root via the sudoers helper (width/height always passed, 2nd delayed), Astra via its base launch. Children of the wizard; stopped again on wizard exit |
+| GUI | `web/tabs_calib.js` (+ app.js rail, app.css), `gui_server.py` | Rail: Overview, 13 numbered steps with status dots, Tuning, Diagnostics. Step page = stephead (Prev/Next, Next locked until pass/keep), what to do (live progress), controls, live view, result (Why/Fix per failed check, metrics), Run/Redo/Cancel, Save, Keep previous, embedded diagnostic tab (polled only while expanded). Placeholders show YAML instructions + the terminal command with `--session <wizard session>`. Overview: steps + sessions + two-click rollback |
+| Mock | `tools/sandbox/gui_mock_server.py --mode calibrate [--sensors ok\|bad]` | Runs the REAL wizard_core + step 1 on the repo YAML with a synthetic feed |
+| Tests | `carbot_ops/test/` (42), bringup key test + 2 nodes | Headless Chromium run of the whole step-1 flow + race tabs: 0 JS errors |
+
+### Contract changes (additions unless marked)
+* Topic `/carbot/calibration/live` (`T.CALIBRATION_LIVE`, String JSON, latched): open step's live view,
+  result, instructions, sessions, running task.
+* **CHANGED** `calibration_steps.yaml`: 13 steps. NEW step 12 `mission_planner` (`required: false`
+  until its page exists, else race could never arm); `practice_runs` index 12 -> 13. Ids unchanged
+  (all code looks steps up by id). Step 1: new `instructions`, `procedure`, `pass.max_age_s`,
+  `pass.processes`.
+* `ops.yaml`: calibration_wizard + system_monitor phase-8 keys (no existing key changed).
+* Comments only: `CalibrationStepState.index` 1..13, `CalibrationAction.action` + CANCEL, RESTART_CAMERAS.
+* gui_server: `POST /api/calibration/action`, `/api/tab/calibration` + `live` + `wizard`,
+  `/api/config` + `calib_steps`, `/api/core` + `calib_steps` flags; `TAB_GROUPS.calibration`.
+
+### For the next page (step 2, camera identity)
+* Add `StepImpl` subclass in `carbot_ops/step_<id>.py`, register it in `calibration_wizard._setup`,
+  add `STEP_PAGES.<id>` in `tabs_calib.js`. Placeholder -> built automatically.
+* A step that writes data files must copy them on KEEP_PREVIOUS (`can_keep_previous` stays False
+  until it does) and write into `<session>/data/` via `calib_tools.save_data`.
+* Step 2 needs the 3 camera previews (`img:cam_*` keys, camera_preview) and writes
+  cameras.yaml `roles` + `roles_confirmed`.

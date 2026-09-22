@@ -24,9 +24,27 @@ const App = (() => {
 
   /* ------------------------------------------------------------ navigation */
   const title = id => (cfg.tabs.find(t => t.id === id) || { title: id }).title;
+  const isStep = id => /^cal-\d+$/.test(id || '') && (cfg.calib_steps || []).some(s => 'cal-' + s.index === id);
+  const known = id => cfg.tabs.some(t => t.id === id) || isStep(id);
   function buildNav() {
     const race = cfg.mode === 'race';
     let h = '';
+    if (!race) {   /* phase 8: Overview, numbered steps, tools, diagnostics */
+      h += `<button class="navbtn" data-tab="calibration"><span class="n"></span>Overview</button><h2>Calibration steps</h2>`;
+      (cfg.calib_steps || []).forEach(s => {
+        h += `<button class="navbtn" data-tab="cal-${s.index}"><span class="n">${s.index}</span>${D.esc(s.title)}<span class="flag todo" data-flag="cal-${s.index}"></span></button>`;
+      });
+      if (cfg.tabs.some(t => t.id === 'tuning')) h += `<h2>Tools</h2><button class="navbtn" data-tab="tuning"><span class="n"></span>Tuning</button>`;
+      h += '<h2>Diagnostics</h2>';
+      let n = 0;
+      cfg.tabs.filter(t => t.id !== 'calibration' && t.id !== 'tuning').forEach(t => {
+        h += `<button class="navbtn" data-tab="${t.id}"><span class="n">${++n}</span>${D.esc(t.title)}<span class="flag" data-flag="${t.id}"></span></button>`;
+      });
+      $('rail').innerHTML = h;
+      panes.forEach(p => { p.sel.innerHTML = cfg.tabs.map(t => `<option value="${t.id}">${D.esc(t.title)}</option>`).join(''); });
+      markNav();
+      return;
+    }
     if (race && cfg.split_view) h += `<button class="splitbtn" id="splitbtn" aria-pressed="${split}">${split ? 'Single view' : 'Split view'}</button>`;
     h += `<h2>${race ? 'Tabs' : 'Calibration mode'}</h2>`;
     let n = 0;
@@ -53,15 +71,16 @@ const App = (() => {
     p.tab = id; cur[pi] = id; p.sel.value = id;
     const sec = document.createElement('section');
     p.body.innerHTML = ''; p.body.appendChild(sec);
-    const T = TABS[id];
+    const T = TABS[id] || (isStep(id) ? TABS.calstep : null);
     if (!T) { sec.innerHTML = `<div class="empty">Unknown tab ${D.esc(id)}</div>`; return; }
-    p.inst = T.create(sec, ctx);
+    try { p.inst = T.create(sec, ctx, id); } catch (e) { sec.innerHTML = `<div class="empty">This page failed to open: ${D.esc(String(e))}</div>`; p.inst = null; return; }
+    const apiId = T.api ? T.api(id) : id;
     const tick = async () => {
       if (!document.hidden && p.inst) {
         try {
           if (T.poll !== false) {
             const q = p.inst.query ? p.inst.query() : '';
-            const d = await api(`/api/tab/${id}${q ? '?' + q : ''}`);
+            const d = await api(`/api/tab/${apiId}${q ? '?' + q : ''}`);
             if (p.inst && p.tab === id) p.inst.update(d || {}, core);
           } else if (p.inst.update) p.inst.update(null, core);
         } catch (e) { /* the header shows the connection state */ }
@@ -89,7 +108,7 @@ const App = (() => {
     buildNav();
   }
   function go(id) {
-    if (!cfg.tabs.some(t => t.id === id)) return;
+    if (!known(id)) return;
     const pi = split ? focus : 0;
     if (split && cur[1 - pi] === id) { const mine = cur[pi]; mount(1 - pi, mine); }
     mount(pi, id);
@@ -115,6 +134,8 @@ const App = (() => {
     $('battery').textContent = c.battery_v == null ? '— V' : c.battery_v.toFixed(2) + ' V';
     renderRunning(c.running);
     document.querySelectorAll('[data-flag]').forEach(f => { f.className = 'flag'; });
+    const FL = { PASS: 'ok', KEPT_PREVIOUS: 'kept', FAIL: 'bad', RUNNING: 'run', PENDING: 'todo', SKIPPED_OPTIONAL: 'todo' };
+    (c.calib_steps || []).forEach(x => { const f = document.querySelector(`[data-flag="cal-${x.i}"]`); if (f) f.className = 'flag ' + (FL[x.st] || 'todo'); });
     (c.running || []).forEach(l => l.items.forEach(it => {
       if (!it.tab || !(it.kind === 'bad' || it.kind === 'warn')) return;
       const f = document.querySelector(`[data-flag="${it.tab}"]`);

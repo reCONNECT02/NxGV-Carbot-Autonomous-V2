@@ -1,6 +1,6 @@
 # GUI -> calibration_wizard. /carbot/calibration/action
 string step_id
-string action           # RUN | SAVE | REDO | KEEP_PREVIOUS | SELECT | ROLLBACK
+string action           # RUN | SAVE | REDO | KEEP_PREVIOUS | SELECT | ROLLBACK | CANCEL | RESTART_CAMERAS (phase 8)
 string argument         # step-specific (e.g. camera id, session to roll back to)
 ---
 bool ok

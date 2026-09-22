@@ -145,6 +145,9 @@ RACE_ARMED = '/carbot/race/armed'                       # Bool, transient local
 RACE_START_SRV = '/carbot/race/start'                   # std_srvs/Trigger (the one START button)
 CALIBRATION_STATE = '/carbot/calibration/state'         # CalibrationState
 CALIBRATION_ACTION_SRV = '/carbot/calibration/action'   # CalibrationAction
+# phase 8: the open wizard step's live view, result, instructions and the session list.
+# std_msgs/String JSON, latched, calibration_wizard.live_rate_hz. GUI calibration pages only.
+CALIBRATION_LIVE = '/carbot/calibration/live'
 RECORD_CONTROL_SRV = '/carbot/record/control'           # RecordControl
 RECORD_STATE = '/carbot/record/state'                   # String JSON
 SYSTEM_HEALTH = '/carbot/system/health'                 # SystemHealth

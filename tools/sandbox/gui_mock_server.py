@@ -2,6 +2,12 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
+                                             [--sensors ok|bad] [--data-root DIR]
+
+Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
+step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
+makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
+Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
 GUI changes without the car. Data shapes match carbot_gui/gui_server.py; the
@@ -21,6 +27,8 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_gui'))
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_ops'))
 from carbot_gui import gui_core as G  # noqa: E402
 
 WEB = os.path.join(REPO, 'src', 'carbot_gui', 'web')
@@ -104,7 +112,9 @@ class Mock:
                 'tuning': not race, 'split_view': race, 'manual_confirm': race,
                 'estop_label': 'E-STOP - counts as manual intervention = 0 marks' if race else 'Stop motors',
                 'rates': {'core': 5, 'map': 2, 'lidar': 3, 'cand': 3, 'grid': 2, 'health': 1, 'image': 2},
-                'session': '' if race else '20260924_141208'}
+                'session': '' if race else '20260924_141208',
+                'calib_steps': [] if race else [{'index': x.index, 'id': x.id, 'title': x.title, 'required': x.required}
+                                                for x in self.wiz.wiz.slots]}
 
     def legs(self):
         x, y, a, i = pose()
@@ -122,12 +132,18 @@ class Mock:
         safety = ({'motion_allowed': False, 'veto_check': 'front_clearance', 'veto_reason': 'obstacle',
                    'value': 0.12, 'limit': 0.15} if stop else {'motion_allowed': True, 'veto_check': ''})
         legs = self.legs()
-        calib = {'index': 3, 'text': 'Camera intrinsics · RUNNING'} if self.mode == 'calibrate' else None
+        calib = flags = None
+        if self.mode == 'calibrate':
+            self.wiz.tick()
+            st = self.wiz.wiz.state()
+            cur = st['steps'][st['current'] - 1]
+            calib = {'index': cur['index'], 'text': f"{cur['title']} · {cur['status']}"}
+            flags = [{'i': x['index'], 'st': x['status'], 'adv': x['can_advance']} for x in st['steps']]
         out = {'mode': self.mode, 'mission': mission, 'owner': owner, 'safety': safety, 'battery_v': 11.62,
                'running': G.running_now(self.mode, owner, safety, mission, [], self.manual, legs, calib),
                'armed': self.mode == 'race', 'manual': self.manual, 'estopped': self.estop, 'legs': legs,
                'lane_locked': True, 'manual_cmd': {'lin': 0.32, 'ang': -0.18} if self.manual else None,
-               'events_seq': self.events.seq}
+               'events_seq': self.events.seq, 'calib_steps': flags}
         if self.mode == 'race':
             out['preflight'] = {'state': 5, 'summary': 'running', 'session': '20260924_141208', 'missing': [],
                                 'checks': [{'name': n, 'ok': True, 'value': 'ok', 'expected': 'ok', 'detail': ''}
@@ -253,16 +269,70 @@ class Mock:
         if name == 'events':
             return {'events': self.events.since(int(q.get('since', ['0'])[0] or 0))}
         if name == 'calibration':
-            titles = ['Sensor health check', 'Camera identity', 'Camera intrinsics', '3-camera extrinsics + IPM',
-                      'LiDAR-camera alignment', 'IMU + wheel odometry', 'Servo centre + steering limits', 'Speed PID',
-                      'Venue colour / lighting', 'UWB anchor survey + offsets', 'Build map from a lap', 'Mission planner',
-                      'Practice runs']
-            st = ['PASS', 'PASS', 'RUNNING', 'FAIL'] + ['PENDING'] * 5 + ['KEPT_PREVIOUS', 'PENDING', 'PENDING', 'SKIPPED_OPTIONAL']
-            return {'session': '20260924_141208', 'current': 3,
-                    'steps': [{'index': k + 1, 'id': f's{k + 1}', 'title': ti, 'status': st[k], 'required': k < 12,
-                               'summary': '', 'previous': '20260921_190455' if st[k] == 'KEPT_PREVIOUS' else ''}
-                              for k, ti in enumerate(titles)]}
+            return self.wiz.tab()
         return {}
+
+
+class MockWizard:
+    """Real wizard_core + step 1 against synthetic SystemHealth/UwbStatus snapshots."""
+
+    def __init__(self, sensors, root):
+        import yaml
+        from carbot_ops import wizard_core as wc
+        from carbot_ops.step_sensor_health import SensorHealthStep
+        data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
+        ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
+        self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
+        step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
+        self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
+                                                'resume_max_age_h': 12.0},
+                             {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb)})
+        self.sensors, self.seq, self.t_last = sensors, 0, 0.0
+        self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
+        self.fixed_at = None
+
+    def inputs(self):
+        now = time.time()
+        if now - self.t_last >= 1.0:
+            self.seq, self.t_last = self.seq + 1, now
+        bad = self.sensors == 'bad' and not (self.fixed_at and now > self.fixed_at)
+        j = lambda v: v + 0.3 * math.sin(now + v)  # noqa: E731
+        topics = {'/camera/color/image_raw': {'hz': j(29.7), 'age': 0.03, 'latency': 41},
+                  '/cam_ov5647/image_raw': {'hz': j(29.5), 'age': 0.03, 'latency': 36},
+                  '/cam_imx219/image_raw': {'hz': j(14.8) if bad else j(29.4), 'age': 0.04, 'latency': 36},
+                  '/scan': {'hz': 0.0, 'age': -1.0, 'latency': -1} if bad else {'hz': j(10.0), 'age': 0.08, 'latency': 22},
+                  '/odom': {'hz': j(20.0), 'age': 0.05, 'latency': 4}, '/imu/rpy': {'hz': j(19.8), 'age': 0.05, 'latency': -1},
+                  '/uwb3/input_json': {'hz': j(9.7), 'age': 0.1, 'latency': -1}}
+        procs = [('astra_camera /', 2314), ('mipi_cam /cam_imx219', 2391), ('mipi_cam /cam_ov5647', 2388)]
+        if bad:
+            procs.append(('mipi_cam /cam_imx219', 1877))
+        snap = {'health_age_s': 0.3, 'topics': topics, 'procs': procs, 'agent': True, 'battery_v': 11.62,
+                'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
+                        'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
+                'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
+        return {'snap': snap, 'health_seq': self.seq}
+
+    def tick(self):
+        self.wiz.tick(self.inputs())
+        if self.task['state'] == 'running' and time.time() > self.task['until']:
+            self.task.update(state='done', message='Drivers restarted. Check the camera rows turn green (about 5 s).')
+            self.fixed_at = time.time() + 2
+
+    def action(self, body):
+        a = str(body.get('action', '')).upper()
+        if a == 'RESTART_CAMERAS':
+            self.task = {'name': 'restart_cameras', 'state': 'running', 'message': 'kill stale camera processes',
+                         'log': ['kill stale camera processes: sudo -n /usr/local/lib/carbot/kill_stale.sh ...',
+                                 '  [kill_stale] stopping stale processes: 1877 mipi_cam'], 'until': time.time() + 4}
+            return {'ok': True, 'message': 'Restarting camera drivers (about 10 s): stale ones are killed first'}
+        return self.wiz.action(str(body.get('step', '')), a, str(body.get('argument', '')), self.inputs())
+
+    def tab(self):
+        self.tick()
+        st = self.wiz.state()
+        return {'session': st['session'] or '(not started)', 'current': st['current'], 'steps': st['steps'],
+                'live': json.loads(json.dumps(self.wiz.live(self.inputs(), self.task), default=str)),
+                'wizard': {'up': True, 'level': 0, 'state': 'RUNNING', 'detail': ''}}
 
 
 def main():
@@ -270,8 +340,15 @@ def main():
     ap.add_argument('--mode', default='race', choices=['race', 'calibrate'])
     ap.add_argument('--scenario', default='drive', choices=['drive', 'stop'])
     ap.add_argument('--port', type=int, default=8081)
+    ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
+    ap.add_argument('--data-root', default='')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
+    if a.mode == 'calibrate':
+        import tempfile
+        root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
+        mock.wiz = MockWizard(a.sensors, root)
+        print(f'calibration sessions -> {root}')
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
@@ -326,6 +403,10 @@ def main():
             if p == '/api/estop':
                 mock.estop = True
                 return self._send(200, {'ok': True})
+            if p == '/api/calibration/action':
+                if mock.mode != 'calibrate':
+                    return self._send(200, {'ok': False, 'message': 'Calibration actions exist in calibrate mode only'})
+                return self._send(200, mock.wiz.action(body))
             if p == '/api/params/get':
                 return self._send(200, {'ok': True, 'values': {'min_clearance_m': 0.05}})
             return self._send(200, {'ok': True, 'message': 'mock: ' + p})

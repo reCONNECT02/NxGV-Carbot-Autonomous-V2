@@ -137,26 +137,7 @@ TABS.events = {
   },
 };
 
-/* ============================================================ CALIBRATION (overview; phase 8 adds the step pages) */
-TABS.calibration = {
-  rate: () => 1,
-  create(el, ctx) {
-    el.innerHTML = H.head('Calibration', 'Every step, in order. The guided step pages arrive in phase 8.', '', ctx) + '<div data-k="body"></div>';
-    const q = k => el.querySelector(`[data-k="${k}"]`);
-    const chip = s => ({ PASS: 'ok', FAIL: 'bad', RUNNING: 'blue', KEPT_PREVIOUS: 'grey', PENDING: 'grey', SKIPPED_OPTIONAL: 'grey' }[s] || 'grey');
-    return {
-      update(d) {
-        if (!d.steps || !d.steps.length) { q('body').innerHTML = '<div class="panel empty">No /carbot/calibration/state yet: is calibration_wizard running?</div>'; return; }
-        const missing = d.steps.filter(s => s.required && !['PASS', 'KEPT_PREVIOUS'].includes(s.status));
-        q('body').innerHTML = (missing.length ? `<div class="alert bad"><b class="t">Race mode will refuse to arm</b>Not passed yet: ${missing.map(s => s.index + ' ' + D.esc(s.title)).join(', ')}.</div>`
-          : '<div class="alert ok"><b class="t">All required steps passed</b>Race mode can arm with this session.</div>') +
-          H.panel(`Session ${D.esc(d.session)}`, `<div class="scroll"><table><tr><th>#</th><th>Step</th><th>Status</th><th>Result</th><th>Kept from</th></tr>` +
-            d.steps.map(s => `<tr class="${s.index === d.current ? 'cur' : ''}"><td>${s.index}</td><td>${D.esc(s.title)}${s.required ? '' : ' <span class="muted">(optional)</span>'}</td>` +
-              `<td><span class="chip ${chip(s.status)}">${D.esc(s.status)}</span></td><td class="muted">${D.esc(s.summary || '—')}</td><td class="muted">${D.esc(s.previous || '')}</td></tr>`).join('') + '</table></div>');
-      },
-    };
-  },
-};
+/* CALIBRATION overview + step pages: tabs_calib.js (phase 8) */
 
 /* ============================================================ TUNING (calibrate only) */
 TABS.tuning = {
