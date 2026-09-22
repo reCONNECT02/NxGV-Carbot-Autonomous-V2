@@ -26,6 +26,9 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 19 | `bpu_ratio_path` (BPU load) still unverified | 8 / on site | TODO | system_monitor logs one warning and reports -1 if the file is missing |
 | 20 | Make step 12 `mission_planner` required once its page exists | 8 | TODO | calibration_steps.yaml `required: false` for now |
 | 21 | KEEP_PREVIOUS for data-writing steps must copy their data files | 8 | TODO | Disabled for placeholders until each page implements it |
+| 22 | mipi_cam auto-detects sensors and ignores `channel`: with one MIPI sensor missing, the other one is published under the wrong namespace | 8 | TODO | Seen 2026-09-23 on risabot5: IMX219 undetected, the `/cam_imx219` (ch 0) process opened the OV5647 (i2c4@0x36, host 2), the `/cam_ov5647` process then failed with "detected sensors are 1 less than expected". Step 1 should read the "cap <sensor> init success" line (/tmp/carbot_root_logs) or `dmesg` and fail the row on a sensor/namespace mismatch |
+| 23 | Step 1 on the car: CPU load ~16 with calibrate.launch.py | 8 / on site | TODO | Seen 2026-09-23 on risabot5: gui_server ~60 %, system_monitor ~50 %, most planning/control nodes 35-45 % of a core each (old risabot5-track-stack.service was also running; now disabled). Re-measure alone, see #18 |
+| 24 | Side MIPI cameras (OV5647, IMX219) switched OFF: `cameras.yaml sensors.<name>.enabled: false`, stack runs front-only | 8 | DOING | 2026-09-23 risabot5: IMX219 not detected, OV5647 MIPI frame errors (also alone, as in Camera_Setup.md), cable reseat did not help. Launch, camera restart, step 1 checks and road_perception skip disabled sensors. Still to honour it: steps 2 (roles), 3 (`per_sensor`), 4 (left/right boards), race preflight. Re-enable: fix hardware, set `enabled: true`, rebuild |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

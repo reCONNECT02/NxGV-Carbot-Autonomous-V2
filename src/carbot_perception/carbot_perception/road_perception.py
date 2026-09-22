@@ -213,7 +213,7 @@ class RoadPerception(CarbotNode):
         self.last_debug = now
         q = int(self.p('debug.jpeg_quality'))
         scale = int(self.p('debug.bev_scale'))
-        renders = {'warped': lambda: warped_strip(res, T.CAMERA_ROLES, max(1, scale - 1)),
+        renders = {'warped': lambda: warped_strip(res, list(self.topics), max(1, scale - 1)),
                    'stitched': lambda: bev_view(res.bgr, scale),
                    'mask': lambda: bev_view(mask_colours(res), scale)}
         for key, pub in wanted.items():

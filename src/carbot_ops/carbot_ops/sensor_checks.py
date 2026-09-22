@@ -21,9 +21,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from carbot_common import topics as T
+from carbot_common.data import sensor_enabled
 
 PASS_KEYS = ('camera_rate_min_ratio', 'lidar_min_hz', 'odom_min_hz', 'imu_min_hz', 'uwb_min_hz',
-             'battery_min_v', 'max_age_s', 'processes')
+             'battery_min_v', 'max_age_s', 'processes', 'enforce_min_rates')
 
 SENSOR_LABEL = {'astra': 'Astra Pro', 'ov5647': 'OV5647', 'imx219': 'IMX219'}
 ROLE_LABEL = {'front': 'front', 'left_rear': 'left', 'right_rear': 'right'}
@@ -57,6 +58,7 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
     _need(cameras, ('sensors', 'roles'), 'cameras.yaml')
     _need(uwb, ('anchors', 'agent'), 'uwb.yaml')
     out: List[Check] = []
+    enforce = bool(pass_cfg['enforce_min_rates'])
     roles = cameras['roles'] or {}
     confirmed = bool(cameras.get('roles_confirmed', False))
     ratio = float(pass_cfg['camera_rate_min_ratio'])
@@ -64,6 +66,8 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
         sensor = roles.get(role)
         if not sensor or sensor not in cameras['sensors']:
             raise ConfigError(f'cameras.yaml roles.{role} = {sensor!r} is not a sensor')
+        if not sensor_enabled(cameras, sensor):
+            continue                           # enabled: false -> no row
         s = cameras['sensors'][sensor]
         _need(s, ('image_topic', 'expected_hz'), f'cameras.yaml sensors.{sensor}')
         where = 'front' if role == 'front' else (ROLE_LABEL[role] + (' side' if confirmed else ' side?'))
@@ -74,20 +78,21 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
         out.append(Check(f'cam_{sensor}', f'{name} ({where})', 'topic', s['image_topic'],
                          min_hz=exp * ratio, expected_hz=exp, sensor=sensor,
                          extra={'driver': s.get('driver', ''), 'namespace': s.get('namespace', ''),
-                                'channel': s.get('channel', '')}))
+                                'channel': s.get('channel', ''), 'enforce': enforce}))
     for key, label, topic, k in (('lidar', 'LiDAR · T-mini Plus', T.SCAN, 'lidar_min_hz'),
                                  ('odom', 'Wheel odometry', T.ODOM, 'odom_min_hz'),
                                  ('imu', 'IMU', T.IMU_RPY, 'imu_min_hz'),
                                  ('uwb_tag', 'UWB tag via micro-ROS agent', T.UWB_INPUT_JSON, 'uwb_min_hz')):
         mn = float(pass_cfg[k])
-        out.append(Check(key, label, 'topic', topic, min_hz=mn, expected_hz=mn))
+        out.append(Check(key, label, 'topic', topic, min_hz=mn, expected_hz=mn, extra={'enforce': enforce}))
     ids = [str(a['id']) for a in uwb['anchors']]
     out.append(Check('uwb_anchors', 'UWB anchors', 'anchors', extra={'ids': ids}))
     out.append(Check('battery', 'Battery', 'battery', T.VEHICLE_BATTERY,
                      extra={'min_v': float(pass_cfg['battery_min_v'])}))
     pr = pass_cfg['processes'] or {}
     _need(pr, ('mipi_pattern', 'astra_pattern', 'forbidden'), 'sensor_health.pass.processes')
-    mipi_ns = [s.get('namespace', '') for s in cameras['sensors'].values() if s.get('driver') == 'mipi_cam']
+    mipi_ns = [s.get('namespace', '') for n, s in cameras['sensors'].items()
+               if s.get('driver') == 'mipi_cam' and sensor_enabled(cameras, n)]
     out.append(Check('processes', 'Camera processes (no duplicates)', 'processes',
                      extra={'mipi': str(pr['mipi_pattern']), 'astra': str(pr['astra_pattern']),
                             'forbidden': [str(x) for x in pr['forbidden']], 'mipi_ns': mipi_ns}))
@@ -136,7 +141,8 @@ def _topic_fix(c: Check, never: bool, snap: Dict) -> str:
 
 
 def _eval_topic(c: Check, snap: Dict, max_age: float) -> Dict:
-    lim = f'≥ {c.min_hz:.1f} Hz'
+    enforce = c.extra.get('enforce', True)
+    lim = f'≥ {c.min_hz:.1f} Hz' if enforce else 'publishing'
     if snap.get('health_age_s') is None:
         return _row(c, 'wait', '—', lim, 'No fresh /carbot/system/health from system_monitor',
                     'Wait a few seconds after launch. If it stays like this, check  ros2 node list | grep '
@@ -157,7 +163,7 @@ def _eval_topic(c: Check, snap: Dict, max_age: float) -> Dict:
         return _row(c, 'bad', f'{hz:.1f} Hz', lim,
                     f'Last message {age:.1f} s ago (limit {max_age:.1f} s): the driver stopped',
                     _topic_fix(c, False, snap), value=0.0, detail=f'age {age:.2f} s')
-    if hz < c.min_hz:
+    if hz < c.min_hz and enforce:
         why = f'{hz:.1f} Hz is below {c.min_hz:.1f} Hz'
         fix = ('Too slow: look at the "Camera processes" row (duplicates halve the rate) and CPU in the '
                'System health tab. Then press "Restart camera drivers".') if c.key.startswith('cam_') \
@@ -165,6 +171,8 @@ def _eval_topic(c: Check, snap: Dict, max_age: float) -> Dict:
         return _row(c, 'bad', measured, lim, why, fix, value=hz, detail=f'age {age:.2f} s')
     lat = t.get('latency', -1.0)
     det = f'age {age:.2f} s' + (f' · latency {lat:.0f} ms' if lat is not None and lat >= 0 else '')
+    if hz < c.min_hz:
+        det += f' · below {c.min_hz:.1f} Hz (not enforced)'
     return _row(c, 'ok', measured, lim, value=hz, detail=det)
 
 

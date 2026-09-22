@@ -62,13 +62,26 @@ def test_data_files_parse():
 
 def test_mipi_sensors_follow_camera_setup():
     cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
-    mipi = {s['name']: s for s in stack.mipi_sensors(cams)}
+    for s in cams['sensors'].values():
+        assert 'enabled' in s
+    on = {n: dict(s, enabled=True) for n, s in cams['sensors'].items()}
+    mipi = {s['name']: s for s in stack.mipi_sensors(dict(cams, sensors=on))}
     assert mipi['ov5647']['channel'] == 2 and mipi['ov5647']['namespace'] == '/cam_ov5647'
     assert mipi['imx219']['channel'] == 0 and mipi['imx219']['namespace'] == '/cam_imx219'
     for s in mipi.values():
         assert (s['image_width'], s['image_height']) == (960, 544)
     assert cams['roles']['front'] == 'astra'
     assert cams['roles_confirmed'] is False     # only the wizard may set this
+
+
+def test_disabled_mipi_sensor_is_not_started():
+    cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
+    on = {n: dict(s, enabled=True) for n, s in cams['sensors'].items()}
+    on['imx219']['enabled'] = False
+    assert [s['name'] for s in stack.mipi_sensors(dict(cams, sensors=on))] == ['ov5647']
+    del on['imx219']['enabled']
+    with pytest.raises(KeyError):
+        stack.mipi_sensors(dict(cams, sensors=on))
 
 
 def test_camera_tfs():

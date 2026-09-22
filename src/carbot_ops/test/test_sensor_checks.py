@@ -5,8 +5,8 @@ from carbot_ops import sensor_checks as sc
 from helpers import CAMERAS, STEP1, UWB, good
 
 
-def rows(snap):
-    checks = sc.build_checks(CAMERAS, UWB, STEP1['pass'])
+def rows(snap, **pass_over):
+    checks = sc.build_checks(CAMERAS, UWB, dict(STEP1['pass'], **pass_over))
     return {r['key']: r for r in sc.evaluate(checks, snap, STEP1['pass']['max_age_s'])}
 
 
@@ -36,9 +36,20 @@ def test_stale_and_slow():
     s = good()
     s['topics']['/scan'] = {'hz': 10.0, 'age': 4.0, 'latency': 5}
     s['topics']['/cam_imx219/image_raw'] = {'hz': 12.0, 'age': 0.05, 'latency': 5}
-    r = rows(s)
+    r = rows(s, enforce_min_rates=True)
     assert r['lidar']['state'] == 'bad' and 'stopped' in r['lidar']['why']
     assert r['cam_imx219']['state'] == 'bad' and 'below 24.0' in r['cam_imx219']['why']
+
+
+def test_rates_not_enforced_still_fails_stale_and_never():
+    s = good()
+    s['topics']['/scan'] = {'hz': 10.0, 'age': 4.0, 'latency': 5}
+    s['topics']['/cam_imx219/image_raw'] = {'hz': 12.0, 'age': 0.05, 'latency': 5}
+    s['topics']['/odom'] = {'hz': 0.0, 'age': -1.0, 'latency': -1}
+    r = rows(s, enforce_min_rates=False)
+    assert r['cam_imx219']['state'] == 'ok' and 'not enforced' in r['cam_imx219']['detail']
+    assert r['cam_imx219']['limit'] == 'publishing'
+    assert r['lidar']['state'] == 'bad' and r['odom']['state'] == 'bad'
 
 
 def test_topic_not_watched_tells_where_to_add_it():
@@ -113,4 +124,22 @@ def test_missing_yaml_key_is_a_clear_error():
         sc.build_checks(CAMERAS, UWB, bad)
     cams = dict(CAMERAS, roles={'front': 'astra', 'left_rear': 'nope', 'right_rear': 'ov5647'})
     with pytest.raises(sc.ConfigError, match='left_rear'):
+        sc.build_checks(cams, UWB, STEP1['pass'])
+
+
+def test_disabled_cameras_have_no_row_and_are_not_process_checked():
+    cams = dict(CAMERAS, sensors={n: dict(s, enabled=(n == 'astra')) for n, s in CAMERAS['sensors'].items()})
+    s = good()
+    del s['topics']['/cam_ov5647/image_raw'], s['topics']['/cam_imx219/image_raw']
+    s['procs'] = [('astra_camera /', 100)]
+    checks = sc.build_checks(cams, UWB, STEP1['pass'])
+    r = {x['key']: x for x in sc.evaluate(checks, s, STEP1['pass']['max_age_s'])}
+    assert 'cam_ov5647' not in r and 'cam_imx219' not in r and len(r) == 9
+    assert all(x['state'] == 'ok' for x in r.values()), [x for x in r.values() if x['state'] != 'ok']
+
+
+def test_missing_enabled_key_is_loud():
+    cams = dict(CAMERAS, sensors={n: {k: v for k, v in s.items() if k != 'enabled'}
+                                  for n, s in CAMERAS['sensors'].items()})
+    with pytest.raises(KeyError):
         sc.build_checks(cams, UWB, STEP1['pass'])

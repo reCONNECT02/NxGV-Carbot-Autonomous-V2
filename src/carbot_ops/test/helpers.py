@@ -14,7 +14,10 @@ def load(name):
 
 
 STEPS = load('calibration_steps.yaml')
-CAMERAS = load('cameras.yaml')
+REPO_CAMERAS = load('cameras.yaml')             # as committed (side cameras may be off)
+CAMERAS = copy.deepcopy(REPO_CAMERAS)           # all three enabled: tests the 3-camera logic
+for _s in CAMERAS['sensors'].values():
+    _s['enabled'] = True
 UWB = load('uwb.yaml')
 STEP1 = next(s for s in STEPS['steps'] if s['id'] == 'sensor_health')
 

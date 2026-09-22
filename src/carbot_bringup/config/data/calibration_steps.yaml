@@ -34,6 +34,10 @@ steps:
            battery_min_v: 10.8,
            # phase 8 additions
            max_age_s: 1.0,           # every sensor must have published within this
+           # false: the *_min_hz / camera_rate_min_ratio limits above are shown, not enforced
+           # (2026-09-23: system_monitor under-counts on a loaded RDK, Astra 18.9 Hz vs 30 Hz real).
+           # "never published" and "stale > max_age_s" still fail.
+           enforce_min_rates: false,
            processes: {mipi_pattern: mipi_cam, astra_pattern: astra_camera,   # exactly one each
                        forbidden: [hobot_codec, websocket]}}                  # old one-camera viewer
   - {index: 2,  id: camera_identity,   title: Camera identity (front / left / right), required: true, tab: perception,

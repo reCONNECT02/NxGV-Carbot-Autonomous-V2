@@ -80,3 +80,11 @@ def test_kill_failure_reported(tmp_path):
                       is_root=False, sleep=lambda s: None)
     r._worker()
     assert r.snapshot()['state'] == 'failed' and 'sudo -n refused' in r.snapshot()['message']
+
+
+def test_plan_skips_disabled_sensors(tmp_path):
+    install(tmp_path)
+    cams = dict(CAMERAS, sensors={n: dict(s, enabled=(n != 'imx219')) for n, s in CAMERAS['sensors'].items()})
+    what = [s['what'] for s in CameraRestart(cfg(tmp_path), cams, '/share', is_root=False).plan('/tmp/p.txt')]
+    assert not any('/cam_imx219' in w for w in what)
+    assert any('/cam_ov5647' in w for w in what) and any('Astra' in w for w in what)

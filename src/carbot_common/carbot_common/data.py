@@ -30,10 +30,21 @@ def load_data(node, key: str) -> Dict[str, Any]:
     return load_yaml(node.p(f'data.{key}'))
 
 
+def sensor_enabled(cameras: Dict[str, Any], name: str) -> bool:
+    """cameras.yaml sensors.<name>.enabled (a missing key is an error)."""
+    s = cameras['sensors'][name]
+    if 'enabled' not in s:
+        raise KeyError(f'cameras.yaml sensors.{name}.enabled missing')
+    return bool(s['enabled'])
+
+
 def camera_role_topics(cameras: Dict[str, Any]) -> Dict[str, str]:
-    """{'front': '/camera/color/image_raw', 'left_rear': ..., 'right_rear': ...}"""
+    """{'front': '/camera/color/image_raw', 'left_rear': ..., 'right_rear': ...}
+
+    Roles whose sensor has enabled: false are left out."""
     sensors = cameras['sensors']
-    return {role: sensors[sensor]['image_topic'] for role, sensor in cameras['roles'].items()}
+    return {role: sensors[sensor]['image_topic'] for role, sensor in cameras['roles'].items()
+            if sensor_enabled(cameras, sensor)}
 
 
 def subscribe_cameras(node, callback=None, qos=None) -> Dict[str, str]:

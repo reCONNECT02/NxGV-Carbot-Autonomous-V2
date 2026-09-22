@@ -21,6 +21,8 @@ import threading
 import time
 from typing import Callable, Dict, List, Optional
 
+from carbot_common.data import sensor_enabled
+
 CFG_KEYS = ('enabled', 'kill_patterns', 'grace_s', 'root_helper_dir', 'delay_mipi_second_s',
             'settle_s', 'timeout_s', 'log_dir')
 
@@ -57,7 +59,7 @@ class CameraRestart:
     def mipi_sensors(self) -> List[Dict]:
         out = []
         for name, s in (self.cameras.get('sensors') or {}).items():
-            if s.get('driver') != 'mipi_cam':
+            if s.get('driver') != 'mipi_cam' or not sensor_enabled(self.cameras, name):
                 continue
             for k in ('namespace', 'channel', 'image_width', 'image_height'):
                 if k not in s:
@@ -78,7 +80,7 @@ class CameraRestart:
                               env.get('ROS_DOMAIN_ID', '0'), env.get('ROS_LOCALHOST_ONLY', '0'),
                               env.get('FASTRTPS_DEFAULT_PROFILES_FILE', ''), ''])})
         astra = (self.cameras.get('sensors') or {}).get('astra')
-        if astra:
+        if astra and sensor_enabled(self.cameras, 'astra'):
             steps.append({'what': 'start Astra Pro (base launch file)', 'kind': 'spawn', 'delay': 0.0,
                           'log': 'astra',
                           'cmd': ['ros2', 'launch', 'astra_camera', astra.get('launch_file', 'astra_mini.launch.py')]})

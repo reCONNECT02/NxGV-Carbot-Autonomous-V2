@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 import yaml
 
 from carbot_common import calibration_store as cs
-from carbot_common.data import DATA_KEYS
+from carbot_common.data import DATA_KEYS, sensor_enabled
 
 PACKAGE = 'carbot_bringup'
 
@@ -156,10 +156,10 @@ def camera_static_tfs(cameras: Dict) -> List[Dict]:
 
 
 def mipi_sensors(cameras: Dict) -> List[Dict]:
-    """mipi_cam sensors from cameras.yaml, ordered by channel."""
+    """Enabled mipi_cam sensors from cameras.yaml, ordered by channel."""
     out = []
     for name, s in (cameras.get('sensors') or {}).items():
-        if s.get('driver') != 'mipi_cam':
+        if s.get('driver') != 'mipi_cam' or not sensor_enabled(cameras, name):
             continue
         for k in ('namespace', 'channel', 'image_width', 'image_height'):
             if k not in s:

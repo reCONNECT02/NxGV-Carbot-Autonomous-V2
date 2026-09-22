@@ -6,6 +6,8 @@
 #   IMX219 -> MIPI channel 0 -> /cam_imx219/image_raw
 #   both 960x544 bgr8 ~30 fps; image_width/height ALWAYS set explicitly
 #   mipi_cam runs as ROOT (the launch uses the sudo wrapper, see SETUP.md)
+# enabled: false = not started, not checked, not used by perception (its role
+#   is dropped). Every sensor must have the key.
 #
 # Calibration writes a copy of this file into the session folder:
 #   step 2 -> roles + roles_confirmed      step 3 -> intrinsics_file per sensor
@@ -18,6 +20,7 @@ version: 1
 
 sensors:
   astra:
+    enabled: true
     driver: astra_camera
     launch_file: astra_mini.launch.py      # base repo launch, reused unchanged
     image_topic: /camera/color/image_raw
@@ -27,6 +30,7 @@ sensors:
     expected_hz: 30.0
     intrinsics_file: ""                    # calibration step 3
   ov5647:
+    enabled: false               # 2026-09-23 risabot5: MIPI frame errors (bndry/seq_frm_fatal), side cameras dropped
     driver: mipi_cam
     namespace: /cam_ov5647
     channel: 2
@@ -38,6 +42,7 @@ sensors:
     hardware: "OV5647 Rev1.3, MIPI host 2, I2C bus 4, addr 0x36"
     intrinsics_file: ""
   imx219:
+    enabled: false               # 2026-09-23 risabot5: not detected on I2C bus 6, side cameras dropped
     driver: mipi_cam
     namespace: /cam_imx219
     channel: 0
