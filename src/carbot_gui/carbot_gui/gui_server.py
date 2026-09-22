@@ -748,7 +748,7 @@ def serve(node: GuiServer, web_dir: str):
     params_dir = os.path.join(_share('carbot_bringup'), 'config', 'params')
     types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
              '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png'}
-    web_real = os.path.realpath(web_dir)
+    web_dir = os.path.abspath(web_dir)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
@@ -795,8 +795,11 @@ def serve(node: GuiServer, web_dir: str):
                     from .params_api import catalogue
                     return self._send(200, {'rows': catalogue(params_dir, node.session), 'session': node.session})
                 f = 'index.html' if path in ('/', '') else path.lstrip('/')
-                full = os.path.realpath(os.path.join(web_dir, f))
-                if full.startswith(web_real) and os.path.isfile(full):
+                norm = os.path.normpath(f)
+                if norm.startswith('..') or os.path.isabs(norm):
+                    return self._send(404, b'not found', 'text/plain')
+                full = os.path.join(web_dir, norm)
+                if os.path.isfile(full):
                     with open(full, 'rb') as fh:
                         return self._send(200, fh.read(), types.get(os.path.splitext(full)[1], 'text/plain'))
                 return self._send(404, b'not found', 'text/plain')
