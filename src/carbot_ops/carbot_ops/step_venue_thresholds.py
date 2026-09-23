@@ -33,9 +33,11 @@ Proposal (every margin/percentile in calibration_steps.yaml procedure):
   road_max_luma   = P(road luma, road_percentile) + luma_margin      (all samples)
   road_max_chroma = P(road chroma, road_percentile) + chroma_margin
   paint_min_luma  = midpoint between the road's bright end and the tape's dark end
-                    (tape = cells outside the box brighter than the road's bright
-                    end + paint_gap; dark end = P(tape luma, paint_percentile)),
-                    at least min_paint_margin above the road's bright end.
+                    (tape = cells outside the box brighter than that sample's road
+                    bright end + paint_gap; dark end = P(tape luma, paint_percentile);
+                    darkest over the samples whose tape is at least min_paint_margin
+                    above the road, e.g. a very dark tunnel's tape is ignored and
+                    reported), never less than min_paint_margin above the road.
 
 Pass (calibration_steps.yaml pass), with the PROPOSED values, per sample:
   road coverage   = share of the box cells classified ROAD   >= min_road_coverage
@@ -202,22 +204,22 @@ def propose(samples: Dict[str, Sample], current: Dict[str, float], proc: Dict) -
     rml = int(round(min(255.0, road_hi + float(proc['luma_margin']))))
     rmc = int(round(min(255.0, chroma_hi + float(proc['chroma_margin']))))
     floor = road_hi + float(proc['min_paint_margin'])
-    tape_lo = [st['tape_luma_lo'] for st in stats.values()
-               if st['tape_luma_lo'] is not None and st['tape_cells'] >= int(proc['min_paint_cells'])]
-    if tape_lo:
-        lo = min(tape_lo)
-        mid = (road_hi + lo) / 2.0
-        pml = max(mid, floor)
-        if lo <= floor:
-            notes.append(f'the darkest tape (luma {lo:.0f}) is close to the brightest road (luma {road_hi:.0f}): '
-                         'some tape will read as road')
+    tape = {k: st['tape_luma_lo'] for k, st in stats.items()
+            if st['tape_luma_lo'] is not None and st['tape_cells'] >= int(proc['min_paint_cells'])}
+    usable = {k: v for k, v in tape.items() if v > floor}
+    for k in sorted(set(tape) - set(usable)):
+        notes.append(f'{LABEL.get(k, k).lower()} tape (luma {tape[k]:.0f}) is not brighter than the brightest road '
+                     f'(luma {road_hi:.0f}): it will read as road there' +
+                     (' (the tunnel is driven by the LiDAR wall follower)' if k == 'tunnel' else ''))
+    if usable:
+        pml = max((road_hi + min(usable.values())) / 2.0, floor)
     else:
         pml = max(float(current.get('paint_min_luma', floor)), floor)
-        notes.append('no lane tape seen: paint_min_luma kept at the current value (or raised above the road)')
+        notes.append('no usable lane tape seen: paint_min_luma kept at the current value (or raised above the road)')
     pml = int(round(min(254.0, pml)))
     return {'values': {'road_max_luma': rml, 'road_max_chroma': rmc, 'paint_min_luma': pml},
             'road_luma_hi': round(road_hi, 1), 'road_chroma_hi': round(chroma_hi, 1),
-            'tape_luma_lo': round(min(tape_lo), 1) if tape_lo else None, 'stats': stats, 'notes': notes}
+            'tape_luma_lo': round(min(usable.values()), 1) if usable else None, 'stats': stats, 'notes': notes}
 
 
 def evaluate(s: Sample, th: Dict[str, float]) -> Dict[str, Any]:
