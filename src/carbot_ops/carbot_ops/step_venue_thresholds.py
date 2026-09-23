@@ -497,7 +497,7 @@ class VenueThresholdsStep(StepImpl):
         res = {'passed': passed, 'summary': summary, 'checks': checks,
                'before': dict(self.original or {}), 'proposal': dict(vals or {}),
                'notes': list((self.proposal or {}).get('notes') or []),
-               'samples': {k: self._sample_row(s, vals) for k, s in self.samples.items()},
+               'sample_results': {k: self._sample_row(s, vals) for k, s in self.samples.items()},
                'bpu_detector': 'not changed (detector confidences need labelled venue footage: Tuning tab)'}
         if vals:
             res['params_overlay'] = {NODE: {f'classify.{k}': int(v) for k, v in vals.items()}}

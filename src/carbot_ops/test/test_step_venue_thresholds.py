@@ -182,7 +182,7 @@ def test_lighter_venue_road_passes_with_raised_thresholds():
     assert p['road_max_luma'] > 125 > V4['road_max_luma']          # venue road is lighter than V4
     assert p['road_max_luma'] < p['paint_min_luma'] < 215           # between road and tape
     assert all(isinstance(v, int) for v in p.values())
-    road = res['samples']['road']
+    road = res['sample_results']['road']
     assert road['before']['road'] < 0.1 and road['after']['road'] > 0.95     # V4 misses it, proposal fixes it
     assert road['after']['paint'] == 0.0
     assert road['decode_agreement'] >= 0.9                          # JPEG round trip still reproduces kinds
@@ -207,7 +207,7 @@ def test_not_passed_until_every_phase_and_apply():
     assert step.live({})['next'] == 'tunnel'
     feed.set(dark=0.35)
     res = run(step, link, feed, '')                 # no argument = next phase (tunnel)
-    assert 'tunnel' in res['samples'] and not res['passed']
+    assert 'tunnel' in res['sample_results'] and not res['passed']
     assert check(res, 'Applied live on road_perception')['passed'] is False
     assert 'Apply' in res['summary']
     res = run(step, link, feed, '')                 # next = apply
@@ -232,7 +232,7 @@ def test_tunnel_check_off_skips_tunnel():
     run(step, link, feed, 'road')
     assert step.start(0, {'argument': 'tunnel', 'road_params': link})
     res = run(step, link, feed, 'apply')
-    assert res['passed'] and 'tunnel' not in res['samples']
+    assert res['passed'] and 'tunnel' not in res['sample_results']
 
 
 def test_black_tunnel_fails():
