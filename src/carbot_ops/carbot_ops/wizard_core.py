@@ -479,8 +479,9 @@ class Wizard:
         res.setdefault('time', datetime.datetime.now().isoformat(timespec='seconds'))
         s.result, s.unsaved = res, True
         s.status = 'PASS' if res.get('passed') else 'FAIL'
-        s.message = ('Passed: press Save.' if res.get('passed') else
-                     'Failed: fix the problems below and press Redo.')
+        # a multi-stage page may say what comes next (res['message']), e.g. step 10 after one stage
+        s.message = str(res.get('message') or ('Passed: press Save.' if res.get('passed') else
+                                               'Failed: fix the problems below and press Redo.'))
         return s
 
     def _a_save(self, s: Slot, arg, inputs) -> Dict:

@@ -17,7 +17,10 @@ per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
 step 6: step_imu_odometry, step 7: step_servo_steering,
 step 8: step_speed_pid, step 9: step_venue_thresholds, step 12: step_mission_planner,
-step 13: step_practice_runs).
+step 10: step_uwb_survey, step 11: step_map_uwb_alignment,
+step 13: step_practice_runs). Raw UWB tag reports reach
+the steps as inputs['uwb_raw'] (wizard_uwb.UwbFeed, steps 10-11); step 11's lap pose
+is dead-reckoned from the same MotionRecorder as steps 6-7.
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -46,6 +49,7 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Float32, String
 
 from . import monitor_core as mc
+from . import wizard_uwb
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
 from .frame_tap import FrameTap
@@ -54,12 +58,14 @@ from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
+from .step_map_uwb_alignment import MapUwbAlignmentStep
 from .step_servo_steering import ServoSteeringStep
 from .step_mission_planner import MissionPlannerStep
 from .step_practice_runs import PracticeRunsStep
 from .step_sensor_health import SensorHealthStep
 from .step_venue_thresholds import VenueThresholdsStep
 from .step_speed_pid import SpeedPidStep
+from .step_uwb_survey import UwbSurveyStep
 from .wizard_core import StepImpl, Wizard
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
@@ -68,6 +74,8 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             'resume_max_age_h', 'page_watch_s', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
             'input_timeout_s', 'servo_param_timeout_s', 'drive_request_hz', 'vehicle.wheelbase_m',
             'data.challenges',                 # step 13 (practice runs)
+            # phase 8 page 10: raw UWB tag feed (wizard_uwb)
+            'uwb_buffer_s', 'uwb_rate_window_s',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
@@ -133,6 +141,7 @@ class CalibrationWizard(CarbotNode):
         self.mission_events = []
         self.mission_seq = 0
         self.road_tap = self.road_link = None
+        self.uwb_feed = None
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -169,6 +178,9 @@ class CalibrationWizard(CarbotNode):
             'mission_planner': lambda s: MissionPlannerStep(s, ct.bringup_config_dir(),
                                                             lambda: self.wiz.session if self.wiz else None),
             'practice_runs': lambda s: PracticeRunsStep(s, load_data(self, 'challenges')),
+            'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir()),
+            'map_uwb_alignment': lambda s: MapUwbAlignmentStep(s, uwb, ct.bringup_config_dir(), self.motion,
+                                                               lambda: self.wiz.session if self.wiz else None),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -195,12 +207,14 @@ class CalibrationWizard(CarbotNode):
         self.restart = CameraRestart(rc, cameras, self._scripts_dir())
         self.timeout = float(self.p('input_timeout_s'))
         self.sub(SystemHealth, T.SYSTEM_HEALTH, self._on_health, 5)
+        self.uwb_feed = wizard_uwb.attach(self, float(self.p('uwb_buffer_s')), float(self.p('uwb_rate_window_s')))
         self.sub(UwbStatus, T.UWB_STATUS, lambda m: setattr(self, 'uwb_status', (time.monotonic(), m)), 5)
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
         if (isinstance(impls.get('imu_odometry'), ImuOdometryStep)
                 or isinstance(impls.get('servo_steering'), ServoSteeringStep)
-                or isinstance(impls.get('speed_pid'), SpeedPidStep)):
+                or isinstance(impls.get('speed_pid'), SpeedPidStep)
+                or isinstance(impls.get('map_uwb_alignment'), MapUwbAlignmentStep)):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
         # step 13 (practice runs): read-only mission observation
@@ -294,7 +308,7 @@ class CalibrationWizard(CarbotNode):
                 'road_params': self.road_link,
                 # step 13 (practice runs)
                 'mission': mission, 'mission_events': list(self.mission_events), 'armed': self.armed,
-                'manual': self.manual}
+                'manual': self.manual, wizard_uwb.INPUT_KEY: self.uwb_feed}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):

@@ -19,6 +19,8 @@
   <depend>rosbag2</depend>
   <exec_depend>carbot_perception</exec_depend>   <!-- calib_core, ros_image (step 3) -->
   <exec_depend>carbot_planning</exec_depend>     <!-- route_core: race-time route check (step 12) -->
+  <exec_depend>uwb_localization</exec_depend>    <!-- uwb_core, calib_uwb (step 10, 11) -->
+  <exec_depend>carbot_localization</exec_depend> <!-- alignment, calib_map_uwb (step 11) -->
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-psutil</exec_depend>
   <test_depend>python3-pytest</test_depend>

@@ -236,6 +236,10 @@ steps:
     tool: ros2 run uwb_localization calib_uwb
     writes: [uwb.yaml anchors, uwb.yaml tag.z_m, uwb.yaml tag.mount_xy_m, uwb.yaml anchors_surveyed,
              uwb.yaml offsets_calibrated]
+    need: Step 1 passed (UWB tag and every anchor seen). Tape measure; the tag on the car or on a stand.
+    # Wizard page (phase 8, page 10): RUN argument JSON {"stage": "link" | "survey" | "offsets" |
+    # "verify", ...}; one stage per Run, the step passes once all four passed. Same math as
+    # calib_uwb (raw tag JSON, offset = median(raw 3-D range) - tape 3-D distance).
     instructions:
       - "LAYOUT: spread the anchors 2-7 m apart in a triangle around the track (current
          layout: 1782 (0, 0), 1786 (7.50, 0), 1783 (7.50, 4.83), metres). Never nearly in a line."
@@ -245,7 +249,7 @@ steps:
          ANCHOR_IDS and set ANCHOR_COUNT 4 in firmware/uwb_tag/TagMicroROS/RangeProtocol.h,
          re-flash the tag, then add it when the tool asks for anchors."
       - "SURVEY: tape-measure every anchor antenna (x, y, height) in METRES from anchor 1782,
-         +x towards 1786, +y from 1786 towards 1783. Enter them when asked."
+         +x towards 1786, +y from 1786 towards 1783. Enter them on this page (the terminal tool asks for them)."
       - "TAG: measure the tag antenna on the car: height above the floor, and its position from
          the rear-axle centre (forward +x, left +y)."
       - "OFFSETS: put the tag still at a tape-measured spot inside the triangle, more than 1 m from
@@ -253,7 +257,9 @@ steps:
       - "VERIFY: move it to a DIFFERENT measured spot (20 s). The corrected fix must be within 15 cm."
     procedure: {tool: tools/uwb/uwb_calib.py method (calib_uwb), seconds: 20, min_distance_from_anchor_m: 1.0,
                 verify_spot: true, link_check_s: 5, min_samples: 20, min_spacing_m: 2.0,
-                min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08}
+                min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08,
+                # wizard page only (phase 8)
+                min_verify_separation_m: 0.5, min_fixes: 10, max_extent_m: 30.0}
     pass: {max_verify_error_m: 0.15, all_anchors_seen: true, min_hdop_coverage: 0.9}
   - index: 11
     id: map_uwb_alignment
@@ -265,13 +271,20 @@ steps:
     instructions:
       - Needs steps 4, 6 and 10 done (block 05 must hold the lane; UWB offsets applied).
       - "LAP (best): put the car on the map start pose (bottom-right lane, facing west), press
-         Enter, then push or drive it SLOWLY once around the whole track and press Enter."
+         Start lap (terminal: Enter), then push or drive it SLOWLY once around the whole track and
+         press Stop lap (Enter)."
       - "POINTS (quick, competition day): park the car on 2 or more known map poses far apart
          (start, traffic-light stop, ...) for 10 s each."
       - The fit uses every range directly; check the RMS and that the planned route overlays the
         track on the Global map tab.
     procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [lap, points], lap_min_s: 40,
-                min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2}
+                min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2,
+                # wizard page (phase 8 page 11); the terminal tool ignores these
+                points_min_extent_m: 1.5,     # points mode: poses must span this (was hard-coded in calib_map_uwb)
+                lap_max_s: 300,               # lap recording ends by itself after this
+                max_input_age_s: 1.0,         # /odom and /imu/rpy older than this = lap refused / failed
+                live_fit_period_s: 2.0,       # running fit shown while the lap is recorded
+                overlay_max_points: 400}      # fixes / path points sent to the GUI map overlay
     pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
   # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
   # on the saved map. Page 12 built: required (BACKLOG #20).

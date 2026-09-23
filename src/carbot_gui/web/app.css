@@ -284,3 +284,7 @@ table.calcheck td:not(:first-child),table.calcheck th{overflow-wrap:normal}
 table.calruns{width:100%;font-variant-numeric:tabular-nums}
 table.calruns th:first-child{width:28px}
 .ctl h4{font-size:13px}
+/* step 10 survey form: 4 narrow inputs per row */
+.ctl table.uwbform{table-layout:fixed;width:100%}
+.ctl table.uwbform td{padding:3px 2px}
+.ctl table.uwbform input{width:100%!important;min-width:0;min-height:30px;box-sizing:border-box;padding:4px 6px;text-align:right}
