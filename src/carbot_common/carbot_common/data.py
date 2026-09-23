@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
+from . import topics as T
+
 DATA_KEYS = ('track_map', 'mission', 'cameras', 'uwb', 'challenges', 'calibration_steps',
              'track_features', 'mission_rules')   # phase 4: + track_features, mission_rules (v2 companions)
 
@@ -56,24 +58,25 @@ def astra_launch(astra: Dict[str, Any]) -> Tuple[str, str, List[str]]:
 def unconfirmed_roles(cameras: Dict[str, Any]) -> List[str]:
     """Enabled camera roles that calibration step 2 has NOT confirmed ([] = all good).
 
-    roles_confirmed: true only counts for the roles listed in roles_confirmed_for,
-    so a side camera switched on after a front-only confirmation is unconfirmed
-    again. Disabled roles never need a confirmation. Missing keys are an error."""
+    roles_confirmed: true only counts for the roles listed in roles_confirmed_for.
+    Disabled roles never need a confirmation. Only roles in topics.CAMERA_ROLES (front) count:
+    an older session's cameras.yaml may still list side-camera roles, which are ignored.
+    Missing keys are an error."""
     for k in ('roles', 'roles_confirmed', 'roles_confirmed_for'):
         if k not in cameras:
             raise KeyError(f'cameras.yaml {k} missing')
     done = set(cameras['roles_confirmed_for'] or []) if cameras['roles_confirmed'] else set()
     return [role for role, sensor in cameras['roles'].items()
-            if sensor_enabled(cameras, sensor) and role not in done]
+            if role in T.CAMERA_ROLES and sensor_enabled(cameras, sensor) and role not in done]
 
 
 def camera_role_topics(cameras: Dict[str, Any]) -> Dict[str, str]:
-    """{'front': '/camera/color/image_raw', 'left_rear': ..., 'right_rear': ...}
+    """{'front': '/camera/color/image_raw'}
 
-    Roles whose sensor has enabled: false are left out."""
+    Roles whose sensor has enabled: false are left out; roles not in topics.CAMERA_ROLES are ignored."""
     sensors = cameras['sensors']
     return {role: sensors[sensor]['image_topic'] for role, sensor in cameras['roles'].items()
-            if sensor_enabled(cameras, sensor)}
+            if role in T.CAMERA_ROLES and sensor_enabled(cameras, sensor)}
 
 
 def subscribe_cameras(node, callback=None, qos=None) -> Dict[str, str]:

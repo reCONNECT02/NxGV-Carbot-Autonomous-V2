@@ -21,6 +21,8 @@ import numpy as np
 from .camera_model import Intrinsics, Mount, pixels_to_ground, project_ground
 
 UNSEEN, ROAD, PAINT, OTHER = 0, 1, 2, 3
+# LocalGrid.source_camera codes (message unchanged). 2 / 3 belonged to the side cameras removed 2026-09-24: kept so the
+# multi-view stitcher (and its synthetic-geometry tests) stays generic; nothing produces them on the car any more.
 ROLE_CODE = {'front': 1, 'left_rear': 2, 'right_rear': 3}
 
 # V4 mask colours (RGB) -> stored BGR for OpenCV

@@ -5,7 +5,7 @@ streams look like and cost, using the perception.yaml camera_preview values.
 Sources (any role may be left out):
   --source synth                       virtual cameras on the track (default)
   --source webcam --webcam front=0     laptop / USB cameras by index
-  --source video  --video front=a.mp4 left_rear=b.mp4
+  --source video  --video front=a.mp4
 
 Shows each role's preview after the real JPEG encode -> decode round trip and
 prints KB per frame and the bandwidth the GUI and the rosbag would use.
@@ -92,7 +92,7 @@ def main():
             time.sleep(0.5)
             continue
         misses = 0
-        view = sb.tile(tiles, 3, w)          # Astra is 4:3, the MIPI cameras 16:9
+        view = sb.tile(tiles, 1, w)          # Astra is 4:3
         kb = np.mean(sizes[mode][-30:]) / 1024
         txt = f'{mode}: {len(tiles)} cams x {kb:.1f} KB x {fps:g} fps = {len(tiles) * kb * fps:.0f} KB/s'
         view = cv2.copyMakeBorder(view, 0, 24, 0, 0, cv2.BORDER_CONSTANT)

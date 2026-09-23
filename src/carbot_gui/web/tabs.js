@@ -321,7 +321,7 @@ TABS.percplan = {
     const on = { foot: true, mask: true, edge: true, rej: true, sel: true, cor: false };
     el.innerHTML = H.head('Perception + planner', 'Cameras, the stitched drivable area, and the candidates drawn on top of it',
       H.seg('src', [['local', 'Road'], ['parking', 'Parking'], ['recovery', 'Recovery']], src) + H.seg('lay', [['cam', 'Footage'], ['ov', 'Mask overlay']], layer), ctx) +
-      `<div class="grid g3" style="margin-bottom:14px">${camTile('Front')}${camTile('Left rear')}${camTile('Right rear')}</div>
+      `<div class="grid camrow" style="margin-bottom:14px">${camTile('Front')}</div>
       <div class="grid g-side"><div class="panel" style="position:relative"><h3>Drivable area and candidates <small>top-down, base_link</small></h3>
         <div class="toggles" style="margin-bottom:10px">${[['foot', 'Camera cells'], ['mask', 'Road mask'], ['edge', 'Final drivable edge'], ['rej', 'Rejected candidates'], ['sel', 'Selected path'], ['cor', 'Corridor guide']]
           .map(([k, t]) => `<label><input type="checkbox" data-l="${k}" ${on[k] ? 'checked' : ''}> ${t}</label>`).join('')}
@@ -335,8 +335,8 @@ TABS.percplan = {
     H.wireSeg(el, 'lay', v => { layer = v; });
     el.querySelectorAll('[data-l]').forEach(cb => cb.addEventListener('change', () => { on[cb.dataset.l] = cb.checked; draw(); }));
     const loops = [];
-    const roles = ['front', 'left_rear', 'right_rear'];
-    el.querySelectorAll('.g3 .cam').forEach((tile, i) => loops.push(ImgLoop(tile.querySelector('img'), () => `${layer}_${roles[i]}`, ctx.cfg.rates.image,
+    const roles = ['front'];
+    el.querySelectorAll('.camrow .cam').forEach((tile, i) => loops.push(ImgLoop(tile.querySelector('img'), () => `${layer}_${roles[i]}`, ctx.cfg.rates.image,
       ok => { tile.querySelector('.none').style.display = ok ? 'none' : ''; })));
     let dbgOn = false;
     el.querySelector('[data-dbg]').addEventListener('change', e => { dbgOn = e.target.checked; q('dbg').hidden = !dbgOn; });

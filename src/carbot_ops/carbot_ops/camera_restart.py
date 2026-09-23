@@ -1,14 +1,11 @@
 """'Restart camera drivers' (calibration step 1 button).
 
 Same helpers and the same rules as the launch (carbot_bringup/stack.py):
-  1. kill_stale.sh with the CAMERA patterns only (mipi_cam, hobot_codec,
-     websocket, the Astra container) -- Camera_Setup.md: Ctrl+C does not always
-     kill them, and a stale mipi_cam makes the next one fail with
-     "There are no available host".
-  2. run_mipi_cam.sh per MIPI sensor (as ROOT through the sudoers-allowed copy
-     in root_helper_dir; image_width/height always passed; DDS settings passed
-     as arguments because sudo drops the environment), second camera delayed.
-  3. The Astra through its base launch file (user, not root).
+  1. kill_stale.sh with the CAMERA patterns only (hobot_codec, websocket, the
+     Astra container) -- Ctrl+C does not always kill them.
+  2. The Astra colour camera through cameras.yaml sensors.astra (launch_package /
+     launch_file / launch_args, as the launch does; user, not root).
+(The MIPI side cameras and their root-run run_mipi_cam.sh were removed 2026-09-24.)
 
 The restarted drivers are children of calibration_wizard, so Ctrl+C in the
 launch terminal stops them too; if the wizard exits any other way, stop()
@@ -23,7 +20,7 @@ from typing import Callable, Dict, List, Optional
 
 from carbot_common.data import astra_launch, sensor_enabled
 
-CFG_KEYS = ('enabled', 'kill_patterns', 'grace_s', 'root_helper_dir', 'delay_mipi_second_s',
+CFG_KEYS = ('enabled', 'kill_patterns', 'grace_s', 'root_helper_dir',
             'settle_s', 'timeout_s', 'log_dir')
 
 
@@ -53,32 +50,11 @@ class CameraRestart:
 
     def helpers_installed(self) -> bool:
         d = str(self.cfg['root_helper_dir'] or '')
-        return self.is_root or (bool(d) and os.path.isfile(os.path.join(d, 'kill_stale.sh'))
-                                and os.path.isfile(os.path.join(d, 'run_mipi_cam.sh')))
-
-    def mipi_sensors(self) -> List[Dict]:
-        out = []
-        for name, s in (self.cameras.get('sensors') or {}).items():
-            if s.get('driver') != 'mipi_cam' or not sensor_enabled(self.cameras, name):
-                continue
-            for k in ('namespace', 'channel', 'image_width', 'image_height'):
-                if k not in s:
-                    raise ValueError(f'cameras.yaml sensors.{name}.{k} missing (image_width/height must ALWAYS be set)')
-            out.append(dict(s, name=name))
-        return sorted(out, key=lambda s: int(s['channel']))
+        return self.is_root or (bool(d) and os.path.isfile(os.path.join(d, 'kill_stale.sh')))
 
     def plan(self, patterns_file: str) -> List[Dict]:
-        env = os.environ
         steps = [{'what': 'kill stale camera processes', 'kind': 'wait',
                   'cmd': self.helper('kill_stale.sh', [patterns_file, self.cfg['grace_s']])}]
-        for i, s in enumerate(self.mipi_sensors()):
-            steps.append({'what': f'start mipi_cam {s["namespace"]} (MIPI ch {s["channel"]}, as root)',
-                          'kind': 'spawn', 'delay': float(self.cfg['delay_mipi_second_s']) if i else 0.0,
-                          'log': f'mipi_{s["name"]}',
-                          'cmd': self.helper('run_mipi_cam.sh', [
-                              s['namespace'], s['channel'], s['image_width'], s['image_height'],
-                              env.get('ROS_DOMAIN_ID', '0'), env.get('ROS_LOCALHOST_ONLY', '0'),
-                              env.get('FASTRTPS_DEFAULT_PROFILES_FILE', ''), ''])})
         astra = (self.cameras.get('sensors') or {}).get('astra')
         if astra and sensor_enabled(self.cameras, 'astra'):
             a_pkg, a_file, a_args = astra_launch(astra)
@@ -109,7 +85,7 @@ class CameraRestart:
         if self.busy():
             return 'A camera restart is already running'
         if not self.helpers_installed():
-            return ('Root helpers are not installed, so root-owned mipi_cam processes cannot be stopped or started '
+            return ('Root helpers are not installed, so stale root-owned camera processes cannot be stopped '
                     'from here. Run once:  sudo bash tools/setup/install_root_helpers.sh sunrise  then relaunch.')
         with self.lock:
             self.state.update({'state': 'running', 'message': 'starting', 'log': [], 'started': time.time()})
@@ -156,7 +132,7 @@ class CameraRestart:
             pass
         if dead:
             self._set('failed', f'{len(dead)} driver(s) exited right away: see {self.cfg["log_dir"]}/camera_restart_*.log '
-                                '(mipi: "There are no available host" = still in use; "create_and_run_vflow" = not root)')
+                                '(the Astra launch exited: check the USB cable and that no other astra_camera_container is running)')
         else:
             self._set('done', 'Drivers restarted. Check the camera rows turn green (about 5 s).')
 

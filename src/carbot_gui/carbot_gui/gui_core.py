@@ -38,8 +38,7 @@ YAML_TAB_ALIASES = {'main': 'drive', 'map': 'map', 'perception': 'percplan', 'pl
                     'memory_lidar': 'memory', 'localization': 'loc', 'detections': 'det', 'control': 'control',
                     'health': 'health', 'tuning': 'tuning', 'scoreboard': 'events', 'recording': 'events',
                     'events': 'events'}
-IMAGE_KEYS = ('cam_front', 'cam_left_rear', 'cam_right_rear', 'ov_front', 'ov_left_rear',
-              'ov_right_rear', 'stitched', 'mask', 'warped', 'det')
+IMAGE_KEYS = ('cam_front', 'ov_front', 'stitched', 'mask', 'warped', 'det')   # front camera only (side cameras removed 2026-09-24)
 
 # blocks named in the header
 BLOCK_OF_WINNER = {'ROAD': ('09-13', 'Corridor + local planner', 'percplan'),

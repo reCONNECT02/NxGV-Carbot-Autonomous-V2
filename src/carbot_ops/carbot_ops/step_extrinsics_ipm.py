@@ -1,4 +1,4 @@
-"""Wizard page for camera extrinsics, using the existing calibration solver."""
+"""Wizard page for camera extrinsics (front camera only), using the existing calibration solver."""
 import copy
 import datetime
 import os
@@ -8,6 +8,7 @@ from typing import Dict
 
 from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
+from carbot_common import topics as T
 from carbot_common.data import sensor_enabled
 
 from .wizard_core import StepImpl, StepRefused
@@ -23,7 +24,7 @@ class ExtrinsicsIpmStep(StepImpl):
         self.timeout = float((cfg.get('procedure') or {}).get('capture_timeout_s', 20.0))
         self.roles = []
         for role, sensor in (cameras.get('roles') or {}).items():
-            if sensor_enabled(cameras, sensor):
+            if role in T.CAMERA_ROLES and sensor_enabled(cameras, sensor):   # side roles of old sessions: ignored
                 self.roles.append((role, sensor))
         if not self.roles:
             raise ValueError('Step 4: no enabled cameras in cameras.yaml')

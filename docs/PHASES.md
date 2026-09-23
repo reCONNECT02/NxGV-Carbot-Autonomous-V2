@@ -7,7 +7,7 @@ never rename silently.
 | # | Phase | Status |
 |---|---|---|
 | 1 | Repo skeleton, packages, launch files, YAML structure | **done** |
-| 2 | Perception (3 cameras, IPM, stitch, road mask) | **done** |
+| 2 | Perception (front camera, IPM, stitch, road mask; was 3 cameras until 2026-09-24) | **done** |
 | 3 | Localization + UWB | **done** |
 | 4 | Global planner, mission logic, local planner | **done** |
 | 5 | Parking, recovery, command owner + safety | **done** |
@@ -46,10 +46,9 @@ never rename silently.
      applied last and its `data/*.yaml` replace the repo defaults.
   3. `kill_stale.sh` (patterns in `drivers.yaml carbot_launch.kill_patterns`) runs
      first; everything else starts only after it exits.
-  4. Astra (base `astra_mini.launch.py`), both MIPI cameras through
-     `run_mipi_cam.sh` as root (Camera_Setup.md commands exactly, width/height
-     always set), LiDAR, micro-ROS agent (`run_uwb_agent.sh`), static TFs
-     (`base_link -> laser_frame`, `cam_front`, `cam_left_rear`, `cam_right_rear`).
+  4. Astra colour camera (`astra_rgb.launch.py`, the ONLY camera: the two MIPI side cameras and
+     `run_mipi_cam.sh` were removed 2026-09-24), LiDAR, micro-ROS agent (`run_uwb_agent.sh`), static TFs
+     (`base_link -> laser_frame`, `cam_front`, `cam_front_optical`).
   5. Base `servo_controller` + `tunnel_wall_follower` unchanged (params:
      `base_nodes.yaml`, verbatim base values). Base `auto_driver`,
      `cmd_safety_controller` and `dashboard` are NOT started.
@@ -65,7 +64,7 @@ never rename silently.
 | Item | Where | Phase |
 |---|---|---|
 | Camera image transport: 2 × 960×544 bgr8 @30 fps over UDP loopback (SHM disabled) is ~95 MB/s. Measure CPU; if too high, downscale in-process or use hobot shared-mem transport. | perception.yaml / cameras.yaml | 2 |
-| `camera_calibration_file_path` parameter name of mipi_cam: confirm with `ros2 param list /cam_ov5647/mipi_cam`. | run_mipi_cam.sh | 2 |
+| ~~`camera_calibration_file_path` parameter name of mipi_cam~~ | removed with the MIPI cameras (2026-09-24) | 2 |
 | Optical frames (`cam_<role>_optical`) are not published yet; `cam_<role>` is body-style (+x along the optical axis). | stack.py `camera_static_tfs` | 2 |
 | Wheelbase: base `servo_controller.wheel_base` 0.14 vs V4 measured 0.216. | base_nodes.yaml / common.yaml | 3/5 (calib step 6/7) |
 | `servo_controller` has no battery topic or arm topic yet (`/carbot/vehicle/battery_v`, `/carbot/vehicle/arm`): add as a wrapper/extension without changing its motor code. | topics.py | 5 |
@@ -114,10 +113,10 @@ never rename silently.
 * `LocalGrid.msg`: + `float32[] travel_since_m` (additive).
 * `local_memory` subscribes `/odom` instead of `local_pose` (memory must live in
   an uncorrected frame, as V4 `estimate.odom`).
-* `cameras.yaml`: CAD mounts (z + 0.0325 m), default roles left=imx219,
-  right=ov5647 (still unconfirmed), role keys unchanged.
+* `cameras.yaml`: CAD mounts (z + 0.0325 m). (Phase 2 also had default roles left=imx219, right=ov5647:
+  removed 2026-09-24, the car is front camera only.)
 * Static TFs: + `cam_<role>_optical`.
-* `mipi_cam` no longer receives `intrinsics_file` (would undistort twice).
+* (`mipi_cam` no longer receives `intrinsics_file`: moot since 2026-09-24, no MIPI cameras.)
 * New YAML keys: `road_perception.debug.{overlay_width,bev_scale}`,
   `local_memory.{window_m,ring_cells,odom_history_s,max_stamp_gap_s}`,
   `camera_preview.check_period_s`, step 3 `pass.min_coverage_cells`,
@@ -548,8 +547,8 @@ arming design, review the front-only road seed position, then merge this branch 
 | system_monitor | `carbot_ops/system_monitor.py` (+ `monitor_core.py`) | REAL now (was a stub). Raw subscriptions (never deserialises images; stamp read from the CDR header), topics subscribed as they appear, rates/age/latency, CPU/RAM/temp/BPU, battery, agent, camera PIDs (sudo / bash / `ros2 run` wrappers filtered). Image checks pause after START (`image_watch_while_armed: false`) |
 | Wizard node | `carbot_ops/calibration_wizard.py` | REAL now. Service actions SELECT/RUN/REDO/SAVE/KEEP_PREVIOUS/CANCEL/ROLLBACK/RESTART_CAMERAS; `/e_stop` cancels a running step; config errors reported (status, every reply, live JSON), never a crash |
 | Wizard logic | `carbot_ops/wizard_core.py` | Order enforced on RUN; Save only a PASS; re-save moves the old file aside; session created on first Save; ACTIVE only when every required step passes; resume unfinished session (`resume_max_age_h`); picks up results the terminal CLIs write into the session; rollback |
-| Step 1 | `step_sensor_health.py` + `sensor_checks.py` | 11 checks: 3 cameras (roles from cameras.yaml, "?" until step 2 confirms), LiDAR, odom, IMU, UWB tag, all anchors, battery, duplicate / old-viewer processes, ROS network env. Every failure has Why + Fix (Camera_Setup / UWB_Handoff gotchas). Run = 5 s, pass if each check ok in >= 80 % of samples. `sensor_checks` is meant for race preflight too |
-| Restart camera drivers | `camera_restart.py` | Kill helper with camera patterns only, both MIPI cameras as root via the sudoers helper (width/height always passed, 2nd delayed), Astra via its base launch. Children of the wizard; stopped again on wizard exit |
+| Step 1 | `step_sensor_health.py` + `sensor_checks.py` | 9 checks (11 until 2026-09-24): the front camera, LiDAR, odom, IMU, UWB tag, all anchors, battery, duplicate / old-viewer processes, ROS network env. Every failure has Why + Fix (Camera_Setup / UWB_Handoff gotchas). Run = 5 s, pass if each check ok in >= 80 % of samples. `sensor_checks` is meant for race preflight too |
+| Restart camera drivers | `camera_restart.py` | Kill helper with camera patterns only, then the Astra through `cameras.yaml sensors.astra` (launch_package / launch_file / launch_args). (The MIPI cameras and their root helper were removed 2026-09-24.) Children of the wizard; stopped again on wizard exit |
 | GUI | `web/tabs_calib.js` (+ app.js rail, app.css), `gui_server.py` | Rail: Overview, 13 numbered steps with status dots, Tuning, Diagnostics. Step page = stephead (Prev/Next, Next locked until pass/keep), what to do (live progress), controls, live view, result (Why/Fix per failed check, metrics), Run/Redo/Cancel, Save, Keep previous, embedded diagnostic tab (polled only while expanded). Placeholders show YAML instructions + the terminal command with `--session <wizard session>`. Overview: steps + sessions + two-click rollback |
 | Mock | `tools/sandbox/gui_mock_server.py --mode calibrate [--sensors ok\|bad]` | Runs the REAL wizard_core + step 1 on the repo YAML with a synthetic feed |
 | Tests | `carbot_ops/test/` (42), bringup key test + 2 nodes | Headless Chromium run of the whole step-1 flow + race tabs: 0 JS errors |
@@ -570,10 +569,10 @@ arming design, review the front-only road seed position, then merge this branch 
 | Piece | Where | Notes |
 |---|---|---|
 | Step | `carbot_ops/step_camera_identity.py` | Live: one row + preview tile per role (roles as the launch loaded them), picture state from system_monitor (live / frozen / no frames), sensors with `enabled: false` shown as "switched off, skipped". RUN argument JSON `{"confirm": true, "swap": false\|true}` (no argument = refused). Run = `procedure.measure_s` (3 s): every ENABLED role's raw image topic must be live (age <= `pass.max_image_age_s`) in >= `min_ok_fraction` of the reports. Swap refused when both side cameras are off |
-| Save | `save_data` -> `<session>/data/cameras.yaml` | `roles` (swapped if asked; all three role keys always kept), `roles_confirmed: true`, `roles_confirmed_for: [enabled roles]`. Front-only car -> `[front]`. Complete file (session copy replaces the repo file on load), merged via `calib_tools.merge_data` so later steps' keys survive |
-| Keep previous | `keep_data` | Copies those three keys from the older session; REFUSED if that session's confirmation does not cover every camera enabled now (e.g. a side camera switched back on) |
+| Save | `save_data` -> `<session>/data/cameras.yaml` | `roles` (front only), `roles_confirmed: true`, `roles_confirmed_for: [enabled roles]`. Front-only car -> `[front]`. Complete file (session copy replaces the repo file on load), merged via `calib_tools.merge_data` so later steps' keys survive |
+| Keep previous | `keep_data` | Copies those three keys from the older session; REFUSED if that session's confirmation does not cover the front camera |
 | Wizard hooks (shared) | `wizard_core.py` | `StepImpl.save_data(session, res)` (before the result file; paths -> `result.data_files`), `StepImpl.keep_data(src, session)` (before anything is recorded), `StepRefused` (abort with a message), RUN/REDO argument reaches `start()` as `inputs['argument']`. `calibration_wizard._setup`: `factories` dict, one line per built page |
-| GUI | `tabs_calib.js` `STEP_PAGES.camera_identity`, `calstep` `cams` slot | `out.cams = [{key, label, note, off}]`: persistent camera tiles (ImgLoop keeps running across the 2 Hz re-render; rebuilt only when the camera set changes); `calActions(st, null)` = page has its own Run buttons. Controls: Confirm / Confirm swapped (only when a side camera is on) |
+| GUI | `tabs_calib.js` `STEP_PAGES.camera_identity`, `calstep` `cams` slot | `out.cams = [{key, label, note, off}]`: persistent camera tiles (ImgLoop keeps running across the 2 Hz re-render; rebuilt only when the camera set changes); `calActions(st, null)` = page has its own Run buttons. Controls: Confirm (the swap button went with the side cameras, 2026-09-24) |
 | Mock + tests | `gui_mock_server.py` (steps 1-2), `carbot_ops/test/test_step_camera_identity.py` (18), `carbot_common/test/test_data.py` (+2) | Headless Chrome run of the front-only flow on the mock: step 1 save -> step 2 confirm -> PASS -> Save -> `data/cameras.yaml` roles_confirmed_for [front]; 0 JS errors |
 
 ### Contract changes (page 2; additions only)
@@ -593,8 +592,8 @@ arming design, review the front-only road seed position, then merge this branch 
 | Frames | `carbot_ops/frame_tap.py` | The wizard subscribes to a sensor's raw image topic ONLY while step 3 captures it; newest message kept, decoded on demand (`ros_image.image_to_bgr`). `carbot_ops` now exec-depends on `carbot_perception` |
 | Save / keep | `save_data` / `keep_data` | `<session>/intrinsics/<sensor>.yaml` (ROS camera_info) + `cameras.yaml sensors.<sensor>.intrinsics_file` via `calib_tools.merge_data` (step 2's roles survive). Keep copies the older session's intrinsics files and repoints `intrinsics_file` |
 | GUI | `tabs_calib.js` `STEP_PAGES.camera_intrinsics`, `calstep` `cam` box | Controls: one Run/Redo per enabled camera, "Not detected" rows for switched-off ones. Live: state (no board / hold still / new view captured), views bar, 3x3 coverage grid. `out.cam = {key, label, size, points, color}`: ONE persistent camera box with an SVG overlay of the detected corners (normalised 0..1), next to step 2's `cams` tiles |
-| Terminal tool | `carbot_perception/calib_intrinsics.py` | Now refuses a disabled `--sensor` and leaves disabled sensors out of the step's completion (was waiting for all three) |
-| Tests | `carbot_ops/test/test_step_camera_intrinsics.py` (9, fake calib_core) | Front-only pass, refused disabled camera, fail reasons (reprojection, no frames), 3-camera ordering, loud missing key, save + keep files. JS syntax-checked (V8); NOT run in a browser or on the car |
+| Terminal tool | `carbot_perception/calib_intrinsics.py` | Now refuses a disabled `--sensor` and leaves disabled sensors out of the step's completion (was waiting for all three; the Astra is the only sensor since 2026-09-24) |
+| Tests | `carbot_ops/test/test_step_camera_intrinsics.py` (9, fake calib_core) | Front-only pass, unknown camera refused, old-session side sensors skipped, fail reasons (reprojection, no frames), loud missing key, save + keep files. JS syntax-checked (V8); NOT run in a browser or on the car |
 
 ### Contract changes (page 3; additions only)
 * `calibration_steps.yaml` step 3: block style now, plus `instructions` and `procedure {extra_views,
@@ -684,5 +683,34 @@ Handoff / open:
 * `test_closed_loop_full_mission` (carbot_planning): failed once on this branch after a ~50 min run on a loaded
   laptop, then passed in 59 s on untouched HEAD, then timed out on untouched HEAD too. `route_core` has a
   wall-clock `time_budget_s`, so the test is load sensitive; the cause is NOT established (BACKLOG #53).
-* Side cameras: see BACKLOG #22 and the camera notes; they produced no frames on risabot5 on 2026-09-24.
+* Side cameras: REMOVED 2026-09-24 (they produced no frames on risabot5 / MIPI lane errors, hardware); see BACKLOG #24 and the section "Front camera only".
 
+## Front camera only (2026-09-24)
+
+The two MIPI side cameras (left_rear = OV5647, MIPI ch 2; right_rear = the former IMX219 slot, now also an OV5647,
+MIPI ch 0) are **removed from the whole project**: their MIPI data lanes never worked (kernel `lane state of host phy is
+error: 0xc`, `wait phy stop state error`, `mipi_cam` `grab failed`; both I2C buses answered, so it is a lane / ribbon /
+connector fault). The car has ONE camera, the Astra Pro colour stream `/camera/color/image_raw` (320x240 @ 15 fps).
+
+Removed (stated explicitly, CLAUDE.md: no silent removals):
+* YAML keys / values: `cameras.yaml` sensors `ov5647` + `imx219`, roles `left_rear` + `right_rear`, mounts `left_rear` +
+  `right_rear`; `drivers.yaml carbot_launch.{tros_setup, delay_drivers_s, delay_mipi_second_s}` and the `mipi_cam` entry of
+  `kill_patterns`; `ops.yaml calibration_wizard.restart_cameras.delay_mipi_second_s` (also from `camera_restart.CFG_KEYS`
+  and the wizard's REQUIRED list) and `mipi_cam` from `restart_cameras.kill_patterns` and `system_monitor.camera_process_patterns`;
+  `calibration_steps.yaml` step 1 `pass.processes.mipi_pattern`, step 3 `per_sensor` entries `ov5647` / `imx219`;
+  `system_monitor.watch_topics` / `watch_expected_hz` entries for `/cam_ov5647/image_raw` + `/cam_imx219/image_raw`
+  (also in `params/calibrate_lite.yaml`).
+* Code: `topics.OV5647_IMAGE`, `topics.IMX219_IMAGE`; `topics.CAMERA_ROLES` is now `('front',)` (so `cam_preview('left_rear')`,
+  `perception_overlay('right_rear')` etc. are never created); `stack.mipi_sensors`, the MIPI driver loop and
+  `scripts/run_mipi_cam.sh`; `camera_restart.mipi_sensors` and its MIPI steps; the step 2 swap feature (`SIDES`, `sides_enabled`,
+  "Confirm swapped"), the step 1 MIPI process/port hints; GUI image keys `cam_left_rear`, `cam_right_rear`, `ov_left_rear`,
+  `ov_right_rear`, the two extra camera tiles, the "Confirm swapped" button; `tools/setup/install_root_helpers.sh` no longer
+  installs `run_mipi_cam.sh`.
+* Kept on purpose (interface stability): message definitions (`Detection.camera_role`, `LocalGrid.source_camera` codes 2/3),
+  `road_mask.ROLE_CODE` (the multi-view stitcher and its synthetic tests stay generic), `Mount` / role-generic code paths,
+  step and topic *names*, and the role-keyed structure of `cameras.yaml` (`roles`, `mounts`, `roles_confirmed(_for)`).
+* Old calibration sessions: their copy of `cameras.yaml` may still list the side sensors / roles / mounts. They are IGNORED
+  (`data.camera_role_topics` / `unconfirmed_roles`, `stack.camera_static_tfs`, `sensor_checks`, steps 2 / 3 / 4 only look at
+  `topics.CAMERA_ROLES`); an old `calibration_steps.yaml` copy naming `ov5647` / `imx219` in `per_sensor` is skipped by step 3.
+* Docs: `Camera_Setup.md` and `Carbot_Architecture_V4.md` carry a note (the original text is kept), BACKLOG #22 WONTFIX, #24 DONE.
+* Not done here: the step 4 floor-sheet layout (board centres, `make_boards.py`, the PDF) is handled separately.

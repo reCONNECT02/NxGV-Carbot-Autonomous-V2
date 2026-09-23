@@ -50,8 +50,7 @@
       "type": "debugpy", "request": "launch", "console": "integratedTerminal",
       "program": "${workspaceFolder}/tools/sandbox/run_road_perception.py",
       "cwd": "${workspaceFolder}",
-      "args": ["--source", "video", "--video", "front=C:/videos/front.mp4",
-               "left_rear=C:/videos/left.mp4", "right_rear=C:/videos/right.mp4"]
+      "args": ["--source", "video", "--video", "front=C:/videos/front.mp4"]
     },
     {
       "name": "04 local_memory: demo route",

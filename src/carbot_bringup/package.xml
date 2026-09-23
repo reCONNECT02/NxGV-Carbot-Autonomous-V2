@@ -31,9 +31,8 @@
   <exec_depend>carbot_detectors</exec_depend>
   <exec_depend>carbot_ops</exec_depend>
   <exec_depend>carbot_gui</exec_depend>
-  <!-- mipi_cam (TogetheROS, /opt/tros) and micro_ros_agent (~/uros_ws) are
-       started through scripts/, not declared here: they are not on the
-       normal package path. See docs/SETUP.md. -->
+  <!-- micro_ros_agent (~/uros_ws) is started through scripts/, not declared
+       here: it is not on the normal package path. See docs/SETUP.md. -->
 
   <test_depend>python3-pytest</test_depend>
   <export><build_type>ament_python</build_type></export>

@@ -1,7 +1,7 @@
-"""Calibration step 4 - 3-camera extrinsics + IPM.
+"""Calibration step 4 - front camera extrinsics + IPM (the side cameras were removed 2026-09-24).
 
     ros2 run carbot_perception calib_extrinsics --session 20260921_1400
-    ros2 run carbot_perception calib_extrinsics --session ... --images front=f.png left_rear=l.png right_rear=r.png
+    ros2 run carbot_perception calib_extrinsics --session ... --images front=f.png
 
 Needs step 3 (intrinsics) in the same session first.
 
@@ -34,6 +34,7 @@ import sys
 import cv2
 import numpy as np
 from carbot_common import calibration_store as cs
+from carbot_common import topics as T
 
 from .calib_core import FloorBoard, detect_chessboard, seam_error, solve_mount
 from .calib_io import (FrameGrabber, bringup_config_dir, common_args, draw_corners,
@@ -102,7 +103,7 @@ def main(argv=None):
     ap.add_argument('--images', nargs='*', default=[], help='role=path pairs (offline)')
     ap.add_argument('--frames', type=int, default=8, help='frames averaged per camera')
     ap.add_argument('--tries', type=int, default=60, help='frames to try per camera')
-    ap.add_argument('--roles', nargs='*', default=['front', 'left_rear', 'right_rear'])
+    ap.add_argument('--roles', nargs='*', default=list(T.CAMERA_ROLES))
     common_args(ap)
     a = ap.parse_args(argv)
 

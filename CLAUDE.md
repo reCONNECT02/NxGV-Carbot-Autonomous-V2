@@ -99,10 +99,9 @@ say clearly when something is still untested on hardware.
   into the RDK X5 (Ubuntu 22.04, ARM, RDK X5 8GB). PowerShell has no `&&`
   chaining and no `unzip` — give separate lines, or `Expand-Archive` for
   zips, when instructing them directly.
-- `mipi_cam` must run as root — any launch/systemd instructions must handle
-  that explicitly.
-- Camera roles (front/left/right) are confirmed in YAML + the calibration
-  wizard, never hardcoded.
+- The car has ONE camera, the front Astra Pro (the two MIPI side cameras were
+  removed 2026-09-24: their MIPI lanes never worked). The camera role is
+  confirmed in YAML + the calibration wizard, never hardcoded.
 
 ## Current phase status
 

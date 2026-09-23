@@ -2,12 +2,12 @@
 # kill_stale.sh <patterns_file> [grace_s]
 #
 # Kills processes left over from an earlier run before the Carbot stack starts
-# (Camera_Setup.md: Ctrl+C does not always kill mipi_cam / hobot_codec /
-# websocket; a stale mipi_cam makes the next one fail with
+# (Camera_Setup.md: Ctrl+C does not always kill the camera / hobot_codec /
+# websocket processes; a stale one makes the next one fail with
 # "There are no available host"). One `pgrep -f` pattern per line in
 # <patterns_file> ('#' comments allowed). SIGINT, wait grace_s, then SIGKILL.
 #
-# Runs as root through sudo (mipi_cam is root-owned). Never kills itself or
+# Runs as root through sudo (stale processes may be root-owned). Never kills itself or
 # its ancestors (so the launch that called it survives even though an older
 # "ros2 launch carbot_bringup ..." matches the same pattern).
 set -u

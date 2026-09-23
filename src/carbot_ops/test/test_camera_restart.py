@@ -3,12 +3,12 @@ import os
 import types
 
 from carbot_ops.camera_restart import CameraRestart
-from helpers import CAMERAS
+from helpers import CAMERAS, OLD_SESSION_CAMERAS
 
 
 def cfg(tmp_path, **kw):
-    d = {'enabled': True, 'kill_patterns': ['mipi_cam', 'hobot_codec'], 'grace_s': 2.0,
-         'root_helper_dir': str(tmp_path / 'helpers'), 'delay_mipi_second_s': 2.0, 'settle_s': 0.0,
+    d = {'enabled': True, 'kill_patterns': ['hobot_codec'], 'grace_s': 2.0,
+         'root_helper_dir': str(tmp_path / 'helpers'), 'settle_s': 0.0,
          'timeout_s': 5.0, 'log_dir': str(tmp_path / 'logs')}
     d.update(kw)
     return d
@@ -17,8 +17,7 @@ def cfg(tmp_path, **kw):
 def install(tmp_path):
     h = tmp_path / 'helpers'
     h.mkdir()
-    for f in ('kill_stale.sh', 'run_mipi_cam.sh'):
-        (h / f).write_text('#!/bin/bash\n')
+    (h / 'kill_stale.sh').write_text('#!/bin/bash\n')
 
 
 class FakeProc:
@@ -32,16 +31,13 @@ class FakeProc:
         self.terminated = True
 
 
-def test_plan_uses_sudo_helpers_and_explicit_size(tmp_path, monkeypatch):
+def test_plan_uses_sudo_helper_and_only_the_astra(tmp_path, monkeypatch):
     install(tmp_path)
     monkeypatch.setenv('ROS_DOMAIN_ID', '1')
     r = CameraRestart(cfg(tmp_path), CAMERAS, '/share', is_root=False)
     p = r.plan('/tmp/p.txt')
     assert p[0]['cmd'][:2] == ['sudo', '-n'] and p[0]['cmd'][2].endswith('kill_stale.sh')
-    mipi = [s for s in p if 'mipi_cam' in s['what']]
-    assert [m['cmd'][3] for m in mipi] == ['/cam_imx219', '/cam_ov5647']      # channel 0 then 2
-    assert mipi[0]['cmd'][5:7] == ['960', '544'] and mipi[0]['cmd'][7] == '1'
-    assert mipi[1]['delay'] == 2.0
+    assert len(p) == 2 and not any('mipi' in s['what'] for s in p)             # kill_stale + the Astra, no MIPI
     assert p[-1]['cmd'][:2] == ['ros2', 'launch'] and p[-1]['cmd'][2:4] == ['carbot_bringup', 'astra_rgb.launch.py']
     assert p[-1]['cmd'][4:] == ['width:=320', 'height:=240', 'fps:=15']       # colour only, from cameras.yaml
 
@@ -67,7 +63,7 @@ def test_worker_success_and_driver_death(tmp_path):
     r = CameraRestart(cfg(tmp_path), CAMERAS, '/share', popen=popen, run=run, is_root=False, sleep=lambda s: None)
     r._do()
     st = r.snapshot()
-    assert len(ran) == 1 and len(spawned) == 3
+    assert len(ran) == 1 and len(spawned) == 1
     assert st['state'] == 'failed' and '1 driver' in st['message']
     assert os.path.isdir(tmp_path / 'logs')
     r.stop()
@@ -83,9 +79,15 @@ def test_kill_failure_reported(tmp_path):
     assert r.snapshot()['state'] == 'failed' and 'sudo -n refused' in r.snapshot()['message']
 
 
-def test_plan_skips_disabled_sensors(tmp_path):
+def test_plan_ignores_old_session_side_cameras(tmp_path):
     install(tmp_path)
-    cams = dict(CAMERAS, sensors={n: dict(s, enabled=(n != 'imx219')) for n, s in CAMERAS['sensors'].items()})
+    what = [s['what'] for s in CameraRestart(cfg(tmp_path), OLD_SESSION_CAMERAS, '/share', is_root=False).plan('/tmp/p.txt')]
+    assert not any('mipi' in w or '/cam_' in w for w in what)                # removed cameras are never started
+    assert any('Astra' in w for w in what)
+
+
+def test_plan_skips_a_disabled_astra(tmp_path):
+    install(tmp_path)
+    cams = dict(CAMERAS, sensors={n: dict(s, enabled=False) for n, s in CAMERAS['sensors'].items()})
     what = [s['what'] for s in CameraRestart(cfg(tmp_path), cams, '/share', is_root=False).plan('/tmp/p.txt')]
-    assert not any('/cam_imx219' in w for w in what)
-    assert any('/cam_ov5647' in w for w in what) and any('Astra' in w for w in what)
+    assert not any('Astra' in w for w in what)

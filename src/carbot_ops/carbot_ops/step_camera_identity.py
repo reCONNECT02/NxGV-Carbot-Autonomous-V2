@@ -1,20 +1,18 @@
 """Calibration step 2 -- camera identity (pure, unit tested).
 
-The user looks at the live preview of every ENABLED camera and confirms it shows
-the view its role says (front / left side / right side), or that left and right
-are swapped. Sensors with cameras.yaml `enabled: false` are shown as switched off
-and skipped: a front-only car confirms just the front camera.
+The car has ONE camera (the front Astra Pro; the two MIPI side cameras were removed
+2026-09-24). The user looks at its live preview and confirms it shows what is straight
+ahead of the front bumper. Roles that an older session's cameras.yaml still lists
+(left_rear / right_rear) are ignored: only topics.CAMERA_ROLES = ('front',) count.
 
-Confirm = RUN with argument JSON {"confirm": true, "swap": false|true}. The run
-then checks for procedure.measure_s that every enabled camera's image topic is
+Confirm = RUN with argument JSON {"confirm": true}. ("swap": true is refused: there is
+nothing to swap.) The run then checks for procedure.measure_s that the image topic is
 live (system_monitor age <= pass.max_image_age_s in >= min_ok_fraction of the
 reports): a confirmation of a frozen or missing picture means nothing.
 
-Save writes <session>/data/cameras.yaml: roles (swapped if asked),
-roles_confirmed: true, roles_confirmed_for: [the enabled roles]. The left_rear /
-right_rear role keys always stay (renaming them would change topic names).
-Keep previous copies those three keys from the older session, and refuses when
-that confirmation does not cover every camera enabled now.
+Save writes <session>/data/cameras.yaml: roles, roles_confirmed: true,
+roles_confirmed_for: [front]. Keep previous copies those three keys from the older
+session, and refuses when that confirmation does not cover the front camera.
 """
 import json
 import os
@@ -29,8 +27,7 @@ from .wizard_core import StepImpl, StepRefused
 
 PROC_KEYS = ('measure_s', 'min_samples', 'min_ok_fraction')
 PASS_KEYS = ('user_confirmed', 'max_image_age_s')
-ROLE_LABEL = {'front': 'Front', 'left_rear': 'Left side', 'right_rear': 'Right side'}
-SIDES = ('left_rear', 'right_rear')
+ROLE_LABEL = {'front': 'Front'}
 
 
 def _need(d: Dict, keys, where: str) -> None:
@@ -40,13 +37,14 @@ def _need(d: Dict, keys, where: str) -> None:
 
 
 def parse_argument(arg: str) -> Tuple[Optional[bool], str]:
-    """RUN argument -> (swap, error). swap None = refused."""
+    """RUN argument -> (swap, error). swap None = refused. swap=True is parsed (old pages send the key)
+    but start() refuses it: there is no second camera to swap with."""
     try:
         a = json.loads(arg) if arg else {}
     except ValueError:
         a = None
     if not isinstance(a, dict) or a.get('confirm') is not True:
-        return None, ('Look at the camera pictures, then press Confirm (or Confirm swapped): '
+        return None, ('Look at the camera picture, then press Confirm: '
                       'Run needs your confirmation.')
     return bool(a.get('swap', False)), ''
 
@@ -83,15 +81,10 @@ class CameraIdentityStep(StepImpl):
     # ------------------------------------------------------------------ roles
     def roles(self, swap: bool = False) -> Dict[str, str]:
         r = dict(self.cameras['roles'])
-        if swap:
-            r['left_rear'], r['right_rear'] = r['right_rear'], r['left_rear']
         return {role: r[role] for role in T.CAMERA_ROLES}
 
     def enabled_roles(self, roles: Dict[str, str]) -> List[str]:
         return [role for role in T.CAMERA_ROLES if sensor_enabled(self.cameras, roles[role])]
-
-    def sides_enabled(self) -> bool:
-        return any(sensor_enabled(self.cameras, self.cameras['roles'][r]) for r in SIDES)
 
     def _image_state(self, sensor: str, snap: Dict) -> Tuple[str, Optional[float], Optional[float]]:
         """('live' | 'stale' | 'none' | 'wait', hz, age) for a sensor's raw image topic."""
@@ -118,7 +111,7 @@ class CameraIdentityStep(StepImpl):
                          'topic': s['image_topic'], 'preview': 'cam_' + role, 'state': state,
                          'hz': None if hz is None else round(float(hz), 1),
                          'age': None if age is None else round(float(age), 2)})
-        return {'cameras': cams, 'sides_enabled': self.sides_enabled(),
+        return {'cameras': cams,
                 'roles_confirmed': bool(self.cameras['roles_confirmed']),
                 'roles_confirmed_for': list(self.cameras['roles_confirmed_for'] or []),
                 'max_image_age_s': self.max_age, 'health_age_s': snap.get('health_age_s')}
@@ -128,11 +121,10 @@ class CameraIdentityStep(StepImpl):
         swap, err = parse_argument(inputs.get('argument', ''))
         if swap is None:
             return err
-        if swap and not self.sides_enabled():
-            return ('Both side cameras are switched off (cameras.yaml enabled: false): there is nothing '
-                    'to swap. Press Confirm.')
+        if swap:
+            return 'There is only the front camera (the side cameras were removed): nothing to swap. Press Confirm.'
         if not self.enabled_roles(self.roles()):
-            return 'Every camera is switched off in cameras.yaml: switch the front camera on first.'
+            return 'The front camera is switched off in cameras.yaml: switch it on first.'
         self.t0, self.swap, self.samples, self.last_seq = now, swap, [], inputs.get('health_seq')
         return None
 
@@ -179,7 +171,7 @@ class CameraIdentityStep(StepImpl):
                 'why': '' if passed else f'{topic} was not live while you confirmed, so the picture you looked at may be frozen or old.',
                 'fix': '' if passed else 'Go back to step 1 and press Restart camera drivers, wait for the picture to move, then Confirm again.'})
         checks.append({'key': 'user_confirmed', 'label': 'You confirmed the pictures',
-                       'measured': 'left and right swapped' if self.swap else 'as shown',
+                       'measured': 'as shown',
                        'limit': 'confirmed', 'passed': True, 'why': '', 'fix': ''})
         skipped = {role: roles[role] for role in T.CAMERA_ROLES if role not in enabled}
         passed = n >= self.min_samples and all(c['passed'] for c in checks)
@@ -188,7 +180,7 @@ class CameraIdentityStep(StepImpl):
             summary = (f'only {n} health reports in {self.measure_s:g} s (need {self.min_samples}): '
                        'system_monitor is not publishing')
         elif passed:
-            summary = f'confirmed {names}' + (' (left/right swapped)' if self.swap else '') + \
+            summary = f'confirmed {names}' + \
                       (f'; skipped {", ".join(ROLE_LABEL[r].lower() for r in skipped)} (switched off)' if skipped else '')
         else:
             summary = 'a confirmed camera was not streaming'

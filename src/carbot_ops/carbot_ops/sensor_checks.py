@@ -9,7 +9,7 @@ race_supervisor preflight (phase 8, later page) reuses build_checks/evaluate.
 snapshot = {
   'health_age_s': float | None,        # age of the last SystemHealth (None = never)
   'topics': {topic: {'hz', 'age', 'latency'}},   # hz < 0 = not watched right now
-  'procs': [(label, pid)],             # system_monitor camera_process_* ('mipi_cam /cam_ov5647', ...)
+  'procs': [(label, pid)],             # system_monitor camera_process_* ('astra_camera <name>', ...)
   'agent': bool | None,                # micro-ROS agent process running
   'battery_v': float | None,
   'uwb': {'link': bool, 'hz': float, 'unknown': str,
@@ -21,13 +21,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from carbot_common import topics as T
-from carbot_common.data import sensor_enabled, unconfirmed_roles
+from carbot_common.data import sensor_enabled
 
 PASS_KEYS = ('camera_rate_min_ratio', 'lidar_min_hz', 'odom_min_hz', 'imu_min_hz', 'uwb_min_hz',
              'battery_min_v', 'max_age_s', 'processes', 'enforce_min_rates')
 
-SENSOR_LABEL = {'astra': 'Astra Pro', 'ov5647': 'OV5647', 'imx219': 'IMX219'}
-ROLE_LABEL = {'front': 'front', 'left_rear': 'left', 'right_rear': 'right'}
+SENSOR_LABEL = {'astra': 'Astra Pro'}
 
 
 @dataclass
@@ -64,7 +63,6 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
         sensor = roles.get(role)
         if not sensor or sensor not in cameras['sensors']:
             raise ConfigError(f'cameras.yaml roles.{role} = {sensor!r} is not a sensor')
-    unconfirmed = unconfirmed_roles(cameras)        # step 2 (per role: front-only confirmations)
     ratio = float(pass_cfg['camera_rate_min_ratio'])
     for role in T.CAMERA_ROLES:
         sensor = roles[role]
@@ -72,15 +70,12 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
             continue                           # enabled: false -> no row
         s = cameras['sensors'][sensor]
         _need(s, ('image_topic', 'expected_hz'), f'cameras.yaml sensors.{sensor}')
-        where = 'front' if role == 'front' else (ROLE_LABEL[role] + (' side?' if role in unconfirmed else ' side'))
+        where = 'front'
         name = SENSOR_LABEL.get(sensor, sensor)
-        if s.get('driver') == 'mipi_cam':
-            name += f' · MIPI ch {s.get("channel", "?")}'
         exp = float(s['expected_hz'])
         out.append(Check(f'cam_{sensor}', f'{name} ({where})', 'topic', s['image_topic'],
                          min_hz=exp * ratio, expected_hz=exp, sensor=sensor,
-                         extra={'driver': s.get('driver', ''), 'namespace': s.get('namespace', ''),
-                                'channel': s.get('channel', ''), 'enforce': enforce}))
+                         extra={'driver': s.get('driver', ''), 'enforce': enforce}))
     for key, label, topic, k in (('lidar', 'LiDAR · T-mini Plus', T.SCAN, 'lidar_min_hz'),
                                  ('odom', 'Wheel odometry', T.ODOM, 'odom_min_hz'),
                                  ('imu', 'IMU', T.IMU_RPY, 'imu_min_hz'),
@@ -92,12 +87,10 @@ def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
     out.append(Check('battery', 'Battery', 'battery', T.VEHICLE_BATTERY,
                      extra={'min_v': float(pass_cfg['battery_min_v'])}))
     pr = pass_cfg['processes'] or {}
-    _need(pr, ('mipi_pattern', 'astra_pattern', 'forbidden'), 'sensor_health.pass.processes')
-    mipi_ns = [s.get('namespace', '') for n, s in cameras['sensors'].items()
-               if s.get('driver') == 'mipi_cam' and sensor_enabled(cameras, n)]
+    _need(pr, ('astra_pattern', 'forbidden'), 'sensor_health.pass.processes')
     out.append(Check('processes', 'Camera processes (no duplicates)', 'processes',
-                     extra={'mipi': str(pr['mipi_pattern']), 'astra': str(pr['astra_pattern']),
-                            'forbidden': [str(x) for x in pr['forbidden']], 'mipi_ns': mipi_ns}))
+                     extra={'astra': str(pr['astra_pattern']),
+                            'forbidden': [str(x) for x in pr['forbidden']]}))
     out.append(Check('network', 'ROS network settings', 'network',
                      extra={'domain': int(uwb['agent'].get('domain_id', 1))}))
     return out
@@ -112,14 +105,6 @@ def _row(c: Check, state: str, measured: str, limit: str, why: str = '', fix: st
 
 def _topic_fix(c: Check, never: bool, snap: Dict) -> str:
     if c.key.startswith('cam_'):
-        drv, ns = c.extra.get('driver'), c.extra.get('namespace')
-        if drv == 'mipi_cam':
-            return ('Press "Restart camera drivers". If it still fails, look in the launch terminal for '
-                    f'{ns}: "There are no available host" = a stale mipi_cam holds MIPI channel '
-                    f'{c.extra.get("channel")} (the restart kills it); "create_and_run_vflow failed" = mipi_cam '
-                    'is not root (run: sudo bash tools/setup/install_root_helpers.sh sunrise, once); '
-                    '"creat_vse_node failed" = image_width/height missing in cameras.yaml. '
-                    'Also check the ribbon cable is seated at both ends.')
         return ('Check the Astra Pro USB cable (USB 3 port, not through a hub), then press '
                 '"Restart camera drivers". Terminal check: ros2 topic hz /camera/color/image_raw')
     if c.key == 'lidar':
@@ -221,13 +206,8 @@ def _eval_procs(c: Check, snap: Dict) -> Dict:
     if snap.get('health_age_s') is None:
         return _row(c, 'wait', '—', '0 duplicates', 'Waiting for system_monitor', '')
     procs = snap.get('procs') or []
-    mipi, astra, forb = c.extra['mipi'], c.extra['astra'], c.extra['forbidden']
+    astra, forb = c.extra['astra'], c.extra['forbidden']
     problems, count = [], 0
-    for ns in c.extra['mipi_ns']:
-        pids = [p for lab, p in procs if lab == f'{mipi} {ns}']
-        if len(pids) > 1:
-            problems.append(f'{len(pids)} × {mipi} {ns} (PIDs {", ".join(map(str, pids))})')
-            count += len(pids) - 1
     ap = [p for lab, p in procs if lab.startswith(astra)]
     if len(ap) > 1:
         problems.append(f'{len(ap)} × {astra} (PIDs {", ".join(map(str, ap))})')
@@ -241,8 +221,8 @@ def _eval_procs(c: Check, snap: Dict) -> Dict:
     if problems:
         return _row(c, 'bad', str(count), '0', '; '.join(problems),
                     'An older launch or the old websocket viewer is still running. Press "Restart camera '
-                    'drivers": it kills stale mipi_cam / hobot_codec / websocket / Astra processes first. '
-                    'Terminal check: ps -ef | grep -E "codec|websocket|mipi" | grep -v grep',
+                    'drivers": it kills stale hobot_codec / websocket / Astra processes first. '
+                    'Terminal check: ps -ef | grep -E "codec|websocket|astra" | grep -v grep',
                     value=float(count), detail=detail)
     return _row(c, 'ok', '0', '0', value=0.0, detail=detail)
 

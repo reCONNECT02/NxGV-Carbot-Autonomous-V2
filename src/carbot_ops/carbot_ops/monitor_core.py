@@ -85,7 +85,7 @@ def _match(cmdline: str, pattern: str) -> bool:
 
 
 def ros_namespace(cmdline: str) -> str:
-    """'/cam_ov5647' from '... -r __ns:=/cam_ov5647 ...' ('' if absent)."""
+    """'/cam_a' from '... -r __ns:=/cam_a ...' ('' if absent)."""
     key = '__ns:='
     i = cmdline.find(key)
     if i < 0:
@@ -100,7 +100,7 @@ def scan_processes(procs: Iterable[Tuple[int, str, Sequence[str]]], patterns: Se
     procs: (pid, name, cmdline list), e.g. from psutil. Wrappers (sudo, bash,
     `ros2 run`'s python) are skipped: they carry the same command line as the
     real driver. label = pattern + ' ' + ROS namespace when there is one, so
-    'mipi_cam /cam_ov5647' and 'mipi_cam /cam_imx219' count separately."""
+    two processes of the same driver in different namespaces count separately."""
     wrap = set(wrappers)
     out: List[Tuple[str, int]] = []
     for pid, name, cmd in procs:

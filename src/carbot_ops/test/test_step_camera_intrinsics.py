@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from carbot_ops import step_camera_intrinsics as sci
-from helpers import CAMERAS, REPO_CAMERAS, STEPS
+from helpers import OLD_SESSION_CAMERAS, REPO_CAMERAS, STEPS
 
 STEP3 = next(s for s in STEPS['steps'] if s['id'] == 'camera_intrinsics')
 
@@ -66,22 +66,35 @@ def run_until_done(step, frames, t0=0.0, dt=0.2, limit=4000):
 
 
 def front_only():
-    return copy.deepcopy(REPO_CAMERAS)          # side cameras switched off in the repo file
+    return copy.deepcopy(REPO_CAMERAS)          # the front Astra is the only sensor in the repo file
 
 
-def test_repo_yaml_builds_and_side_cameras_are_off():
+def test_repo_yaml_builds_with_the_astra_only():
     st = sci.CameraIntrinsicsStep(STEP3, front_only(), calib=fake_calib())
     assert st.enabled() == ['astra']
     rows = {r['name']: r for r in st.live({})['sensors']}
-    assert rows['ov5647']['state'] == 'off' and 'not detected' in rows['ov5647']['note']
-    assert rows['astra']['state'] == 'todo'
+    assert list(rows) == ['astra'] and rows['astra']['state'] == 'todo'
 
 
-def test_disabled_camera_run_is_refused():
+def test_old_session_side_cameras_are_skipped_even_if_per_sensor_names_them():
+    old_step = copy.deepcopy(STEP3)
+    old_step['per_sensor'] = ['astra', 'ov5647', 'imx219']       # an older session's calibration_steps.yaml copy
+    st = sci.CameraIntrinsicsStep(old_step, copy.deepcopy(OLD_SESSION_CAMERAS), calib=fake_calib())
+    assert st.enabled() == ['astra'] and [r['name'] for r in st.live({})['sensors']] == ['astra']
+    assert 'Unknown camera' in st.start(0.0, {'argument': 'imx219'})
+
+
+def test_unknown_camera_run_is_refused():
     st = sci.CameraIntrinsicsStep(STEP3, front_only(), calib=fake_calib())
-    err = st.start(0.0, {'argument': 'imx219'})
-    assert err and 'switched off' in err and 'not detected' in err
+    assert 'Unknown camera' in st.start(0.0, {'argument': 'imx219'})
     assert 'Unknown camera' in st.start(0.0, {'argument': 'nope'})
+
+
+def test_disabled_astra_is_refused_and_the_step_cannot_start():
+    cams = front_only()
+    cams['sensors']['astra']['enabled'] = False
+    with pytest.raises(sci.ConfigError, match='no enabled camera'):
+        sci.CameraIntrinsicsStep(STEP3, cams, calib=fake_calib())
 
 
 def test_front_only_run_passes_whole_step():
@@ -90,7 +103,7 @@ def test_front_only_run_passes_whole_step():
     res = run_until_done(st, Frames())
     assert res['passed'] is True
     assert res['sensors']['astra']['status'] == 'PASS' and res['sensors']['astra']['views'] == st.target_views
-    assert res['disabled'] == ['ov5647', 'imx219'] and 'switched off' in res['summary']
+    assert res['disabled'] == [] and 'switched off' not in res['summary']
     assert [c['label'] for c in res['checks']] == ['Astra Pro (front)']
 
 
@@ -122,15 +135,6 @@ def test_no_frames_times_out_with_hint():
     assert res['passed'] is False and 'no frames' in res['sensors']['astra']['why']
 
 
-def test_three_cameras_need_all_enabled_to_pass():
-    st = sci.CameraIntrinsicsStep(STEP3, CAMERAS, calib=fake_calib())     # all enabled
-    st.start(0.0, {'argument': 'astra'})
-    res = run_until_done(st, Frames())
-    assert res['passed'] is False and 'still to do' in res['summary']
-    st.start(0.0, {})                                    # next un-passed sensor is picked by itself
-    assert st.running_sensor() == 'ov5647'
-
-
 def test_missing_procedure_key_is_loud():
     bad = copy.deepcopy(STEP3)
     del bad['procedure']['still_px']
@@ -151,7 +155,7 @@ def test_save_and_keep_write_intrinsics_and_cameras_yaml(tmp_path):
     assert str(ifile) in paths and ifile.is_file()
     cams = yaml.safe_load(open(sess / 'data' / 'cameras.yaml', encoding='utf-8'))
     assert cams['sensors']['astra']['intrinsics_file'] == os.path.abspath(ifile)
-    assert cams['sensors']['ov5647']['intrinsics_file'] == ''        # untouched
+    assert list(cams['sensors']) == ['astra']
 
     new = tmp_path / 'calibration' / 's2'
     new.mkdir()

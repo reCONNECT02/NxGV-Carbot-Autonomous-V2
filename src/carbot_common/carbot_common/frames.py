@@ -5,7 +5,7 @@ venue      UWB anchor frame (origin anchor 1782). Metres. track<->venue comes
            from calibration step 11 (map-to-UWB alignment lap).
 odom       Wheel + IMU dead-reckoning frame (base servo_controller /odom).
 base_link  Rear-axle centre on the ground, +x forward, +y left (V4 bicycle model).
-laser_frame, cam_front, cam_left_rear, cam_right_rear: sensor frames.
+laser_frame, cam_front: sensor frames (front camera only since 2026-09-24).
 """
 TRACK = 'track'
 VENUE = 'venue'

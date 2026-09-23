@@ -1,8 +1,8 @@
 """Calibration step 3 - camera intrinsics, one sensor per run.
 
-    ros2 run carbot_perception calib_intrinsics --sensor ov5647 --session 20260921_1400
+    ros2 run carbot_perception calib_intrinsics --sensor astra --session 20260921_1400
     ros2 run carbot_perception calib_intrinsics --sensor astra  --session 20260921_1400
-    ros2 run carbot_perception calib_intrinsics --sensor ov5647 --images DIR   (offline)
+    ros2 run carbot_perception calib_intrinsics --sensor astra --images DIR   (offline)
 
 Hold the step-3 chessboard (calibration_steps.yaml: 9x6 inner corners, 25 mm)
 in front of the camera. A view is captured automatically when the board is
@@ -104,7 +104,7 @@ def collect_files(folder, cols, rows, novelty):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--sensor', required=True, help='sensor name in cameras.yaml: astra | ov5647 | imx219')
+    ap.add_argument('--sensor', required=True, help='sensor name in cameras.yaml: astra (the only camera)')
     ap.add_argument('--images', default='', help='calibrate from saved images instead of live capture')
     ap.add_argument('--views', type=int, default=0, help='views to collect (default: pass.min_views + 10)')
     ap.add_argument('--timeout', type=float, default=300.0, help='live capture time limit (s)')

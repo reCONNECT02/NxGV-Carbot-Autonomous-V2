@@ -7,15 +7,15 @@ What it does, in order:
   1. Environment: ROS_DOMAIN_ID from data/uwb.yaml (the UWB tag chooses it),
      ROS_LOCALHOST_ONLY=0 (UWB_Handoff.md section 8), FastDDS UDP-only profile
      (base repo disable_shm.xml, prevents /dev/shm corruption and root/user
-     shared-memory permission clashes with the root mipi_cam processes).
+     shared-memory permission clashes with any root-owned process).
   2. Calibration session: race loads the ACTIVE session (or session:=NAME for a
      rollback); calibrate loads it as the starting point for "keep previous".
      Its params_overlay.yaml is applied LAST and its data/*.yaml replace the
      repo defaults.
   3. Kills stale camera / codec / websocket / agent / node processes
      (Camera_Setup.md gotcha) and waits for that to finish.
-  4. Drivers: Astra Pro (base launch, unchanged), both MIPI cameras as root via
-     run_mipi_cam.sh, T-mini Plus LiDAR, micro-ROS agent, static TFs.
+  4. Drivers: Astra Pro colour camera (the ONLY camera; the two MIPI side cameras were
+     removed 2026-09-24), T-mini Plus LiDAR, micro-ROS agent, static TFs.
   5. Base nodes reused unchanged: servo_controller, tunnel_wall_follower.
      The base auto_driver / cmd_safety_controller / dashboard are NOT started:
      command_owner is the single writer of /cmd_vel_auto and gui_server owns
@@ -32,7 +32,8 @@ from typing import Dict, List, Optional
 import yaml
 
 from carbot_common import calibration_store as cs
-from carbot_common.data import DATA_KEYS, astra_launch, sensor_enabled
+from carbot_common import topics as T
+from carbot_common.data import DATA_KEYS, astra_launch
 
 PACKAGE = 'carbot_bringup'
 
@@ -179,10 +180,14 @@ def camera_static_tfs(cameras: Dict) -> List[Dict]:
     rotation about +y (R = Rz(yaw) Ry(pitch_down) Rx(roll), the same as
     carbot_perception.camera_model.Mount). cam_<role>_optical is the ROS
     optical frame (+z forward, +x right, +y down) the intrinsics refer to.
+    Only roles in topics.CAMERA_ROLES (front) get frames: an older session's cameras.yaml may
+    still carry side-camera mounts, which are ignored.
     """
     import math
     out = []
     for role, m in (cameras.get('mounts') or {}).items():
+        if role not in T.CAMERA_ROLES:
+            continue
         out.append({
             'parent': 'base_link', 'child': f'cam_{role}',
             'x': float(m['x_m']), 'y': float(m['y_m']), 'z': float(m['z_m']),
@@ -194,20 +199,6 @@ def camera_static_tfs(cameras: Dict) -> List[Dict]:
                     'x': 0.0, 'y': 0.0, 'z': 0.0,
                     'yaw': -math.pi / 2, 'pitch': 0.0, 'roll': -math.pi / 2})
     return out
-
-
-def mipi_sensors(cameras: Dict) -> List[Dict]:
-    """Enabled mipi_cam sensors from cameras.yaml, ordered by channel."""
-    out = []
-    for name, s in (cameras.get('sensors') or {}).items():
-        if s.get('driver') != 'mipi_cam' or not sensor_enabled(cameras, name):
-            continue
-        for k in ('namespace', 'channel', 'image_width', 'image_height'):
-            if k not in s:
-                raise KeyError(f'cameras.yaml sensors.{name}.{k} missing '
-                               '(image_width/height must ALWAYS be set)')
-        out.append(dict(s, name=name))
-    return sorted(out, key=lambda s: int(s['channel']))
 
 
 def root_helper_cmd(cfg: Dict, share_dir: str, script: str, args: List[str],
@@ -288,7 +279,7 @@ def build(context, mode: str):
     if not is_root and kill_cmd[0] == 'bash':
         actions.append(LogInfo(msg='[carbot] WARNING: root helpers not installed '
                                    '(tools/setup/install_root_helpers.sh): stale root-owned '
-                                   'camera processes cannot be killed and mipi_cam will ask sudo'))
+                                   'processes cannot be killed'))
     cleanup = ExecuteProcess(cmd=kill_cmd, name='kill_stale', output='screen')
     actions.append(cleanup)
 
@@ -305,17 +296,6 @@ def build(context, mode: str):
         drivers.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(get_package_share_directory(a_pkg), 'launch', a_file)),
             launch_arguments=[tuple(x.split(':=', 1)) for x in a_args]))
-        for i, s in enumerate(mipi_sensors(cameras)):
-            cmd = root_helper_cmd(cfg, share, 'run_mipi_cam.sh', [
-                s['namespace'], str(s['channel']), str(s['image_width']), str(s['image_height']),
-                domain, str(int(agent['localhost_only'])), shm_xml,
-                # Intrinsics are NOT handed to mipi_cam: road_perception applies
-                # them itself (fisheye model included); a driver-side
-                # rectification would undistort twice.
-                ''], is_root)
-            proc = ExecuteProcess(cmd=cmd, name=f'mipi_cam_{s["name"]}', output='screen')
-            delay = float(cfg.get('delay_drivers_s', 0.0)) + i * float(cfg.get('delay_mipi_second_s', 2.0))
-            drivers.append(TimerAction(period=delay, actions=[proc]) if delay > 0 else proc)
 
     if truthy('start_lidar'):
         drivers.append(node('ydlidar_ros2_driver', 'ydlidar_ros2_driver_node', extra_params=False))

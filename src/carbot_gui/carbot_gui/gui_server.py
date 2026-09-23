@@ -180,10 +180,7 @@ class GuiServer(CarbotNode):
             # phase 8: wizard pages (open step's live view + sessions); only while a calibration page is open
             'calibration': [('calib_live', String, T.CALIBRATION_LIVE, L)],
         }
-        imgs = {'cam_front': T.cam_preview('front'), 'cam_left_rear': T.cam_preview('left_rear'),
-                'cam_right_rear': T.cam_preview('right_rear'), 'ov_front': T.perception_overlay('front'),
-                'ov_left_rear': T.perception_overlay('left_rear'),
-                'ov_right_rear': T.perception_overlay('right_rear'),
+        imgs = {'cam_front': T.cam_preview('front'), 'ov_front': T.perception_overlay('front'),
                 'stitched': T.PERCEPTION_DEBUG_STITCHED, 'mask': T.PERCEPTION_DEBUG_MASK,
                 'warped': T.PERCEPTION_DEBUG_WARPED, 'det': T.DETECTIONS_DEBUG}
         for k, topic in imgs.items():

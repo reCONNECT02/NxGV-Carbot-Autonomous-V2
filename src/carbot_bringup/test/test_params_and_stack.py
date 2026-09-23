@@ -60,38 +60,28 @@ def test_data_files_parse():
         assert isinstance(yaml.safe_load(open(os.path.join(DATA, f'{k}.yaml'))), dict)
 
 
-def test_mipi_sensors_follow_camera_setup():
+def test_cameras_yaml_is_front_camera_only():
     cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
-    for s in cams['sensors'].values():
-        assert 'enabled' in s
-    on = {n: dict(s, enabled=True) for n, s in cams['sensors'].items()}
-    mipi = {s['name']: s for s in stack.mipi_sensors(dict(cams, sensors=on))}
-    assert mipi['ov5647']['channel'] == 2 and mipi['ov5647']['namespace'] == '/cam_ov5647'
-    assert mipi['imx219']['channel'] == 0 and mipi['imx219']['namespace'] == '/cam_imx219'
-    for s in mipi.values():
-        assert (s['image_width'], s['image_height']) == (960, 544)
-    assert cams['roles']['front'] == 'astra'
+    assert list(cams['sensors']) == ['astra'] and 'enabled' in cams['sensors']['astra']
+    assert cams['roles'] == {'front': 'astra'} and list(cams['mounts']) == ['front']
     assert cams['roles_confirmed'] is False     # only the wizard may set this
-
-
-def test_disabled_mipi_sensor_is_not_started():
-    cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
-    on = {n: dict(s, enabled=True) for n, s in cams['sensors'].items()}
-    on['imx219']['enabled'] = False
-    assert [s['name'] for s in stack.mipi_sensors(dict(cams, sensors=on))] == ['ov5647']
-    del on['imx219']['enabled']
-    with pytest.raises(KeyError):
-        stack.mipi_sensors(dict(cams, sensors=on))
+    assert not hasattr(stack, 'mipi_sensors')   # the MIPI launch branch is gone
 
 
 def test_camera_tfs():
     cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
     tfs = {t['child']: t for t in stack.camera_static_tfs(cams)}
-    assert set(tfs) == {'cam_front', 'cam_left_rear', 'cam_right_rear', 'cam_front_optical',
-                        'cam_left_rear_optical', 'cam_right_rear_optical'}
+    assert set(tfs) == {'cam_front', 'cam_front_optical'}
     assert tfs['cam_front']['pitch'] > 0 and tfs['cam_front']['parent'] == 'base_link'
-    assert tfs['cam_left_rear_optical']['parent'] == 'cam_left_rear'
-    assert tfs['cam_left_rear']['yaw'] > 0 > tfs['cam_right_rear']['yaw']
+    assert tfs['cam_front_optical']['parent'] == 'cam_front'
+
+
+def test_camera_tfs_ignore_old_session_side_mounts():
+    cams = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml')))
+    front = cams['mounts']['front']
+    cams['mounts'].update({'left_rear': dict(front, yaw_deg=95.0), 'right_rear': dict(front, yaw_deg=-95.0)})
+    tfs = {t['child'] for t in stack.camera_static_tfs(cams)}
+    assert tfs == {'cam_front', 'cam_front_optical'}
 
 
 def _make_session(root, name, overlay=None, cameras=None, active=True):
@@ -128,7 +118,7 @@ def test_session_resolution_and_overrides(tmp_path):
 
     cfg = stack.launch_cfg(PKG, new)
     assert cfg['carbot_tf']['base_to_laser'][2] == 0.22
-    assert 'mipi_cam' in cfg['kill_patterns']
+    assert 'mipi_cam' not in cfg['kill_patterns'] and 'astra_camera_container' in cfg['kill_patterns']
     assert stack.launch_cfg(PKG, old)['carbot_tf']['base_to_laser'][2] == 0.12
 
 

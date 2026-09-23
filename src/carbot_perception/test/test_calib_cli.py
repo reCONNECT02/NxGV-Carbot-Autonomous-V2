@@ -7,7 +7,7 @@ import os
 import cv2
 import numpy as np
 import yaml
-from synth import MOUNTS, fisheye, pinhole
+from synth import MOUNTS
 
 from carbot_perception import calib_extrinsics
 from carbot_perception.calib_core import FloorBoard
@@ -55,8 +55,7 @@ def test_extrinsics_cli_offline(tmp_path):
     cams = yaml.safe_load(open(os.path.join(CONFIG, 'data', 'cameras.yaml')))
     root = tmp_path / 'data'
     session = root / 'calibration' / 'S1'
-    intrs = {'front': Intrinsics.ideal(640, 480, 60.0), 'left_rear': fisheye(960, 544, 300.0),
-             'right_rear': pinhole(960, 544, 600.0)}
+    intrs = {'front': Intrinsics.ideal(640, 480, 60.0)}          # the car has the front camera only
     truth = {}
     images = []
     for role, intr in intrs.items():

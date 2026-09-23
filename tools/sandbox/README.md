@@ -54,5 +54,5 @@ photos of the real mat, set `ROAD`, `PAINT` and `OUTSIDE` at the top of
   the RDK. Pass its `data/cameras.yaml` with `--cameras` so perception uses the
   real intrinsics and mounts.
 * **Real floor photos for step 4:** use
-  `run_calib_extrinsics.py --images front=... left_rear=... right_rear=...`
+  `run_calib_extrinsics.py --images front=...`
   with a session that already has the intrinsics.

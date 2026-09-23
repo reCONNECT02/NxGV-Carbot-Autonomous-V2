@@ -6,8 +6,8 @@ camera_model.py, perception.yaml road_perception section, cameras.yaml).
 
 Sources
   --source synth   (default) virtual cameras on the competition track
-  --source images  --images front=a.png left_rear=b.png right_rear=c.png
-  --source video   --video front=a.mp4 left_rear=b.mp4 right_rear=c.mp4
+  --source images  --images front=a.png
+  --source video   --video front=a.mp4
                    (e.g. recordings from the car; any role may be left out)
 
 Keys in the window
@@ -179,7 +179,7 @@ def main():
                 im = per.overlay(r, small[r], res, int(prm['debug']['overlay_width'])) if overlay else small[r]
                 cams_row.append(sb.label(im, f'{r}' + (' + mask' if overlay else '')))
         scale = int(prm['debug']['bev_scale'])
-        bev_row = [sb.label(warped_strip(res, sb.ROLES, 2), 'warped: front | left | right'),
+        bev_row = [sb.label(warped_strip(res, sb.ROLES, 2), 'warped: front'),
                    sb.label(bev_view(res.bgr, scale), 'stitched (fwd up)'),
                    sb.label(bev_view(mask_colours(res), scale),
                             f'mask cov {res.coverage:.2f} road {res.connected}')]

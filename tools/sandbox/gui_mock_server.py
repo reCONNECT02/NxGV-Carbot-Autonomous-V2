@@ -6,7 +6,7 @@
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
-makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
+makes the LiDAR silent and adds a duplicate Astra process so the failure path can be seen.
 Step 6 (IMU + wheel odometry) runs against MockCar: a car whose encoder really has
 1120 ticks/m (repo YAML 1050) and whose IMU reads 5 % short, so the first distance run
 and the first spin get corrected and the second ones verify. The "hand" pushes / turns
@@ -184,7 +184,7 @@ class Mock:
         if self.mode == 'race':
             out['preflight'] = {'state': 5, 'summary': 'running', 'session': '20260924_141208', 'missing': [],
                                 'checks': [{'name': n, 'ok': True, 'value': 'ok', 'expected': 'ok', 'detail': ''}
-                                           for n in ('cam_front_rate', 'cam_left_rate', 'cam_right_rate', 'lidar_rate',
+                                           for n in ('cam_front_rate', 'lidar_rate',
                                                      'uwb_anchor_1782', 'uwb_anchor_1786', 'uwb_anchor_1783',
                                                      'battery', 'start_pose')]}
         return out
@@ -290,14 +290,14 @@ class Mock:
                     'requests': {'ROAD': {'age': 0.04, 'v': 0.4, 's': 0.081, 'reason': ''}, 'TUNNEL': None, 'PARKING': None,
                                  'RECOVERY': None}, 'hist': hist, 'history_s': 12.0}
         if name == 'health':
-            tops = [('/camera/color/image_raw', 29.8, 30), ('/cam_ov5647/image_raw', 29.6, 30), ('/cam_imx219/image_raw', 29.4, 30),
+            tops = [('/camera/color/image_raw', 14.9, 15),
                     ('/scan', 10.1, 10), ('/odom', 20.0, 20), ('/carbot/owner/state', 50.0, 50)]
             return {'sys': {'cpu': 58, 'cores': [64, 58, 71, 49, 55, 62, 73, 40], 'bpu': 38, 'ram': 61, 'temp': 64.5,
                             'battery': 11.62, 'battery_ok': True, 'agent': True,
-                            'procs': [['astra_camera_node', 2314], ['mipi_cam', 2388], ['mipi_cam', 2391]],
+                            'procs': [['astra_camera_node', 2314]],
                             'topics': [{'topic': a, 'hz': b, 'expected': c, 'age': 0.03, 'latency': 40, 'ok': b > 0.8 * c}
                                        for a, b, c in tops]},
-                    'nodes': [{'node': 'road_perception', 'block': '03', 'level': 0, 'state': 'RUNNING', 'detail': '3 cameras',
+                    'nodes': [{'node': 'road_perception', 'block': '03', 'level': 0, 'state': 'RUNNING', 'detail': '1 camera',
                                'oldest_input_s': 0.05, 'never': [], 'stale': False},
                               {'node': 'mission_logic', 'block': '08', 'level': 1 if stop else 0, 'state': 'HOLD' if stop else 'ROAD',
                                'detail': 'TRAFFIC HOLD' if stop else '', 'oldest_input_s': 0.02, 'never': [], 'stale': False},
@@ -648,15 +648,13 @@ class MockWizard:
             self.seq, self.t_last = self.seq + 1, now
         bad = self.sensors == 'bad' and not (self.fixed_at and now > self.fixed_at)
         j = lambda v: v + 0.3 * math.sin(now + v)  # noqa: E731
-        topics = {'/camera/color/image_raw': {'hz': j(29.7), 'age': 0.03, 'latency': 41},
-                  '/cam_ov5647/image_raw': {'hz': j(29.5), 'age': 0.03, 'latency': 36},
-                  '/cam_imx219/image_raw': {'hz': j(14.8) if bad else j(29.4), 'age': 0.04, 'latency': 36},
+        topics = {'/camera/color/image_raw': {'hz': j(14.9), 'age': 0.03, 'latency': 41},
                   '/scan': {'hz': 0.0, 'age': -1.0, 'latency': -1} if bad else {'hz': j(10.0), 'age': 0.08, 'latency': 22},
                   '/odom': {'hz': j(20.0), 'age': 0.05, 'latency': 4}, '/imu/rpy': {'hz': j(19.8), 'age': 0.05, 'latency': -1},
                   '/uwb3/input_json': {'hz': j(9.7), 'age': 0.1, 'latency': -1}}
-        procs = [('astra_camera /', 2314), ('mipi_cam /cam_imx219', 2391), ('mipi_cam /cam_ov5647', 2388)]
+        procs = [('astra_camera /', 2314)]
         if bad:
-            procs.append(('mipi_cam /cam_imx219', 1877))
+            procs.append(('astra_camera /', 1877))
         snap = {'health_age_s': 0.3, 'topics': topics, 'procs': procs, 'agent': True, 'battery_v': 11.62,
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
@@ -761,7 +759,7 @@ class MockWizard:
         if a == 'RESTART_CAMERAS':
             self.task = {'name': 'restart_cameras', 'state': 'running', 'message': 'kill stale camera processes',
                          'log': ['kill stale camera processes: sudo -n /usr/local/lib/carbot/kill_stale.sh ...',
-                                 '  [kill_stale] stopping stale processes: 1877 mipi_cam'], 'until': time.time() + 4}
+                                 '  [kill_stale] stopping stale processes: 1877 astra_camera_container'], 'until': time.time() + 4}
             return {'ok': True, 'message': 'Restarting camera drivers (about 10 s): stale ones are killed first'}
         self.car.update(self.step6)
         try:                                    # the user carries the (fake) tag to the typed spot
