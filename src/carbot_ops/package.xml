@@ -11,6 +11,8 @@
   <depend>std_srvs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>        <!-- step 6: /odom -->
+  <depend>rcl_interfaces</depend>  <!-- steps 6-7: servo_controller parameters -->
   <depend>carbot_interfaces</depend>
   <depend>carbot_common</depend>
   <depend>rosbag2</depend>

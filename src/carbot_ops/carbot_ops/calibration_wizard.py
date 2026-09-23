@@ -6,10 +6,14 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
   /carbot/calibration/live    String JSON (latched, live_rate_hz): the OPEN step's live view,
                               result, instructions, sessions (for rollback), running task
   /carbot/calibration/action  CalibrationAction: SELECT | RUN | REDO | SAVE | KEEP_PREVIOUS |
-                              CANCEL | ROLLBACK | RESTART_CAMERAS
+                              CANCEL | ROLLBACK | RESTART_CAMERAS | STEP (page operation, JSON {"op"})
+  /odom, /imu/rpy (in)        fed to step 6 (IMU + wheel odometry); its corrections go to
+                              servo_controller's parameter services (servo_link, non-blocking)
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
-per built step page (step 1: step_sensor_health, step 2: step_camera_identity).
+per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
+step 3: step_camera_intrinsics,
+step 6: step_imu_odometry).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -18,6 +22,7 @@ as NodeStatus CONFIG_ERROR, in every service reply and in the live JSON, so the
 GUI can show the exact message. STOP MOTORS (/e_stop) cancels a running step.
 """
 import json
+import math
 import os
 import time
 import traceback
@@ -30,14 +35,18 @@ from carbot_common.node import CarbotNode
 from carbot_common.qos import LATCHED
 from carbot_interfaces.msg import CalibrationState, CalibrationStepState, NodeStatus, SystemHealth, UwbStatus
 from carbot_interfaces.srv import CalibrationAction
+from nav_msgs.msg import Odometry
+from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Float32, String
 
 from . import monitor_core as mc
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
 from .frame_tap import FrameTap
+from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
+from .step_imu_odometry import ImuOdometryStep, MotionRecorder
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -45,7 +54,7 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             'data.uwb',
             # phase 8
             'resume_max_age_h', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
-            'input_timeout_s',
+            'input_timeout_s', 'servo_param_timeout_s',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
@@ -77,6 +86,7 @@ class CalibrationWizard(CarbotNode):
         self.health = self.uwb_status = self.battery = None
         self.health_seq = 0
         self.tap = None
+        self.motion = MotionRecorder()                # step 6, fed from /odom and /imu/rpy
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -97,11 +107,13 @@ class CalibrationWizard(CarbotNode):
         steps_doc = load_data(self, 'calibration_steps')
         cameras, uwb = load_data(self, 'cameras'), load_data(self, 'uwb')
         self.domain = int((uwb.get('agent') or {}).get('domain_id', 1))
+        self.servo = ServoLink(self, timeout_s=float(self.p('servo_param_timeout_s')))
         # one line per built step page (step id -> StepImpl); every other step is a placeholder
         factories = {
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
+            'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -127,6 +139,9 @@ class CalibrationWizard(CarbotNode):
         self.sub(UwbStatus, T.UWB_STATUS, lambda m: setattr(self, 'uwb_status', (time.monotonic(), m)), 5)
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
+        if isinstance(impls.get('imu_odometry'), ImuOdometryStep):
+            self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
+            self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
         self.create_timer(1.0 / max(float(self.p('live_rate_hz')), 0.2), self._publish_live)
         self.create_timer(1.0 / max(float(self.p('state_rate_hz')), 0.2), self._publish_state)
@@ -149,6 +164,19 @@ class CalibrationWizard(CarbotNode):
     def _on_health(self, m):
         self.health = (time.monotonic(), m)
         self.health_seq += 1
+
+    def _on_odom(self, m):
+        q = m.pose.pose
+        o = q.orientation
+        yaw = math.atan2(2 * (o.w * o.z + o.x * o.y), 1 - 2 * (o.y * o.y + o.z * o.z))
+        self.motion.on_odom(time.monotonic(), q.position.x, q.position.y, yaw)
+
+    def _on_imu(self, m):
+        try:
+            yaw = float(json.loads(m.data)['yaw'])
+        except (ValueError, KeyError, TypeError):
+            return
+        self.motion.on_imu(time.monotonic(), yaw)
 
     def _on_estop(self, m):
         if m.data and self.wiz is not None:

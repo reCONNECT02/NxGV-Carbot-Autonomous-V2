@@ -2,11 +2,16 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
-                                             [--sensors ok|bad] [--data-root DIR]
+                                             [--sensors ok|bad] [--data-root DIR] [--skip-to N]
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
 makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
+Step 6 (IMU + wheel odometry) runs against MockCar: a car whose encoder really has
+1120 ticks/m (repo YAML 1050) and whose IMU reads 5 % short, so the first distance run
+and the first spin get corrected and the second ones verify. The "hand" pushes / turns
+it by itself while a test is in progress. --skip-to 6 records MOCK passes for steps
+1-5 in a new session so step 6 can be run straight away.
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -273,23 +278,85 @@ class Mock:
         return {}
 
 
-class MockWizard:
-    """Real wizard_core + steps 1-2 against synthetic SystemHealth/UwbStatus snapshots."""
+class MockServo:
+    """servo_controller parameter services (step 6): immediate replies."""
 
-    def __init__(self, sensors, root):
+    def __init__(self):
+        self.values = {'ticks_per_meter': 1050.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0}
+
+    def get(self, names, done):
+        done({n: self.values.get(n) for n in names})
+
+    def set(self, values, done):
+        self.values.update(values)
+        done(True)
+
+
+class MockCar:
+    """Pushed / turned by a mock hand while step 6 has a test in progress; publishes like
+    servo_controller (/odom integrated per increment, /imu/rpy = normalise(raw * scale))."""
+    TPM, IMU_GAIN, DRIFT_DEG_MIN = 1120.0, 0.95, 0.4
+
+    def __init__(self, rec, servo):
+        self.rec, self.servo = rec, servo
+        self.x, self.raw_yaw, self.t = 0.0, 37.0, time.monotonic()
+        self.test, self.done_m, self.done_deg = None, 0.0, 0.0
+
+    def update(self, step):
+        from carbot_ops.step_imu_odometry import wrap_deg
+        now = time.monotonic()
+        a = step.active if step is not None else None
+        if a is not self.test:
+            self.test, self.done_m, self.done_deg = a, 0.0, 0.0
+        while self.t < now:
+            dt = min(0.05, now - self.t)
+            self.t += dt
+            dm = dd = 0.0
+            if a and a['phase'] == 'measuring' and self.t >= self.rec.ignore_until + 0.5:
+                if a['test'] == 'distance' and self.done_m < 2.0:
+                    dm = min(0.3 * dt, 2.0 - self.done_m)
+                if a['test'] == 'spin' and self.done_deg < 360.0:
+                    dd = min(45.0 * dt, 360.0 - self.done_deg)
+            self.done_m += dm
+            self.done_deg += dd
+            v = self.servo.values
+            self.x += (-1.0 if v['odom_reverse_polarity'] else 1.0) * dm * self.TPM / v['ticks_per_meter']
+            self.raw_yaw += self.IMU_GAIN * dd + self.DRIFT_DEG_MIN * dt / 60.0
+            self.rec.on_odom(self.t, self.x, 0.0, 0.0)
+            self.rec.on_imu(self.t, wrap_deg(wrap_deg(self.raw_yaw) * v['imu_yaw_scale']))
+
+
+class MockWizard:
+    """Real wizard_core + steps 1, 2, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
+
+    def __init__(self, sensors, root, skip_to=0):
         import yaml
+        from carbot_common import calibration_store as cs
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
+        from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
+        step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
+        self.motion, self.servo = MotionRecorder(), MockServo()
+        self.car = MockCar(self.motion, self.servo)
+        self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
-                              'camera_identity': CameraIdentityStep(step2, self.cams)})
+                              'camera_identity': CameraIdentityStep(step2, self.cams),
+                              'imu_odometry': self.step6})
+        if skip_to > 1:
+            sess = self.wiz._ensure_session()
+            for x in self.wiz.slots:
+                if x.index < skip_to:
+                    cs.update_step(sess, x.id, 'PASS', '', summary='MOCK pass (--skip-to)')
+            self.wiz.refresh()
+            self.wiz.current = skip_to
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -316,6 +383,7 @@ class MockWizard:
         return {'snap': snap, 'health_seq': self.seq}
 
     def tick(self):
+        self.car.update(self.step6)
         self.wiz.tick(self.inputs())
         if self.task['state'] == 'running' and time.time() > self.task['until']:
             self.task.update(state='done', message='Drivers restarted. Check the camera rows turn green (about 5 s).')
@@ -328,6 +396,7 @@ class MockWizard:
                          'log': ['kill stale camera processes: sudo -n /usr/local/lib/carbot/kill_stale.sh ...',
                                  '  [kill_stale] stopping stale processes: 1877 mipi_cam'], 'until': time.time() + 4}
             return {'ok': True, 'message': 'Restarting camera drivers (about 10 s): stale ones are killed first'}
+        self.car.update(self.step6)
         return self.wiz.action(str(body.get('step', '')), a, str(body.get('argument', '')), self.inputs())
 
     def tab(self):
@@ -345,12 +414,13 @@ def main():
     ap.add_argument('--port', type=int, default=8081)
     ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
     ap.add_argument('--data-root', default='')
+    ap.add_argument('--skip-to', type=int, default=0, help='calibrate: record MOCK passes for the steps before N')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
     if a.mode == 'calibrate':
         import tempfile
         root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
-        mock.wiz = MockWizard(a.sensors, root)
+        mock.wiz = MockWizard(a.sensors, root, a.skip_to)
         print(f'calibration sessions -> {root}')
 
     class Handler(http.server.BaseHTTPRequestHandler):

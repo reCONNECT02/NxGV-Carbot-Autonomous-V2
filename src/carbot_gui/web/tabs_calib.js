@@ -2,7 +2,8 @@
  *   TABS.calibration  Overview: every step, sessions + rollback.
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
- * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3). Every other step is a placeholder that shows its
+ * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
+ * imu_odometry (step 6). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -433,6 +434,110 @@ STEP_PAGES.camera_intrinsics = (st, live) => {
   }
   return { todo, ctl, live: liveHtml, cam, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + result,
     actions: calActions(st, 'Run next camera') };
+};
+
+/* ---- step 6: IMU + wheel odometry. The car is moved BY HAND. Distance + spin are page operations
+ *      (action STEP {"op"}), Run = the 60 s drift test, which produces the step result. */
+STEP_PAGES.imu_odometry = st => {
+  const lv = st.live || {};
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const a = lv.active;
+  const tests = lv.tests || {};
+  const dist = tests.distance || { status: 'NOT_RUN', runs: [] };
+  const spin = tests.spin || { status: 'NOT_RUN', runs: [] };
+  const v = lv.values;
+  const busy = lv.busy || '';
+  const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
+  const opBtn = (op, label, sub, cls, off) => `<button class="btn ${cls || ''}" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op }))}" ${off ? 'disabled' : ''}>${Cal.esc(label)}${sub ? `<small>${Cal.esc(sub)}</small>` : ''}</button>`;
+
+  /* what to do: tape (0), distance (1), spin (2), drift (3), save (4) */
+  let stage;
+  if (saved) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = 4;
+  else if (lv.drift_ready || running || st.status === 'FAIL') stage = 3;
+  else if (dist.status === 'PASS') stage = lv.spin_test ? 2 : 3;
+  else stage = dist.n_runs || (a && a.test === 'distance') ? 1 : 0;
+  const lastBad = t => t.runs && t.runs.length && !['PASS'].includes(t.runs[t.runs.length - 1].status);
+  const failNow = (stage === 1 && lastBad(dist)) || (stage === 2 && lastBad(spin)) || (stage === 3 && st.status === 'FAIL');
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', failNow && i === stage]));
+
+  /* controls */
+  let ctl = '';
+  if (lv.error) ctl += Cal.alertBad('Step 6 cannot run', lv.error, 'Fix calibration_steps.yaml (imu_odometry), then relaunch calibrate.launch.py.');
+  if (lv.link_error) ctl += Cal.alertBad('servo_controller not reachable', lv.link_error, '');
+  ctl += `<div class="calvals"><b>servo_controller now</b> ` + (v
+    ? `ticks_per_meter <b>${D.f(v.ticks_per_meter, 1)}</b> · reverse polarity <b>${v.odom_reverse_polarity ? 'on' : 'off'}</b> · imu_yaw_scale <b>${D.f(v.imu_yaw_scale, 4)}</b>`
+    : '<span class="muted">reading…</span>') +
+    (busy ? `<br><span class="muted">${Cal.esc(busy)}…</span>` : '') + '</div>';
+  const any = !!a;
+  const noGo = running || !v || !!busy;
+  const d = a && a.test === 'distance';
+  const sp = a && a.test === 'spin';
+  ctl += '<h4 style="margin:6px 0">1. Distance</h4>' + (d
+    ? opBtn('distance_stop', 'Stop: rear axle on the second mark', `odom so far ${D.f(a.distance_m, 3)} m`, 'primary') + opBtn('abort', 'Abort run', '')
+    : opBtn('distance_start', dist.status === 'NOT_RUN' ? 'Start distance run' : 'Start another distance run',
+      `rear axle on the first mark, then push ${D.f(lv.straight_run_m, 2)} m straight`, dist.status === 'PASS' ? '' : 'primary', noGo || any));
+  if (lv.spin_test) {
+    ctl += '<h4 style="margin:12px 0 6px">2. Spin</h4>' + (sp
+      ? (a.phase === 'arming' ? '<div class="muted">Setting the IMU scale for the measurement…</div>' + opBtn('abort', 'Abort spin', '')
+        : opBtn('spin_stop', 'Stop: back on the tape mark', `IMU so far ${D.f(a.yaw_deg, 1)} deg${a.settling ? ' (settling, wait before turning)' : ''}`, 'primary') + opBtn('abort', 'Abort spin', ''))
+      : opBtn('spin_start', spin.status === 'NOT_RUN' ? 'Start spin' : 'Start another spin', 'then ONE full turn to the LEFT by hand',
+        dist.status === 'PASS' && spin.status !== 'PASS' ? 'primary' : '', noGo || any));
+  }
+  const hasRun = !!(st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status;
+  ctl += `<h4 style="margin:12px 0 6px">${lv.spin_test ? '3' : '2'}. Drift</h4>` + (running ? '<div class="muted">Hands off: measuring…</div>'
+    : `<button class="btn ${lv.drift_ready ? 'primary' : ''}" data-act="${hasRun ? 'REDO' : 'RUN'}" ${lv.drift_ready && !any && !busy ? '' : 'disabled'}>Run drift test` +
+      `<small>${lv.drift_ready ? `hands off, the car stays still for ${D.f(lv.drift_test_s, 0)} s` : `needs the distance${lv.spin_test ? ' and spin tests' : ' test'} passed first`}</small></button>`);
+  ctl += opBtn('reread', 'Re-read servo_controller values', '', '', running || !!busy || any);
+
+  /* live measurement + run history */
+  const ages = lv.ages || {};
+  const ageTxt = x => x == null ? 'never' : x > 1 ? `${D.f(x, 1)} s old` : 'live';
+  let liveHtml = `<div class="panel"><h3>Live <small>/odom ${Cal.esc(ageTxt(ages.odom))} · /imu/rpy ${Cal.esc(ageTxt(ages.imu))}</small></h3>`;
+  if (d) {
+    const f = Math.max(0, Math.min(1, a.distance_m / lv.straight_run_m));
+    liveHtml += `<div class="calbig">${D.f(a.distance_m, 3)} m <span class="muted">of ${D.f(lv.straight_run_m, 2)} m tape</span></div><div class="bar"><i style="width:${Math.round(f * 100)}%"></i></div>` +
+      `<p class="muted" style="font-size:12px">${a.odom_msgs} odom messages in ${D.f(a.elapsed_s, 0)} s. Push straight; stop exactly on the mark.</p>`;
+  } else if (sp) {
+    const f = Math.max(0, Math.min(1, Math.abs(a.yaw_deg) / 360));
+    liveHtml += a.phase === 'arming' ? '<div class="muted">Setting imu_yaw_scale to ±1 for the measurement…</div>'
+      : `<div class="calbig">${D.f(a.yaw_deg, 1)}° <span class="muted">of +360° (measured at unit scale)</span></div><div class="bar"><i style="width:${Math.round(f * 100)}%"></i></div>` +
+        `<p class="muted" style="font-size:12px">${a.settling ? 'Settling: wait a moment before turning. ' : ''}Turn LEFT (counter-clockwise seen from above). Negative = the IMU turns the wrong way; the page fixes the sign.</p>`;
+  } else if (running && st.run) {
+    liveHtml += `<div class="calbig">${D.f(st.run.drift_deg, 2)}° <span class="muted">drift so far</span></div><div class="bar"><i style="width:${Math.round((st.run.fraction || 0) * 100)}%"></i></div>` +
+      `<p class="muted" style="font-size:12px">${D.f(st.run.remaining_s, 0)} s left, ${st.run.samples} IMU messages. Nobody touches the car or the table.</p>`;
+  } else liveHtml += '<div class="muted">Nothing is being measured. Use the buttons under Controls.</div>';
+  const STAT = { PASS: ['pass', 'ok-t'], CORRECTED: ['corrected, verify', 'bad-t'], FAIL: ['fail', 'bad-t'], NO_DATA: ['no data', 'bad-t'] };
+  const runsTbl = (title, t, cols) => {
+    if (!t.runs || !t.runs.length) return `<h4 style="margin:12px 0 4px">${title}</h4><div class="muted">No run yet.</div>`;
+    const off = t.n_runs - t.runs.length;
+    const last = t.runs[t.runs.length - 1];
+    return `<h4 style="margin:12px 0 4px">${title} <small class="muted">${t.n_runs} run${t.n_runs > 1 ? 's' : ''}</small></h4>` +
+      `<table class="calruns"><tr><th>#</th>${cols.map(c => `<th class="r">${c[0]}</th>`).join('')}<th>Result</th></tr>` +
+      t.runs.map((r, i) => `<tr><td>${off + i + 1}</td>${cols.map(c => `<td class="r">${Cal.esc(c[1](r))}</td>`).join('')}` +
+        `<td class="${(STAT[r.status] || ['', 'muted'])[1]}">${Cal.esc((STAT[r.status] || [r.status])[0])}</td></tr>`).join('') + '</table>' +
+      (last.status !== 'PASS' && (last.why || last.fix) ? `<div class="calwhy">${last.why ? `<b>Why:</b> ${Cal.esc(last.why)}` : ''}${last.fix ? `<br><b>Fix:</b> ${Cal.esc(last.fix)}` : ''}</div>` : '') +
+      (t.failed_runs >= lv.max_runs && last.status !== 'PASS' ? Cal.alert('bad', `${t.failed_runs} runs without a pass`, 'Something mechanical is off (wheel slipping, car not pushed straight, IMU loose). Check it before more runs.') : '');
+  };
+  liveHtml += runsTbl('Distance runs', dist, [['Odom', r => r.odom_m != null ? D.f(r.odom_m, 3) + ' m' : '—'],
+    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['ticks/m', r => D.f(r.ticks_per_meter, 1)]]);
+  if (lv.spin_test) liveHtml += runsTbl('Spins', spin, [['IMU', r => (r.yaw_at_scale_deg != null ? D.f(r.yaw_at_scale_deg, 1) : D.f(r.yaw_change_deg, 1)) + '°'],
+    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['scale', r => D.f(r.imu_yaw_scale, 4)]]);
+  const lim = lv.limits || {};
+  liveHtml += `<p class="muted" style="font-size:12px;margin:8px 0 0">Limits: distance ±${D.f(lim.distance_pct, 1)} %, spin ±${D.f(lim.spin_pct, 1)} %, drift ${D.f(lim.drift_deg_per_min, 1)} °/min. ` +
+    'A corrected run never passes: the next run with the new value verifies it.</p></div>';
+
+  /* result */
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');
+  result += running ? Cal.alert('info', `Drift test: ${D.f(st.run ? st.run.remaining_s : 0, 0)} s left`, 'Hands off. STOP MOTORS cancels it.') : calResult(st);
+  const r = st.result;
+  if (r && r.values && !running) {
+    result += `<table class="metric"><tr><th>servo_controller</th><th class="r">${st.unsaved ? 'to save' : 'saved'}</th></tr>` +
+      Object.keys(r.values).map(k => `<tr><td>${Cal.esc(k)}</td><td class="r">${Cal.esc(String(r.values[k]))}</td></tr>`).join('') + '</table>';
+    (r.warnings || []).forEach(w => { result += Cal.alert('info', 'Note', w); });
+  }
+  return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
 };
 
 /* ---- a built step without a custom page (fallback) */

@@ -106,6 +106,10 @@ steps:
   - {index: 5,  id: lidar_camera,      title: LiDAR-camera alignment,        required: true,  tab: memory_lidar,
      writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset],
      pass: {max_bearing_error_deg: 2.0}}
+  # Step 6 (wizard page, phase 8): the car is pushed / turned BY HAND, the motors are never
+  # driven. Distance + spin are page operations, Run = the drift test, which finishes the step.
+  # Corrections are set LIVE on servo_controller (a corrected run never passes: the next run
+  # verifies it). Save writes the three values into this session's params_overlay.yaml.
   - index: 6
     id: imu_odometry
     title: IMU + wheel odometry
@@ -114,16 +118,23 @@ steps:
     tool: ros2 run carbot_localization calib_odometry
     writes: [params_overlay servo_controller.ticks_per_meter, servo_controller.odom_reverse_polarity,
              servo_controller.imu_yaw_scale]
+    need: Steps 1-5 passed. calibrate.launch.py running (servo_controller publishes /odom and /imu/rpy). Car on the floor; you move it by hand.
     instructions:
       - Put two tape marks exactly 2.00 m apart on a straight, flat part of the floor.
-      - "Distance test: rear axle on the first mark, push the car straight to the second.
-         If the distance is wrong the tool corrects ticks_per_meter (or the encoder
-         direction) live and asks for a verify run."
-      - "Drift test: hands off, car still for 60 s."
-      - "Spin test: line the car up with a tape mark, turn it by hand ONE full turn to the
-         LEFT (counter-clockwise seen from above) back onto the mark. Fixes the IMU yaw
-         sign and scale (block 05 needs yaw to increase turning left)."
-    procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4}
+      - "DISTANCE: rear axle on the first mark, press Start distance run, push the car straight
+         to the second mark, press Stop. If the distance is wrong the page corrects
+         ticks_per_meter (or the encoder direction) live: do one more run to verify."
+      - "SPIN: line the car up with a tape mark, press Start spin, turn it by hand ONE full turn
+         to the LEFT (counter-clockwise seen from above) back onto the mark, press Stop. Fixes
+         the IMU yaw sign and scale (block 05 needs yaw to increase turning left)."
+      - "DRIFT: hands off, press Run drift test: the car must stay completely still for 60 s."
+      - Press Save. It writes ticks_per_meter, odom_reverse_polarity and imu_yaw_scale into this session.
+    # phase 8 page: min_rate_hz = /odom and /imu/rpy messages per second a run needs;
+    # distance_min_fraction / spin_min_fraction = below this share of the tape distance / a full
+    # turn nothing is corrected (wheel not turning, turn not finished); settle_s = IMU samples
+    # ignored after imu_yaw_scale changes for the spin. max_runs = runs listed on the page.
+    procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4,
+                min_rate_hz: 5.0, distance_min_fraction: 0.2, spin_min_fraction: 0.5, settle_s: 0.5}
     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0, max_spin_error_pct: 3.0}
   - index: 7
     id: servo_steering

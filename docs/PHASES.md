@@ -511,8 +511,9 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
 
 ## Phase 8 — calibration wizard, page by page
 
-Built one wizard page per chat. Status: **step 1 (sensor health) and step 2 (camera identity)
-done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) not started.
+Built one wizard page per chat. Status: **steps 1 (sensor health), 2 (camera identity),
+3 (camera intrinsics) and 6 (IMU + wheel odometry) done**; step 5 is being built in a parallel
+session; the other steps are placeholder pages; race mode (preflight / READY / START) not started.
 
 ### Page 1 — sensor health check (done, untested on the car)
 | Piece | Where | Notes |
@@ -575,3 +576,32 @@ done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) 
 * Same recipe (`step_<id>.py`, one `factories` line, `STEP_PAGES.<id>`); `FrameTap` gives frames.
 * Front-only: only the `front` board counts; left/right boards must be skipped when their sensor is
   disabled (BACKLOG #24). Read intrinsics from this session's `data/cameras.yaml` (step 3 wrote it).
+
+### Page 6 — IMU + wheel odometry (done, untested on the car)
+Built in its own worktree, in parallel with step 5. The car is pushed / turned BY HAND;
+nothing on this page commands the motors.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Step | `carbot_ops/step_imu_odometry.py` | Same tests + corrections as `calib_odometry`. **Distance** and **spin** are page operations (action `STEP`, `{"op": "distance_start" \| "distance_stop" \| "spin_start" \| "spin_stop" \| "abort" \| "reread"}`); **Run = the drift test** (60 s, STOP MOTORS cancels it), refused until the latest distance run and spin passed; its result is the step result. Negative distance toggles `odom_reverse_polarity`, error > 2 % rescales `ticks_per_meter`, spin sign / error > 3 % sets `imu_yaw_scale`: all set LIVE, and a corrected run never passes (the next run verifies). Spin measured with the scale temporarily ±1 (sign kept): servo_controller re-wraps yaw after scaling, so a non-unit scale makes a full turn always read 360 (BACKLOG #31). IMU samples in the first `settle_s` after a scale change are ignored (spin and drift) |
+| Recorder | `MotionRecorder` (same module) | Fed by the node from `/odom` (signed distance = step projected on heading, as `estimator_core.odom_increment`) and `/imu/rpy` (unwrapped yaw) |
+| Save / keep | `save_data` / `keep_data` | `<session>/params_overlay.yaml servo_controller.{ticks_per_meter, odom_reverse_polarity, imu_yaw_scale}` via `calib_tools.merge_overlay` (same file as the terminal tool). Save refused if the live values changed after the result. Keep previous copies the three from the older overlay (refused if one is missing) and sets them live |
+| servo_controller link | `carbot_ops/servo_link.py` | Non-blocking get/set of servo_controller parameters from the wizard's single-threaded executor (callbacks, `servo_param_timeout_s`). Step 7 can reuse it (`servo_center`) |
+| Wizard (shared) | `wizard_core.py` | Action `STEP` + `StepImpl.handle(op, args, inputs)`: **identical lines to the step-5 WIP** (`f47ca11`), so the two merge cleanly. Not allowed while the step is RUNNING |
+| GUI | `tabs_calib.js STEP_PAGES.imu_odometry`, `app.css` (`.calvals .calbig .calwhy table.calruns`) | Controls: live servo values, Start/Stop/Abort distance, Start/Stop/Abort spin, Run drift test, Re-read. Live: odometer / yaw counter with bar, run tables with Why/Fix of the last failed run, a mechanical-problem warning after `max_runs` failures |
+| Mock + tests | `gui_mock_server.py --mode calibrate --skip-to 6` (MockCar: 1120 ticks/m, IMU 5 % short), `carbot_ops/test/test_step_imu_odometry.py` (27) | Fake car reproduces servo_controller (per-increment odom, `normalise(raw * scale)` yaw). Headless Chrome on the mock: 2 distance runs (corrected 1050 -> 1120, verified), 2 spins (-> 1.0524, verified), drift, Save -> overlay written; 0 JS errors |
+
+### Contract changes (page 6; additions only)
+* `calibration_steps.yaml` step 6: new `need`; `instructions` reworded for the page (drift last); new
+  `procedure` keys `min_rate_hz`, `distance_min_fraction`, `spin_min_fraction`, `settle_s`. Id, index,
+  `tool`, `writes`, `pass` and the old procedure keys unchanged (the terminal tool still works).
+* `ops.yaml calibration_wizard.servo_param_timeout_s` (+ in REQUIRED).
+* `calibration_wizard`: subscribes `/odom`, `/imu/rpy` (only when step 6 is built); action `STEP`.
+  `carbot_ops/package.xml`: + `nav_msgs`, `rcl_interfaces`.
+
+### For the next page (step 7, servo centre + steering)
+* The car drives ITSELF via `/carbot/calibration/request` (command owner, calibrate mode). Step 7 needs
+  step 6's IMU yaw: after a step-6 Save (or keep) the values are already live in servo_controller.
+* Reuse `servo_link.ServoLink` for `servo_center` (live set) and `MotionRecorder` for distance / yaw.
+* Merging with step 5: `calibration_wizard.py` `factories` / imports / `inputs()` and
+  `calibration_steps.yaml` will conflict textually (one line each); keep all entries.

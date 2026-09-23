@@ -276,3 +276,11 @@ table.metric td,.alert dd{white-space:normal;overflow-wrap:anywhere}
 .alert .failitem{margin:8px 0 0;padding:8px 0 0;border-top:1px solid var(--line);white-space:normal;overflow-wrap:anywhere}
 .alert .failitem > b{display:block;margin-bottom:2px}
 table.calcheck td:not(:first-child),table.calcheck th{overflow-wrap:normal}
+/* calibration step 6 (IMU + wheel odometry) */
+.calvals{font-size:13px;line-height:1.6;margin:0 0 10px;overflow-wrap:anywhere}
+.calbig{font-size:26px;font-weight:750;font-variant-numeric:tabular-nums;margin:2px 0 6px}
+.calbig .muted{font-size:13px;font-weight:500}
+.calwhy{font-size:12.5px;line-height:1.45;margin-top:6px;overflow-wrap:anywhere}
+table.calruns{width:100%;font-variant-numeric:tabular-nums}
+table.calruns th:first-child{width:28px}
+.ctl h4{font-size:13px}
