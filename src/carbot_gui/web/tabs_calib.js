@@ -199,15 +199,17 @@ TABS.calstep = {
       last = d;
       const s = (d.steps || []).find(x => x.index === index);
       const live = d.live || {};
-      const st = live.step && live.step.index === index ? live.step : null;
+      // own view from live.pages (several open pages each get one); live.step = the last selected step
+      const st = (live.pages || {})[String(index)] || (live.step && live.step.index === index ? live.step : null);
       q('head').innerHTML = head(d, s, st);
       const p = Cal.problem(d);
       let al = p ? Cal.alertBad(p) : '';
       if (lastErr) al += Cal.alertBad('Last action refused', lastErr);
-      if (!p && !st) {
-        al += Cal.alert('info', 'Opening this step…', 'Waiting for calibration_wizard to switch its live view here.');
-        if (Date.now() - selectedAt > 3000) select();
-      }
+      // stay watched: re-SELECT well inside page_watch_s, at once (3 s) while this page has no view.
+      // Independent of problem(): a false "not running" banner must not stop the page asking.
+      const every = Math.max(1000, (live.page_watch_s || 8) * 1000 / 3);
+      if (Date.now() - selectedAt > (st ? every : 3000)) select();
+      if (!p && !st) al += Cal.alert('info', 'Opening this step…', 'Waiting for calibration_wizard to switch its live view here.');
       if (st && st.blocked_by && st.status !== 'RUNNING') al += st.blocked_by.unsaved_pass
         ? `<div class="alert bad"><b class="t">Step ${st.blocked_by.index} (${Cal.esc(st.blocked_by.title)}) passed but is not saved</b>Open it and press Save; until then this step stays locked. <button class="btn" data-go="cal-${st.blocked_by.index}">Go to step ${st.blocked_by.index}</button></div>`
         : Cal.alert('info', `Step ${st.blocked_by.index} (${st.blocked_by.title}) is not passed yet`, 'You can read this page, but Run stays refused until the earlier steps pass and are saved, or keep their previous value.');

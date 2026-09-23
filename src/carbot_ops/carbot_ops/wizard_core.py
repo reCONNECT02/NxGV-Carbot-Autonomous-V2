@@ -36,7 +36,7 @@ from carbot_common import calibration_store as cs
 PASSING = cs.PASSING
 STATUSES = ('PENDING', 'RUNNING', 'PASS', 'FAIL', 'KEPT_PREVIOUS', 'SKIPPED_OPTIONAL')
 ACTIONS = ('SELECT', 'RUN', 'REDO', 'SAVE', 'KEEP_PREVIOUS', 'CANCEL', 'ROLLBACK', 'RESTART_CAMERAS', 'STEP')
-CFG_KEYS = ('session_format', 'allow_keep_previous', 'resume_max_age_h')
+CFG_KEYS = ('session_format', 'allow_keep_previous', 'resume_max_age_h', 'page_watch_s')
 
 
 class ConfigError(ValueError):
@@ -125,6 +125,7 @@ class Wizard:
         self.running: Optional[Slot] = None
         self.sessions: List[Dict] = []
         self.notice = ''                 # one-line banner (session activated, resumed, ...)
+        self.watched: Dict[int, float] = {}   # step index -> last SELECT (an open GUI page)
         self._resume()
         self._find_previous()
         self.refresh_sessions()
@@ -270,7 +271,21 @@ class Wizard:
         return s.result
 
     def live(self, inputs: Dict, task: Optional[Dict] = None) -> Dict:
+        """'step' = the current step; 'pages' = a view per step whose GUI page SELECTed within
+        page_watch_s, so two open pages (laptop + phone, two tabs) do not fight over one view."""
         s = self.slot(self.current) or self.slots[0]
+        now = self.now()
+        watch = float(self.cfg['page_watch_s'])
+        self.watched = {i: t for i, t in self.watched.items() if now - t <= watch}
+        views = {i: self._view(self.slot(i), inputs) for i in sorted(set(self.watched) | {s.index})}
+        return {
+            'session': self.session_name(), 'active': self.active_name(), 'notice': self.notice,
+            'all_required_passed': self.all_required_passed(), 'sessions': self.sessions,
+            'current': s.index, 'n_steps': len(self.slots), 'page_watch_s': watch,
+            'step': views[s.index], 'pages': {str(i): v for i, v in views.items()},
+            'task': task}
+
+    def _view(self, s: Slot, inputs: Dict) -> Dict:
         impl = self.impls.get(s.id)
         live = None
         if impl is not None:
@@ -280,11 +295,7 @@ class Wizard:
                 live = {'error': f'live view failed: {e!r}'}
         blk = self.blocker(s)
         tool = str(s.cfg.get('tool', '') or '')
-        return {
-            'session': self.session_name(), 'active': self.active_name(), 'notice': self.notice,
-            'all_required_passed': self.all_required_passed(), 'sessions': self.sessions,
-            'current': s.index, 'n_steps': len(self.slots),
-            'step': {'index': s.index, 'id': s.id, 'title': s.title, 'required': s.required,
+        return {'index': s.index, 'id': s.id, 'title': s.title, 'required': s.required,
                      'status': s.status, 'built': impl is not None, 'can_advance': self.can_advance(s),
                      'blocked_by': {'index': blk.index, 'title': blk.title, 'unsaved_pass': blk.status == 'PASS' and blk.unsaved,
                                     'text': self.blocked_text(blk)} if blk else None,
@@ -298,8 +309,7 @@ class Wizard:
                      'meta': {'instructions': s.cfg.get('instructions'), 'need': s.cfg.get('need', ''),
                               'tool': tool, 'tool_cmd': self._tool_cmd(tool), 'tab': s.cfg.get('tab', ''),
                               'writes': s.cfg.get('writes', []), 'pass': s.cfg.get('pass', {}),
-                              'procedure': s.cfg.get('procedure', {})}},
-            'task': task}
+                              'procedure': s.cfg.get('procedure', {})}}
 
     def _tool_cmd(self, tool: str) -> str:
         if not tool.startswith('ros2 run') or '<' in tool:
@@ -375,11 +385,13 @@ class Wizard:
         if fn is None:
             return result(False, f'{action} is handled by the node, not the wizard core')
         r = fn(s, argument, inputs)
-        s.message = r['message']
+        if action != 'SELECT':           # pages re-SELECT to stay watched: keep "Passed: press Save." etc.
+            s.message = r['message']
         return r
 
     def _a_select(self, s: Slot, arg, inputs) -> Dict:
         self.current = s.index
+        self.watched[s.index] = self.now()
         return result(True, f'Step {s.index} open')
 
     def _a_run(self, s: Slot, arg, inputs) -> Dict:

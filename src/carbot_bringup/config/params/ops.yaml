@@ -8,6 +8,7 @@ calibration_wizard:
     allow_keep_previous: true
     # phase 8
     resume_max_age_h: 12.0          # relaunch within this -> resume the newest UNFINISHED session (0 = always new)
+    page_watch_s: 8.0               # a GUI step page that SELECTed within this gets its own live view (live.pages)
     live_rate_hz: 2.0               # /carbot/calibration/live (open step's live view)
     state_rate_hz: 1.0              # /carbot/calibration/state (also sent on every change)
     tick_hz: 5.0                    # running-step update

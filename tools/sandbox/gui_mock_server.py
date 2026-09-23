@@ -346,7 +346,7 @@ class MockWizard:
         self.car = MockCar(self.motion, self.servo)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
-                                                'resume_max_age_h': 12.0},
+                                                'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
                               'imu_odometry': self.step6})

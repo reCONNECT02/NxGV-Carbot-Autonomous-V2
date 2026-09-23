@@ -53,7 +53,7 @@ from .wizard_core import StepImpl, Wizard
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
             'data.uwb',
             # phase 8
-            'resume_max_age_h', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
+            'resume_max_age_h', 'page_watch_s', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
             'input_timeout_s', 'servo_param_timeout_s',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
@@ -129,7 +129,7 @@ class CalibrationWizard(CarbotNode):
         self.tap = FrameTap(self, {n: x['image_topic'] for n, x in cameras['sensors'].items() if 'image_topic' in x})
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
-                                                                   'resume_max_age_h')}, impls)
+                                                                   'resume_max_age_h', 'page_watch_s')}, impls)
         if self.wiz.notice:
             self.get_logger().info(self.wiz.notice)
         rc = {k: self.p(f'restart_cameras.{k}') for k in RESTART_KEYS}

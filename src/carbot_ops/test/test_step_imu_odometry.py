@@ -17,7 +17,8 @@ from carbot_ops.sensor_checks import ConfigError
 from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder, wrap_deg
 from helpers import STEPS
 
-CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0}
+CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0,
+       'page_watch_s': 8.0}
 STEP6 = next(s for s in STEPS['steps'] if s['id'] == 'imu_odometry')
 SERVO = 'servo_controller'
 

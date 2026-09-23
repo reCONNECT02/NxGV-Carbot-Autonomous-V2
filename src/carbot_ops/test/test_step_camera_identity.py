@@ -14,7 +14,8 @@ from carbot_ops.step_camera_identity import CameraIdentityStep, parse_argument
 from carbot_ops.step_sensor_health import SensorHealthStep
 from helpers import CAMERAS, REPO_CAMERAS, STEP1, STEPS, UWB, good
 
-CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0}
+CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0,
+       'page_watch_s': 8.0}
 STEP2 = next(s for s in STEPS['steps'] if s['id'] == 'camera_identity')
 CONFIRM = json.dumps({'confirm': True, 'swap': False})
 SWAPPED = json.dumps({'confirm': True, 'swap': True})

@@ -550,6 +550,7 @@ session; the other steps are placeholder pages; race mode (preflight / READY / S
 | Mock + tests | `gui_mock_server.py` (steps 1-2), `carbot_ops/test/test_step_camera_identity.py` (18), `carbot_common/test/test_data.py` (+2) | Headless Chrome run of the front-only flow on the mock: step 1 save -> step 2 confirm -> PASS -> Save -> `data/cameras.yaml` roles_confirmed_for [front]; 0 JS errors |
 
 ### Contract changes (page 2; additions only)
+* Wizard live JSON: `pages` = a step view per GUI page that SELECTed within `ops.yaml calibration_wizard.page_watch_s` (NEW key, 8 s), `page_watch_s`; `step` is still the last selected one. Step pages read `live.pages[index]`, re-SELECT every page_watch_s/3 (also while a problem banner shows), and SELECT no longer overwrites the step's message. Two open pages (tab + phone) no longer steal each other's view.
 * `cameras.yaml`: NEW key `roles_confirmed_for: []` (required; only the wizard writes it). Repo file keeps
   `roles_confirmed: false`.
 * `carbot_common.data.unconfirmed_roles(cameras)` -> enabled roles step 2 has not confirmed (`[]` = OK).

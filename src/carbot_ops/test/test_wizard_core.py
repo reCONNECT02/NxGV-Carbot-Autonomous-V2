@@ -10,7 +10,8 @@ from carbot_ops import wizard_core as wc
 from carbot_ops.step_sensor_health import SensorHealthStep
 from helpers import CAMERAS, STEP1, STEPS, UWB, good
 
-CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0}
+CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0,
+       'page_watch_s': 8.0}
 
 
 class Clock:
@@ -218,6 +219,27 @@ def test_unknown_action_and_step(tmp_path):
     w, _ = make(tmp_path)
     assert not w.action('sensor_health', 'FLY', '', {})['ok']
     assert not w.action('nope', 'RUN', '', {})['ok']
+
+
+def test_two_open_pages_each_get_a_view(tmp_path):
+    w, clock = make(tmp_path)
+    w.action('camera_identity', 'SELECT', '', {})
+    clock.t += 1.0
+    w.action('lidar_camera', 'SELECT', '', {})               # a second tab on step 5
+    live = w.live(Feed().next())
+    assert live['step']['id'] == 'lidar_camera'
+    assert set(live['pages']) == {'2', '5'} and live['pages']['2']['id'] == 'camera_identity'
+    clock.t += CFG['page_watch_s'] + 0.1                       # step 2 page closed: its view expires
+    w.action('lidar_camera', 'SELECT', '', {})
+    assert set(w.live(Feed().next())['pages']) == {'5'}
+
+
+def test_select_keeps_step_message(tmp_path):
+    w, clock = make(tmp_path)
+    run_step1(w, clock, Feed())
+    assert w.slot('sensor_health').message.startswith('Passed')
+    w.action('sensor_health', 'SELECT', '', {})               # periodic re-select from the open page
+    assert w.slot('sensor_health').message.startswith('Passed')
 
 
 def test_live_payload_shape(tmp_path):
