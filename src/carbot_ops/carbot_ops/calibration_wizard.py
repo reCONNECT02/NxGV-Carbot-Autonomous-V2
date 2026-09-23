@@ -11,10 +11,11 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               servo_controller's parameter services (servo_link, non-blocking)
   /carbot/calibration/request MotionRequest (out, steps 7-8 only, while a drive segment runs):
                               the car drives itself through the command owner (calibrate mode)
+  /scan (in)                  LaserScan, buffered for step 5 (LiDAR-camera alignment)
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
-step 3: step_camera_intrinsics,
+step 3: step_camera_intrinsics, step 5: step_lidar_camera,
 step 6: step_imu_odometry, step 7: step_servo_steering,
 step 8: step_speed_pid, step 9: step_venue_thresholds, step 12: step_mission_planner,
 step 10: step_uwb_survey, step 11: step_map_uwb_alignment,
@@ -28,6 +29,7 @@ Never crashes on user input or broken YAML: a configuration problem is reported
 as NodeStatus CONFIG_ERROR, in every service reply and in the live JSON, so the
 GUI can show the exact message. STOP MOTORS (/e_stop) cancels a running step.
 """
+import collections
 import json
 import math
 import os
@@ -46,6 +48,7 @@ from carbot_interfaces.msg import MissionEvent, MissionState  # step 13 (practic
 from carbot_interfaces.srv import CalibrationAction
 from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
 from . import monitor_core as mc
@@ -62,6 +65,7 @@ from .step_map_uwb_alignment import MapUwbAlignmentStep
 from .step_servo_steering import ServoSteeringStep
 from .step_mission_planner import MissionPlannerStep
 from .step_practice_runs import PracticeRunsStep
+from .step_lidar_camera import LidarCameraStep
 from .step_sensor_health import SensorHealthStep
 from .step_venue_thresholds import VenueThresholdsStep
 from .step_speed_pid import SpeedPidStep
@@ -133,6 +137,7 @@ class CalibrationWizard(CarbotNode):
         self.restart = None
         self.drive = None
         self.health = self.uwb_status = self.battery = None
+        self.scans = collections.deque(maxlen=1)      # step 5 resizes it in _setup
         self.health_seq = 0
         self.tap = None
         self.motion = MotionRecorder()                # step 6, fed from /odom and /imu/rpy
@@ -181,6 +186,7 @@ class CalibrationWizard(CarbotNode):
             'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir()),
             'map_uwb_alignment': lambda s: MapUwbAlignmentStep(s, uwb, ct.bringup_config_dir(), self.motion,
                                                                lambda: self.wiz.session if self.wiz else None),
+            'lidar_camera': lambda s: LidarCameraStep(s, cameras, self._session_cameras, self._laser_mount),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -198,6 +204,9 @@ class CalibrationWizard(CarbotNode):
         self.road_tap = RoadTap(self, T.ROAD_GRID, T.PERCEPTION_DEBUG_STITCHED)
         vt = impls.get('venue_thresholds')
         self.road_link = ServoLink(self, 'road_perception', vt.param_timeout) if isinstance(vt, VenueThresholdsStep) else None
+        self.cameras = cameras
+        lc = impls.get('lidar_camera')
+        self.scans = collections.deque(maxlen=getattr(lc, 'scan_buffer_n', 1))
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
                                                                    'resume_max_age_h', 'page_watch_s')}, impls)
@@ -223,6 +232,8 @@ class CalibrationWizard(CarbotNode):
         self.create_subscription(MissionEvent, T.MISSION_EVENTS, self._on_mission_event, 50)
         self.create_subscription(Bool, T.RACE_ARMED, lambda m: setattr(self, 'armed', bool(m.data)), LATCHED)
         self.create_subscription(Bool, T.MANUAL_TAKEOVER, lambda m: setattr(self, 'manual', bool(m.data)), LATCHED)
+        if isinstance(lc, LidarCameraStep):
+            self.create_subscription(LaserScan, T.SCAN, self._on_scan, qos_profile_sensor_data)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
         self.create_timer(1.0 / max(float(self.p('live_rate_hz')), 0.2), self._publish_live)
         self.create_timer(1.0 / max(float(self.p('state_rate_hz')), 0.2), self._publish_state)
@@ -264,6 +275,30 @@ class CalibrationWizard(CarbotNode):
         self.mission_events.append({'seq': self.mission_seq, 'name': m.name, 'detail': m.detail,
                                     'challenge_id': int(m.challenge_id)})
         del self.mission_events[:-100]
+    def _on_scan(self, m):
+        self.scans.append({'t': time.monotonic(), 'ranges': list(m.ranges), 'angle_min': float(m.angle_min),
+                           'angle_increment': float(m.angle_increment), 'range_min': float(m.range_min),
+                           'range_max': float(m.range_max)})
+
+    def _session_cameras(self):
+        """cameras.yaml as this wizard session has it now (steps 2-4 may have saved a copy),
+        else the file the launch loaded."""
+        own = os.path.join(self.wiz.session, 'data', 'cameras.yaml') if self.wiz and self.wiz.session else ''
+        return ct.load_yaml(own) if own and os.path.isfile(own) else self.cameras
+
+    def _laser_mount(self):
+        """carbot_tf.base_to_laser: this wizard session's overlay, else the launched session's,
+        else drivers.yaml (what stack.launch_cfg gave the static TF)."""
+        for sess in (self.wiz.session if self.wiz else None,
+                     str(self.p('session')) if self.has_parameter('session') else ''):
+            v = ct.overlay_value(sess, 'carbot_tf', 'base_to_laser') if sess else None
+            if v is not None:
+                return v
+        path = os.path.join(ct.bringup_config_dir(), 'params', 'drivers.yaml')
+        v = ((ct.load_yaml(path).get('carbot_tf') or {}).get('ros__parameters') or {}).get('base_to_laser')
+        if v is None:
+            raise KeyError(f'carbot_tf.base_to_laser missing in {path}')
+        return v
 
     def _on_estop(self, m):
         if m.data and self.drive is not None:
@@ -308,7 +343,8 @@ class CalibrationWizard(CarbotNode):
                 'road_params': self.road_link,
                 # step 13 (practice runs)
                 'mission': mission, 'mission_events': list(self.mission_events), 'armed': self.armed,
-                'manual': self.manual, wizard_uwb.INPUT_KEY: self.uwb_feed}
+                'manual': self.manual, wizard_uwb.INPUT_KEY: self.uwb_feed,
+                'scans': list(self.scans), 'now': now}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):

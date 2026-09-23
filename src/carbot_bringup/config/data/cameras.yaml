@@ -87,6 +87,9 @@ mounts:
 extrinsics_calibrated: false
 
 # Step 5 result: LiDAR scan points projected into the front camera.
+# yaw_offset_deg = correction step 5 found and ALREADY APPLIED to the overlay's
+# carbot_tf.base_to_laser yaw and tunnel_wall_follower.lidar_angle_offset: a record,
+# never add it again. The session copy also gets base_to_laser, max_residual_deg, n_captures.
 lidar_to_camera:
   calibrated: false
   yaw_offset_deg: 0.0

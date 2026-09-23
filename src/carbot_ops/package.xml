@@ -16,6 +16,7 @@
   <exec_depend>carbot_control</exec_depend>  <!-- step 7: calib_core -->
   <depend>carbot_interfaces</depend>
   <depend>carbot_common</depend>
+  <exec_depend>carbot_perception</exec_depend>  <!-- step 5: camera_model -->
   <depend>rosbag2</depend>
   <exec_depend>carbot_perception</exec_depend>   <!-- calib_core, ros_image (step 3) -->
   <exec_depend>carbot_planning</exec_depend>     <!-- route_core: race-time route check (step 12) -->

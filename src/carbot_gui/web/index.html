@@ -32,6 +32,7 @@
   </main>
 </div>
 <span class="chip bad conn" id="conn">Connection to the car lost: retrying</span>
+<div class="loadcorner" id="loading" role="status" aria-live="polite" hidden><span class="loadspin" aria-hidden="true"></span><span>Loading…</span></div>
 <dialog id="takeover" aria-labelledby="tkh">
   <h2 id="tkh">Take manual control?</h2>
   <p>The run has started. Taking control with the controller counts as manual intervention and the run scores 0 marks. Autonomy pauses until you press Hand back.</p>
@@ -47,6 +48,7 @@
 <script src="tabs.js"></script>
 <script src="tabs_diag.js"></script>
 <script src="tabs_calib.js"></script>
+<script src="calib_lidar.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
