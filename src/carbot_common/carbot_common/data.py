@@ -7,7 +7,7 @@ data.track_features, data.mission_rules (phase 4),
 data.calibration_steps (a calibration session may override the repo default).
 """
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -36,6 +36,20 @@ def sensor_enabled(cameras: Dict[str, Any], name: str) -> bool:
     if 'enabled' not in s:
         raise KeyError(f'cameras.yaml sensors.{name}.enabled missing')
     return bool(s['enabled'])
+
+
+def unconfirmed_roles(cameras: Dict[str, Any]) -> List[str]:
+    """Enabled camera roles that calibration step 2 has NOT confirmed ([] = all good).
+
+    roles_confirmed: true only counts for the roles listed in roles_confirmed_for,
+    so a side camera switched on after a front-only confirmation is unconfirmed
+    again. Disabled roles never need a confirmation. Missing keys are an error."""
+    for k in ('roles', 'roles_confirmed', 'roles_confirmed_for'):
+        if k not in cameras:
+            raise KeyError(f'cameras.yaml {k} missing')
+    done = set(cameras['roles_confirmed_for'] or []) if cameras['roles_confirmed'] else set()
+    return [role for role, sensor in cameras['roles'].items()
+            if sensor_enabled(cameras, sensor) and role not in done]
 
 
 def camera_role_topics(cameras: Dict[str, Any]) -> Dict[str, str]:

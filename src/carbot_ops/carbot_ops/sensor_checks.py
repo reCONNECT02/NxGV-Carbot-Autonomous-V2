@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from carbot_common import topics as T
-from carbot_common.data import sensor_enabled
+from carbot_common.data import sensor_enabled, unconfirmed_roles
 
 PASS_KEYS = ('camera_rate_min_ratio', 'lidar_min_hz', 'odom_min_hz', 'imu_min_hz', 'uwb_min_hz',
              'battery_min_v', 'max_age_s', 'processes', 'enforce_min_rates')
@@ -55,22 +55,24 @@ def _need(d: Dict, keys, where: str) -> None:
 def build_checks(cameras: Dict, uwb: Dict, pass_cfg: Dict) -> List[Check]:
     """One Check per row of the step-1 table, from the YAML only."""
     _need(pass_cfg, PASS_KEYS, 'calibration_steps.yaml sensor_health.pass')
-    _need(cameras, ('sensors', 'roles'), 'cameras.yaml')
+    _need(cameras, ('sensors', 'roles', 'roles_confirmed', 'roles_confirmed_for'), 'cameras.yaml')
     _need(uwb, ('anchors', 'agent'), 'uwb.yaml')
     out: List[Check] = []
     enforce = bool(pass_cfg['enforce_min_rates'])
     roles = cameras['roles'] or {}
-    confirmed = bool(cameras.get('roles_confirmed', False))
-    ratio = float(pass_cfg['camera_rate_min_ratio'])
     for role in T.CAMERA_ROLES:
         sensor = roles.get(role)
         if not sensor or sensor not in cameras['sensors']:
             raise ConfigError(f'cameras.yaml roles.{role} = {sensor!r} is not a sensor')
+    unconfirmed = unconfirmed_roles(cameras)        # step 2 (per role: front-only confirmations)
+    ratio = float(pass_cfg['camera_rate_min_ratio'])
+    for role in T.CAMERA_ROLES:
+        sensor = roles[role]
         if not sensor_enabled(cameras, sensor):
             continue                           # enabled: false -> no row
         s = cameras['sensors'][sensor]
         _need(s, ('image_topic', 'expected_hz'), f'cameras.yaml sensors.{sensor}')
-        where = 'front' if role == 'front' else (ROLE_LABEL[role] + (' side' if confirmed else ' side?'))
+        where = 'front' if role == 'front' else (ROLE_LABEL[role] + (' side?' if role in unconfirmed else ' side'))
         name = SENSOR_LABEL.get(sensor, sensor)
         if s.get('driver') == 'mipi_cam':
             name += f' · MIPI ch {s.get("channel", "?")}'

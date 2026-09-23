@@ -47,16 +47,31 @@ def result(ok: bool, message: str, passed: bool = False, doc: Optional[Dict] = N
             'result_yaml': yaml.safe_dump(doc, sort_keys=False) if doc else ''}
 
 
+class StepRefused(Exception):
+    """Raised by StepImpl.save_data / keep_data: the message is shown, nothing is saved."""
+
+
 class StepImpl:
-    """A step with a wizard page. Subclasses: SensorHealthStep (step 1), ..."""
+    """A step with a wizard page. Subclasses: SensorHealthStep (step 1),
+    CameraIdentityStep (step 2), ..."""
     can_keep_previous = True     # False while a keep would need data files copied
 
     def __init__(self, cfg: Dict):
         self.cfg = cfg
 
     def start(self, now: float, inputs: Dict) -> Optional[str]:
-        """Begin RUN. Return an error message to refuse."""
+        """Begin RUN. inputs['argument'] = the RUN/REDO argument. Return an error message to refuse."""
         return None
+
+    def save_data(self, session: str, res: Dict) -> List[str]:
+        """On Save of a PASS, before the result file: write <session>/data/* (calib_tools.merge_data).
+        Returns the written paths. Raise StepRefused / OSError to abort the save."""
+        return []
+
+    def keep_data(self, src_session: str, session: str) -> List[str]:
+        """On KEEP_PREVIOUS, before anything is recorded: copy this step's data from
+        src_session. Raise StepRefused (e.g. the old value no longer fits) / OSError to abort."""
+        return []
 
     def tick(self, now: float, inputs: Dict) -> Optional[Dict]:
         """While RUNNING. Return the finished result dict ({'passed': bool, ...}) or None."""
@@ -372,7 +387,7 @@ class Wizard:
             return result(False, f'Finish step {blk.index} ({blk.title}) first: it has to pass, '
                                  'or be set to keep its previous value.')
         try:
-            err = impl.start(self.now(), inputs)
+            err = impl.start(self.now(), dict(inputs or {}, argument=arg or ''))
         except Exception as e:  # noqa: BLE001
             err = f'could not start: {e!r}'
         if err:
@@ -427,8 +442,12 @@ class Wizard:
             return result(False, 'Nothing new to save: press Run first')
         if not s.result.get('passed'):
             return result(False, 'Only a passing result can be saved. Fix the problems and press Redo.')
+        impl = self.impls.get(s.id)
         try:
             session = self._ensure_session()
+            written = impl.save_data(session, s.result) if impl is not None else []
+            if written:
+                s.result['data_files'] = [os.path.relpath(p, session).replace(os.sep, '/') for p in written]
             fname = f'{s.index:02d}_{s.id}.yaml'
             path = os.path.join(session, fname)
             if os.path.isfile(path):
@@ -437,10 +456,15 @@ class Wizard:
             doc = dict(s.result, session=os.path.basename(session))
             cs.write_yaml(path, doc)
             cs.update_step(session, s.id, 'PASS', fname, summary=str(s.result.get('summary', '')))
+        except StepRefused as e:
+            return result(False, str(e))
         except OSError as e:
             return result(False, self._write_hint(e))
         s.saved_status, s.saved_file, s.unsaved, s.status, s.from_session = 'PASS', fname, False, 'PASS', ''
-        msg = f'Saved to {os.path.basename(session)}/{fname}.' + self._after_save()
+        msg = f'Saved to {os.path.basename(session)}/{fname}.'
+        if s.result.get('data_files'):
+            msg += ' Wrote ' + ', '.join(s.result['data_files']) + '.'
+        msg += self._after_save()
         self.refresh_sessions()
         return result(True, msg, True, s.result)
 
@@ -461,12 +485,15 @@ class Wizard:
         try:
             session = self._ensure_session()
             src_dir = os.path.join(cs.calibration_dir(self.root), s.previous)
+            impl.keep_data(src_dir, session)
             e = (cs.load_summary(src_dir).get('steps') or {}).get(s.id) or {}
             fname = ''
             if e.get('file') and os.path.isfile(os.path.join(src_dir, e['file'])):
                 fname = e['file']
                 shutil.copy2(os.path.join(src_dir, fname), os.path.join(session, fname))
             cs.update_step(session, s.id, 'KEPT_PREVIOUS', fname, from_session=s.previous)
+        except StepRefused as e:
+            return result(False, str(e))
         except OSError as e:
             return result(False, self._write_hint(e))
         s.saved_status, s.saved_file, s.status, s.from_session = 'KEPT_PREVIOUS', fname, 'KEPT_PREVIOUS', s.previous

@@ -42,9 +42,26 @@ steps:
            enforce_min_rates: false,
            processes: {mipi_pattern: mipi_cam, astra_pattern: astra_camera,   # exactly one each
                        forbidden: [hobot_codec, websocket]}}                  # old one-camera viewer
-  - {index: 2,  id: camera_identity,   title: Camera identity (front / left / right), required: true, tab: perception,
-     writes: [cameras.yaml roles, cameras.yaml roles_confirmed],
-     pass: {user_confirmed: true}}
+  # Step 2: the user confirms each ENABLED camera shows the view its role says
+  # (cameras.yaml sensors.<name>.enabled: false -> role skipped, e.g. front-only).
+  # Confirm = RUN: the enabled image topics must stay live for measure_s (a
+  # confirmation of a frozen picture means nothing). Save writes the session's
+  # data/cameras.yaml roles, roles_confirmed, roles_confirmed_for.
+  - index: 2
+    id: camera_identity
+    title: Camera identity (front / left / right)
+    required: true
+    tab: perception
+    writes: [cameras.yaml roles, cameras.yaml roles_confirmed, cameras.yaml roles_confirmed_for]
+    need: Step 1 passed. Camera drivers running (step 1 has a Restart camera drivers button).
+    instructions:
+      - Stand in front of the car and wave a hand about 50 cm ahead of the front bumper.
+      - The FRONT picture must show your hand straight ahead. If it shows the side or the back, stop and fix the camera mounting or cabling.
+      - "Side cameras (only if switched on): wave at the left side, then the right side. If the left picture shows the right side, press Confirm swapped instead."
+      - Press Confirm. The pictures of every switched-on camera must keep streaming for a few seconds.
+      - Press Save. It writes the roles into this session (they apply from the next launch of this session).
+    procedure: {measure_s: 3.0, min_samples: 2, min_ok_fraction: 0.8}
+    pass: {user_confirmed: true, max_image_age_s: 1.0}
   - {index: 3,  id: camera_intrinsics, title: Camera intrinsics (per camera), required: true, tab: perception,
      writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file],
      per_sensor: [astra, ov5647, imx219],

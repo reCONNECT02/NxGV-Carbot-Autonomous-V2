@@ -10,7 +10,7 @@
 #   is dropped). Every sensor must have the key.
 #
 # Calibration writes a copy of this file into the session folder:
-#   step 2 -> roles + roles_confirmed      step 3 -> intrinsics_file per sensor
+#   step 2 -> roles + roles_confirmed(_for) step 3 -> intrinsics_file per sensor
 #   step 4 -> mounts (extrinsics) + ipm     step 5 -> lidar_to_camera
 # Phase 2 tools: ros2 run carbot_perception calib_intrinsics / calib_extrinsics
 # intrinsics_file: absolute path of a ROS camera_info yaml (plumb_bob or
@@ -65,6 +65,10 @@ roles:
   left_rear: imx219          # UNCONFIRMED default
   right_rear: ov5647         # UNCONFIRMED default
 roles_confirmed: false       # race mode refuses to arm while false
+# Roles step 2 actually confirmed. Disabled sensors are skipped, so a front-only
+# car saves [front]; switching a side camera on later makes its role unconfirmed
+# again (carbot_common.data.unconfirmed_roles). Only the wizard writes these two.
+roles_confirmed_for: []
 
 # Extrinsics in base_link: rear-axle centre ON THE GROUND, +x fwd, +y left, +z up.
 # yaw: 0 = forward, +90 = left. pitch_down: downward tilt. roll: about the optical axis.

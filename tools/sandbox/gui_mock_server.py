@@ -274,19 +274,22 @@ class Mock:
 
 
 class MockWizard:
-    """Real wizard_core + step 1 against synthetic SystemHealth/UwbStatus snapshots."""
+    """Real wizard_core + steps 1-2 against synthetic SystemHealth/UwbStatus snapshots."""
 
     def __init__(self, sensors, root):
         import yaml
         from carbot_ops import wizard_core as wc
+        from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
+        step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
-                             {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb)})
+                             {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
+                              'camera_identity': CameraIdentityStep(step2, self.cams)})
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None

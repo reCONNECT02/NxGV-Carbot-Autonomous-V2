@@ -2,7 +2,7 @@
  *   TABS.calibration  Overview: every step, sessions + rollback.
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
- * Built pages: sensor_health (step 1). Every other step is a placeholder that shows its
+ * Built pages: sensor_health (step 1), camera_identity (step 2). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -94,12 +94,38 @@ TABS.calstep = {
       <div class="calib"><div class="side"><div data-k="need"></div>
         <div class="panel"><h3>What to do</h3><ol class="steps" data-k="todo"></ol></div>
         <div class="panel"><h3>Controls</h3><div class="ctl" data-k="ctl"></div></div></div>
-      <div class="side"><div data-k="live"></div>
+      <div class="side"><div data-k="cams"></div><div data-k="live"></div>
         <div class="panel"><h3>Result</h3><div data-k="result"></div><div class="actions" data-k="actions"></div></div>
         <details class="panel" data-k="embedbox" hidden><summary data-k="embedsum" style="cursor:pointer;font-weight:650"></summary><div data-k="embed" style="margin-top:12px"></div></details>
       </div></div>`;
     const q = k => el.querySelector(`[data-k="${k}"]`);
     let last = null, selectedAt = 0, embed = null, busy = false, lastErr = '';
+    let camSig = null, camLoops = [];
+
+    /* ---- camera tiles (out.cams = [{key, label, note, off}]): rebuilt only when the set of
+     *      cameras changes, so the <img> loops keep running across polls; labels refresh every poll */
+    function stopCams() { camLoops.forEach(l => l.destroy()); camLoops = []; }
+    function setCams(cams) {
+      const box = q('cams');
+      const sig = cams ? cams.map(c => `${c.key || ''}|${c.off ? 1 : 0}`).join(',') : '';
+      if (sig !== camSig) {
+        stopCams(); camSig = sig;
+        box.innerHTML = cams && cams.length ? `<div class="panel"><h3>Camera pictures</h3><div class="grid ${cams.length > 2 ? 'g3' : cams.length > 1 ? 'g2' : ''}">` +
+          cams.map((c, i) => `<div class="cam${c.off ? ' off' : ''}" data-cam="${i}">${c.off ? '' : '<img alt="">'}<span class="none">${c.off ? 'Switched off' : 'No image yet'}</span>` +
+            '<span class="lbl"></span><span class="lbl2"></span></div>').join('') + '</div></div>' : '';
+        (cams || []).forEach((c, i) => {
+          const tile = box.querySelector(`[data-cam="${i}"]`);
+          if (c.off || !c.key) return;
+          camLoops.push(ImgLoop(tile.querySelector('img'), () => c.key, ctx.cfg.rates.image,
+            ok => { tile.querySelector('.none').style.display = ok ? 'none' : ''; }));
+        });
+      }
+      (cams || []).forEach((c, i) => {
+        const tile = box.querySelector(`[data-cam="${i}"]`); if (!tile) return;
+        tile.querySelector('.lbl').textContent = c.label || '';
+        const l2 = tile.querySelector('.lbl2'); l2.textContent = c.note || ''; l2.hidden = !c.note;
+      });
+    }
 
     /* ---- selecting this step on the wizard (its live view follows the open page) */
     const select = () => { selectedAt = Date.now(); Cal.act(ctx, index, 'SELECT'); };
@@ -170,6 +196,7 @@ TABS.calstep = {
       q('need').innerHTML = need ? `<div class="need"><b>Before you start</b><span>${Cal.esc(need)}</span></div>` : '';
       q('todo').innerHTML = out.todo || '';
       q('ctl').innerHTML = out.ctl || '<span class="muted">Nothing to set for this step.</span>';
+      setCams(out.cams);
       q('live').innerHTML = out.live || '';
       q('result').innerHTML = out.result || '';
       q('actions').innerHTML = out.actions || '';
@@ -181,15 +208,16 @@ TABS.calstep = {
         q('embedsum').textContent = `Live ${ctx.cfg.tabs.find(t => t.id === tab)?.title || tab} tab (opens its data only while expanded)`;
       } else box.hidden = true;
     }
-    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); } };
+    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); stopCams(); } };
   },
 };
 
 /* ---- shared Result / Actions blocks */
+/* runLabel null: the page has its own Run buttons (in Controls); only Cancel is added here */
 function calActions(st, runLabel) {
   const running = st.status === 'RUNNING';
   const hasResult = !!(st.result && st.unsaved) || st.status === 'FAIL';
-  const run = running ? `<button class="btn" data-act="CANCEL">Cancel</button>`
+  const run = running ? `<button class="btn" data-act="CANCEL">Cancel</button>` : runLabel == null ? ''
     : `<button class="btn primary" data-act="${hasResult || st.saved_status ? 'REDO' : 'RUN'}" ${st.built ? '' : 'disabled'}>${hasResult || st.saved_status ? 'Redo' : Cal.esc(runLabel)}</button>`;
   const save = `<button class="btn good" data-act="SAVE" ${st.status === 'PASS' && st.unsaved ? '' : 'disabled'}>Save</button>`;
   const keep = st.can_keep ? `<button class="btn" data-act="KEEP_PREVIOUS">Keep previous value<small>${Cal.esc(st.previous)} (passed)</small></button>`
@@ -261,6 +289,63 @@ STEP_PAGES.sensor_health = (st, live) => {
       (r.state !== 'ok' && (r.why || r.fix) ? `<tr${r.state === 'bad' ? ' class="badrow"' : ''}><td colspan="4" class="whyfix">${r.why ? `<b>Why:</b> ${Cal.esc(r.why)}` : ''}${r.fix ? `<br><b>Fix:</b> ${Cal.esc(r.fix)}` : ''}</td></tr>` : '')).join('') + '</table>';
   const liveHtml = `<div class="panel"><h3>Live sensor check <small>${lv.n != null ? `${lv.n_ok} of ${lv.n} ok` : ''}${lv.health_age_s != null ? ` · health report ${D.f(lv.health_age_s, 1)} s old` : ''}</small></h3>${tbl}</div>`;
   return { todo, ctl, live: liveHtml, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + calResult(st), actions: calActions(st, 'Run check') };
+};
+
+/* ---- step 2: camera identity (switched-off cameras are shown and skipped) */
+STEP_PAGES.camera_identity = st => {
+  const lv = st.live || {};
+  const cams = lv.cameras || [];
+  const on = cams.filter(c => c.enabled);
+  const off = cams.filter(c => !c.enabled);
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const allLive = on.length > 0 && on.every(c => c.state === 'live');
+  let stage = 0;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  else if (running || st.status === 'FAIL') stage = Math.max(0, ins.length - 2);
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  const STATE = { live: ['live', 'ok-t'], stale: ['frozen', 'bad-t'], none: ['no frames', 'bad-t'], wait: ['waiting for health report', 'muted'], off: ['switched off, skipped', 'muted'] };
+  const stateTxt = c => (STATE[c.state] || [c.state, 'muted'])[0] + (c.state === 'stale' && c.age != null ? ` (${D.f(c.age, 1)} s old)` : '');
+  const tiles = cams.map(c => ({ key: c.enabled ? c.preview : null, off: !c.enabled, label: `${c.label} · ${c.sensor_label}`,
+    note: c.enabled ? stateTxt(c) + (c.hz != null && c.state === 'live' ? ` · ${D.f(c.hz, 0)} fps` : '') : 'cameras.yaml enabled: false' }));
+
+  const hasRun = !!(st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status;
+  const act = hasRun ? 'REDO' : 'RUN';
+  const dis = running || !on.length || lv.error ? 'disabled' : '';
+  const names = on.map(c => c.label.toLowerCase()).join(', ');
+  let ctl = lv.error ? Cal.alertBad('Step 2 cannot run', lv.error, 'Fix cameras.yaml / calibration_steps.yaml, then relaunch calibrate.launch.py.') : '';
+  ctl += `<button class="btn primary" data-act="${act}" data-arg="${Cal.esc(JSON.stringify({ confirm: true, swap: false }))}" ${dis}>` +
+    `Confirm: the pictures are right<small>Confirms ${Cal.esc(names || 'nothing (every camera is off)')}</small></button>`;
+  if (lv.sides_enabled) {
+    ctl += `<button class="btn" data-act="${act}" data-arg="${Cal.esc(JSON.stringify({ confirm: true, swap: true }))}" ${dis}>` +
+      'Confirm swapped<small>The left picture shows the right side (and the other way round): Save swaps the two side roles</small></button>';
+  } else if (off.length) {
+    ctl += `<p class="muted" style="margin:8px 0 0;font-size:12.5px">${Cal.esc(off.map(c => `${c.label} (${c.sensor_label})`).join(' and '))} ` +
+      `${off.length > 1 ? 'are' : 'is'} switched off in cameras.yaml, so only ${Cal.esc(names || 'nothing')} is confirmed. ` +
+      'Once a side camera is switched on again it counts as unconfirmed until this step runs again.</p>';
+  }
+  if (on.length && !allLive && !running) {
+    ctl += Cal.alert('bad', 'A camera picture is not live', 'Confirm will fail while a switched-on camera is frozen or missing. Step 1 has a Restart camera drivers button.');
+  }
+
+  const rows = cams.map(c => `<tr${c.enabled && c.state !== 'live' && c.state !== 'wait' ? ' class="badrow"' : ''}><td><b>${Cal.esc(c.label)}</b></td>` +
+    `<td>${Cal.esc(c.sensor_label)}<br><span class="muted" style="font-size:11.5px">${Cal.esc(c.topic)}</span></td>` +
+    `<td class="${(STATE[c.state] || ['', 'muted'])[1]}">${Cal.esc(stateTxt(c))}</td>` +
+    `<td class="r">${c.hz != null ? D.f(c.hz, 1) + ' Hz' : '—'}</td></tr>`).join('');
+  const conf = lv.roles_confirmed ? `confirmed for ${(lv.roles_confirmed_for || []).join(', ') || 'no role'}` : 'not confirmed';
+  const liveHtml = `<div class="panel"><h3>Cameras <small>roles as loaded: ${Cal.esc(conf)}</small></h3>` +
+    (cams.length ? `<table class="calcheck"><tr><th>Role</th><th>Sensor</th><th>Picture</th><th class="r">Rate</th></tr>${rows}</table>` : '<div class="empty">Waiting for the wizard…</div>') +
+    '<p class="muted" style="font-size:12px;margin:8px 0 0">Saved roles apply from the next launch of this session. Pictures here follow the roles the launch loaded.</p></div>';
+
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + calResult(st);
+  const r = st.result;
+  if (r && r.roles) {
+    result += `<table class="metric"><tr><th>Role</th><th>Sensor</th><th></th></tr>` + Object.keys(r.roles).map(k =>
+      `<tr><td>${Cal.esc(k)}</td><td>${Cal.esc(r.roles[k])}</td><td class="muted">${(r.confirmed_roles || []).includes(k) ? 'confirmed' : 'skipped (switched off)'}</td></tr>`).join('') + '</table>';
+  }
+  return { todo, ctl, cams: tiles, live: liveHtml, result, actions: calActions(st, null) };
 };
 
 /* ---- a built step without a custom page (fallback) */

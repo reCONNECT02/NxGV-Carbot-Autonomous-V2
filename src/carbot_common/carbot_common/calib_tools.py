@@ -83,6 +83,18 @@ def save_data(session: str, fname: str, doc: Dict) -> str:
     return path
 
 
+def merge_data(session: str, fname: str, base_doc: Dict, updates: Dict) -> str:
+    """Set `updates` (deep-merged) in <session>/data/<fname>.
+
+    A session data file REPLACES the repo file when the session is loaded, so it
+    must be complete: start from this session's copy if an earlier step already
+    wrote one (keeps that step's keys), else from `base_doc` (the file the
+    launch loaded)."""
+    own = os.path.join(session, 'data', fname)
+    doc = load_yaml(own) if os.path.isfile(own) else copy.deepcopy(base_doc)
+    return save_data(session, fname, _deep_merge(doc, copy.deepcopy(updates)))
+
+
 def _deep_merge(dst: Dict, src: Dict) -> Dict:
     for k, v in src.items():
         if isinstance(v, dict) and isinstance(dst.get(k), dict):

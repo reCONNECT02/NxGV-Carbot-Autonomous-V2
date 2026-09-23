@@ -13,7 +13,7 @@ never rename silently.
 | 5 | Parking, recovery, command owner + safety | **done** |
 | 6 | Detectors (traffic light, boom gate, bump sign) | **done** |
 | 7 | GUI main tab + diagnostic tabs | **done** |
-| 8 | Calibration wizard + race mode | **in progress** (page by page: step 1 done) |
+| 8 | Calibration wizard + race mode | **in progress** (page by page: steps 1-2 done) |
 | 9 | Docs | |
 
 ## Phase 1 — what exists
@@ -511,8 +511,8 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
 
 ## Phase 8 — calibration wizard, page by page
 
-Built one wizard page per chat. Status: **step 1 (sensor health) done**; steps 2-13 are
-placeholder pages; race mode (preflight / READY / START) not started.
+Built one wizard page per chat. Status: **step 1 (sensor health) and step 2 (camera identity)
+done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) not started.
 
 ### Page 1 — sensor health check (done, untested on the car)
 | Piece | Where | Notes |
@@ -538,10 +538,29 @@ placeholder pages; race mode (preflight / READY / START) not started.
 * gui_server: `POST /api/calibration/action`, `/api/tab/calibration` + `live` + `wizard`,
   `/api/config` + `calib_steps`, `/api/core` + `calib_steps` flags; `TAB_GROUPS.calibration`.
 
-### For the next page (step 2, camera identity)
-* Add `StepImpl` subclass in `carbot_ops/step_<id>.py`, register it in `calibration_wizard._setup`,
-  add `STEP_PAGES.<id>` in `tabs_calib.js`. Placeholder -> built automatically.
-* A step that writes data files must copy them on KEEP_PREVIOUS (`can_keep_previous` stays False
-  until it does) and write into `<session>/data/` via `calib_tools.save_data`.
-* Step 2 needs the 3 camera previews (`img:cam_*` keys, camera_preview) and writes
-  cameras.yaml `roles` + `roles_confirmed`.
+### Page 2 — camera identity (done, untested on the car)
+| Piece | Where | Notes |
+|---|---|---|
+| Step | `carbot_ops/step_camera_identity.py` | Live: one row + preview tile per role (roles as the launch loaded them), picture state from system_monitor (live / frozen / no frames), sensors with `enabled: false` shown as "switched off, skipped". RUN argument JSON `{"confirm": true, "swap": false\|true}` (no argument = refused). Run = `procedure.measure_s` (3 s): every ENABLED role's raw image topic must be live (age <= `pass.max_image_age_s`) in >= `min_ok_fraction` of the reports. Swap refused when both side cameras are off |
+| Save | `save_data` -> `<session>/data/cameras.yaml` | `roles` (swapped if asked; all three role keys always kept), `roles_confirmed: true`, `roles_confirmed_for: [enabled roles]`. Front-only car -> `[front]`. Complete file (session copy replaces the repo file on load), merged via `calib_tools.merge_data` so later steps' keys survive |
+| Keep previous | `keep_data` | Copies those three keys from the older session; REFUSED if that session's confirmation does not cover every camera enabled now (e.g. a side camera switched back on) |
+| Wizard hooks (shared) | `wizard_core.py` | `StepImpl.save_data(session, res)` (before the result file; paths -> `result.data_files`), `StepImpl.keep_data(src, session)` (before anything is recorded), `StepRefused` (abort with a message), RUN/REDO argument reaches `start()` as `inputs['argument']`. `calibration_wizard._setup`: `factories` dict, one line per built page |
+| GUI | `tabs_calib.js` `STEP_PAGES.camera_identity`, `calstep` `cams` slot | `out.cams = [{key, label, note, off}]`: persistent camera tiles (ImgLoop keeps running across the 2 Hz re-render; rebuilt only when the camera set changes); `calActions(st, null)` = page has its own Run buttons. Controls: Confirm / Confirm swapped (only when a side camera is on) |
+| Mock + tests | `gui_mock_server.py` (steps 1-2), `carbot_ops/test/test_step_camera_identity.py` (18), `carbot_common/test/test_data.py` (+2) | Headless Chrome run of the front-only flow on the mock: step 1 save -> step 2 confirm -> PASS -> Save -> `data/cameras.yaml` roles_confirmed_for [front]; 0 JS errors |
+
+### Contract changes (page 2; additions only)
+* `cameras.yaml`: NEW key `roles_confirmed_for: []` (required; only the wizard writes it). Repo file keeps
+  `roles_confirmed: false`.
+* `carbot_common.data.unconfirmed_roles(cameras)` -> enabled roles step 2 has not confirmed (`[]` = OK).
+  Step 1 labels use it (`left side?`). **Race preflight must use it** instead of reading `roles_confirmed` alone.
+* `calib_tools.merge_data(session, fname, base_doc, updates)`.
+* `calibration_steps.yaml` step 2: `need`, `instructions`, `procedure {measure_s, min_samples,
+  min_ok_fraction}`, `pass.max_image_age_s` (+ `writes` lists `roles_confirmed_for`). Id/index unchanged.
+
+### For the next page (step 3, camera intrinsics)
+* Being built in parallel by another session (front only, disabled sensors shown as off). It uses the
+  hooks above: `merge_data(session, 'cameras.yaml', cameras, {'sensors': {s: {'intrinsics_file': p}}})`.
+* Same recipe: `StepImpl` in `carbot_ops/step_<id>.py`, one line in `_setup` `factories`,
+  `STEP_PAGES.<id>`. Honour `sensors.<name>.enabled` (BACKLOG #24).
+* Saved roles apply only from the next launch of that session (`calibrate.launch.py session:=NAME`),
+  since camera_preview / road_perception read cameras.yaml at start. Front-only: nothing changes.

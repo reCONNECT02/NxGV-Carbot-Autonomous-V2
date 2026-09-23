@@ -9,7 +9,8 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               CANCEL | ROLLBACK | RESTART_CAMERAS
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
-per built step page (step 1: step_sensor_health). Steps without a page yet are
+per built step page (step 1: step_sensor_health, step 2: step_camera_identity).
+Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
 Never crashes on user input or broken YAML: a configuration problem is reported
@@ -34,6 +35,7 @@ from std_msgs.msg import Bool, Float32, String
 from . import monitor_core as mc
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
+from .step_camera_identity import CameraIdentityStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -92,14 +94,22 @@ class CalibrationWizard(CarbotNode):
         steps_doc = load_data(self, 'calibration_steps')
         cameras, uwb = load_data(self, 'cameras'), load_data(self, 'uwb')
         self.domain = int((uwb.get('agent') or {}).get('domain_id', 1))
+        # one line per built step page (step id -> StepImpl); every other step is a placeholder
+        factories = {
+            'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
+            'camera_identity': lambda s: CameraIdentityStep(s, cameras),
+        }
         impls = {}
         for s in steps_doc.get('steps', []):
-            if s.get('id') == 'sensor_health':
-                try:
-                    impls['sensor_health'] = SensorHealthStep(s, cameras, uwb)
-                except Exception as e:  # noqa: BLE001
-                    impls['sensor_health'] = BrokenStep(s, f'step 1 configuration: {e}')
-                    self.get_logger().error(f'step 1 configuration: {e}')
+            make = factories.get(s.get('id'))
+            if make is None:
+                continue
+            try:
+                impls[s['id']] = make(s)
+            except Exception as e:  # noqa: BLE001
+                why = f'step {s.get("index")} configuration: {e}'
+                impls[s['id']] = BrokenStep(s, why)
+                self.get_logger().error(why)
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
                                                                    'resume_max_age_h')}, impls)
