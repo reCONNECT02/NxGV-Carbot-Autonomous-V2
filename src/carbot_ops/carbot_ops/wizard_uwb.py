@@ -24,7 +24,10 @@ Helpers: session_uwb(session, base_doc) (this session's data/uwb.yaml, i.e. what
 step 10 saved, else the launch's doc), anchor_set(doc, zero_offsets),
 fresh_samples(rows), fixes(anchors, rows).
 """
+import json
+import math
 import os
+import random
 import threading
 import time
 from collections import deque
@@ -152,3 +155,32 @@ def anchor_set(doc: Dict, zero_offsets: bool = False) -> AnchorSet:
 
 fresh_samples = _cli.raw_fresh_samples      # rows -> ({anchor: [raw R m, one per new sample]}, unknown, reports)
 fixes = _cli.fixes                          # (AnchorSet, rows) -> [(x, y)] pairwise trilateration per report
+
+
+class SyntheticTag:
+    """Fake tag reports for tests and tools/sandbox/gui_mock_server.py (never used on the car).
+
+    anchors = {id: (x, y, z)} (true positions), bias = {id: metres added to every raw range},
+    like an uncalibrated antenna delay. Move it with .xy; .report() -> tag JSON string."""
+
+    def __init__(self, anchors: Dict[str, Sequence[float]], z: float, bias: Dict[str, float],
+                 noise_m: float = 0.01, seed: int = 1, xy: Sequence[float] = (3.0, 1.5)):
+        self.anchors, self.z, self.bias, self.noise = dict(anchors), float(z), dict(bias), float(noise_m)
+        self.rng = random.Random(seed)
+        self.xy = list(xy)
+        self.seq = 0
+        self.boot_id = 'synthetic'
+        self.drop: set = set()                          # anchor ids not heard
+        self.extra: Dict[str, Sequence[float]] = {}     # heard but not configured
+
+    def report(self) -> str:
+        self.seq += 1
+        links = []
+        for aid, (ax, ay, az) in sorted({**self.anchors, **self.extra}.items()):
+            if aid in self.drop:
+                continue
+            r = math.sqrt((self.xy[0] - ax) ** 2 + (self.xy[1] - ay) ** 2 + (self.z - az) ** 2)
+            r += self.bias.get(aid, 0.0) + self.rng.gauss(0.0, self.noise)
+            links.append({'A': aid, 'R': round(r, 4), 'age_ms': 20, 'sample_seq': self.seq})
+        return json.dumps({'tag': 'SIM', 'boot_id': self.boot_id, 'seq': self.seq, 't_ms': self.seq * 100,
+                           'last_unknown_id': '0000', 'links': links})
