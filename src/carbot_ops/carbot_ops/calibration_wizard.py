@@ -9,7 +9,8 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               CANCEL | ROLLBACK | RESTART_CAMERAS
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
-per built step page (step 1: step_sensor_health, step 2: step_camera_identity).
+per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
+step 9: step_venue_thresholds).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -36,9 +37,12 @@ from . import monitor_core as mc
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
 from .frame_tap import FrameTap
+from .param_link import ParamLink
+from .road_tap import RoadTap
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_sensor_health import SensorHealthStep
+from .step_venue_thresholds import VenueThresholdsStep
 from .wizard_core import StepImpl, Wizard
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
@@ -77,6 +81,7 @@ class CalibrationWizard(CarbotNode):
         self.health = self.uwb_status = self.battery = None
         self.health_seq = 0
         self.tap = None
+        self.road_tap = self.road_link = None
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -102,6 +107,7 @@ class CalibrationWizard(CarbotNode):
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
+            'venue_thresholds': lambda s: VenueThresholdsStep(s, cameras),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -115,6 +121,10 @@ class CalibrationWizard(CarbotNode):
                 impls[s['id']] = BrokenStep(s, why)
                 self.get_logger().error(why)
         self.tap = FrameTap(self, {n: x['image_topic'] for n, x in cameras['sensors'].items() if 'image_topic' in x})
+        # step 9: road_perception grid / stitched colours (subscribed only while needed) + its parameters
+        self.road_tap = RoadTap(self, T.ROAD_GRID, T.PERCEPTION_DEBUG_STITCHED)
+        vt = impls.get('venue_thresholds')
+        self.road_link = ParamLink(self, 'road_perception', vt.param_timeout) if isinstance(vt, VenueThresholdsStep) else None
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
                                                                    'resume_max_age_h')}, impls)
@@ -179,7 +189,11 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None,
+                # step 9 (venue thresholds)
+                'road_grid': self.road_tap.grid if self.road_tap else None,
+                'road_pair': self.road_tap.pair if self.road_tap else None,
+                'road_params': self.road_link}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):
@@ -188,6 +202,11 @@ class CalibrationWizard(CarbotNode):
             impl = self.wiz.impls.get('camera_intrinsics')
             self.tap.want([impl.running_sensor()] if isinstance(impl, CameraIntrinsicsStep) and impl.running_sensor()
                           else [])
+            # step 9: road grid while its page is open, stitched colours only while it samples
+            vt = self.wiz.impls.get('venue_thresholds')
+            if isinstance(vt, VenueThresholdsStep):
+                cur = self.wiz.slot(self.wiz.current)
+                self.road_tap.want(cur is not None and cur.id == 'venue_thresholds', vt.sampling())
             done = self.wiz.tick(self.inputs())
         except Exception as e:  # noqa: BLE001
             self.get_logger().error(f'wizard tick failed: {e!r}\n{traceback.format_exc()}')
