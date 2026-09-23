@@ -15,6 +15,7 @@ calibration_wizard:
     refresh_period_s: 2.0           # re-read summary.yaml (results written by the terminal tools)
     input_timeout_s: 3.0            # SystemHealth / UwbStatus / battery older than this = missing
     servo_param_timeout_s: 3.0      # steps 6-7: servo_controller get/set parameter reply time limit
+    drive_request_hz: 20.0          # step 7: /carbot/calibration/request repeat rate (owner expiry is 200 ms)
     restart_cameras:                # step 1 "Restart camera drivers" button
       enabled: true
       kill_patterns: [mipi_cam, hobot_codec, websocket, astra_camera_container]   # camera ones only

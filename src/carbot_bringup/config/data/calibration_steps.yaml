@@ -136,23 +136,33 @@ steps:
     procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4,
                 min_rate_hz: 5.0, distance_min_fraction: 0.2, spin_min_fraction: 0.5, settle_s: 0.5}
     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0, max_spin_error_pct: 3.0}
+  # Step 7 (wizard page, phase 8): Run starts a supervised drive, the car waits at a Go
+  # button before EVERY segment (left circle, right circle, straight runs) so it can be
+  # put back on clear floor. Cancel / STOP MOTORS stop it at once.
   - index: 7
     id: servo_steering
     title: Servo centre + steering limits
     required: true
     tab: control
     tool: ros2 run carbot_control calib_steering
-    instructions: >-
-      The car drives ITSELF slowly through the command owner (calibrate mode only):
-      clear flat floor of about 1.5 x 2.5 m, e-stop ready. It drives a full-LEFT
-      circle and a full-RIGHT circle until the IMU has turned circle_yaw_deg (radius
-      each side), then straight runs of straight_run_m; the residual curve sets the
-      integer servo_center live until the drift passes. If the servo strains or buzzes
-      at full lock, lower servo_range_left / right in the Tuning tab and redo.
-      Needs step 6 (IMU yaw) first.
+    need: Step 6 passed (the IMU yaw measures the circles). calibrate.launch.py running. Clear flat floor about 1.5 x 2.5 m, e-stop ready.
+    instructions:
+      - "The car drives ITSELF slowly through the command owner (calibrate mode only). Clear flat
+         floor of about 1.5 x 2.5 m, e-stop ready. Press Run."
+      - "LEFT circle: put the car on the clear floor and press Go. It drives at full LEFT lock
+         until the IMU has turned circle_yaw_deg."
+      - "RIGHT circle: move the car back if needed, press Go. If the servo strains or buzzes
+         at full lock, Cancel, lower servo_range_left / right in the Tuning tab and Redo."
+      - "STRAIGHT runs: line the car up with straight_run_m free ahead, press Go. The residual
+         curve sets the integer servo_center live; repeat Go until the drift passes."
+      - Press Save. It writes servo_center, the command owner steering limits and min_turning_radius_m into this session.
     # writes command_owner.steering (+ the tunnel_bridge copy); servo_range_* stay as set
     writes: [params_overlay servo_controller.servo_center, command_owner.steering.*, tunnel_bridge.command_owner_steering.*, vehicle.min_turning_radius_m]
-    procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25}
+    # phase 8 page: stop_settle_s = speed-0 requests after each segment (as calib_drive);
+    # imu_settle_s = IMU samples ignored after imu_yaw_scale is set to +-1 for the measurement;
+    # odom_timeout_s = /odom older than this while driving aborts the segment.
+    procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25,
+                stop_settle_s: 0.8, imu_settle_s: 0.5, odom_timeout_s: 0.5}
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
     id: speed_pid

@@ -3,7 +3,7 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -538,6 +538,97 @@ STEP_PAGES.imu_odometry = st => {
     result += `<table class="metric"><tr><th>servo_controller</th><th class="r">${st.unsaved ? 'to save' : 'saved'}</th></tr>` +
       Object.keys(r.values).map(k => `<tr><td>${Cal.esc(k)}</td><td class="r">${Cal.esc(String(r.values[k]))}</td></tr>`).join('') + '</table>';
     (r.warnings || []).forEach(w => { result += Cal.alert('info', 'Note', w); });
+  }
+  return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
+};
+
+/* ---- step 7: servo centre + steering. The car DRIVES ITSELF (calibrate mode, through the command owner).
+ *      Run starts the sequence; it waits at Go (action STEP {"op":"go"}, allowed while RUNNING) before every
+ *      segment: left circle, right circle, straight runs. Cancel / STOP MOTORS stop it at once. */
+STEP_PAGES.servo_steering = st => {
+  const lv = st.live || {};
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const r = lv.run;
+  const v = lv.values;
+  const busy = lv.busy || '';
+  const pr = lv.procedure || {};
+  const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
+  const SEG = { left: 1, right: 2, straight: 3 };
+  let stage = 0;
+  if (saved) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = 4;
+  else if (running && r) stage = SEG[r.segment] || 0;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  /* controls */
+  let ctl = '';
+  if (lv.error) ctl += Cal.alertBad('Step 7 cannot run', lv.error, 'Fix calibration_steps.yaml (servo_steering) / common.yaml vehicle.wheelbase_m, then relaunch calibrate.launch.py.');
+  if (lv.link_error) ctl += Cal.alertBad('servo_controller / command_owner not reachable', lv.link_error, '');
+  ctl += '<div class="calvals">' + (v
+    ? `servo_center <b>${v.servo_center}</b> · range left <b>${v.servo_range_left}</b> / right <b>${v.servo_range_right}</b><br>` +
+      `steer_sign <b>${D.f(v.steer_sign, 0)}</b> · imu_yaw_scale <b>${D.f(v.imu_yaw_scale, 4)}</b> · command_owner mode <b>${Cal.esc(v.mode)}</b>`
+    : '<span class="muted">reading servo_controller / command_owner…</span>') +
+    (busy ? `<br><span class="muted">${Cal.esc(busy)}…</span>` : '') + '</div>';
+  if (v && v.mode !== 'calibrate') ctl += Cal.alertBad('Not in calibrate mode', `command_owner runs in ${v.mode} mode`, 'Start ros2 launch carbot_bringup calibrate.launch.py.');
+  if (!running) {
+    const hasRun = !!(st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status;
+    const ok = v && v.mode === 'calibrate' && !busy;
+    ctl += `<button class="btn primary" data-act="${hasRun ? 'REDO' : 'RUN'}" ${ok ? '' : 'disabled'}>${hasRun ? 'Redo calibration drive' : 'Start calibration drive'}` +
+      '<small>Nothing moves yet: the car waits for Go before every segment</small></button>' +
+      `<button class="btn" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'reread' }))}" ${busy ? 'disabled' : ''}>Re-read values</button>`;
+  } else if (r) {
+    const what = r.segment === 'straight' ? `straight run ${r.straight_n} of up to ${r.max_runs}` : r.label;
+    const where = r.segment === 'left' ? 'Put the car on the clear floor, about 1 m of free space on every side.'
+      : r.segment === 'right' ? 'Move the car back to the middle of the clear floor if needed.'
+        : `Line the car up with ${D.f(pr.straight_run_m, 1)} m free straight ahead${r.straight_n > 1 ? ` (servo_center is now ${r.servo_center})` : ''}.`;
+    if (r.phase === 'ready') {
+      ctl += Cal.alert('info', `Next: ${what}`, where + ' Keep a hand near STOP MOTORS.') +
+        `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'go' }))}" ${busy ? 'disabled' : ''}>Go: drive the ${Cal.esc(what)}` +
+        `<small>duty ${D.f(pr.raw_duty, 2)}, stops by itself</small></button>`;
+    } else if (r.phase === 'correcting') ctl += Cal.alert('info', 'Setting the new servo_center…', `${r.servo_center}, live on servo_controller.`);
+    else ctl += Cal.alert('bad', `Driving: ${what}`, 'Press Cancel below or STOP MOTORS (top right) to stop at once.');
+    if (r.note) ctl += Cal.alert('info', 'Note', r.note);
+  }
+
+  /* live */
+  const ages = lv.ages || {};
+  const ageTxt = x => x == null ? 'never' : x > 1 ? `${D.f(x, 1)} s old` : 'live';
+  let liveHtml = `<div class="panel"><h3>Live <small>/odom ${Cal.esc(ageTxt(ages.odom))} · /imu/rpy ${Cal.esc(ageTxt(ages.imu))}</small></h3>`;
+  if (r && ['driving', 'stopping', 'settling'].includes(r.phase)) {
+    const f = r.segment === 'straight' ? Math.abs(r.distance_m) / pr.straight_run_m : Math.abs(r.yaw_deg) / pr.circle_yaw_deg;
+    liveHtml += `<div class="calbig">${r.segment === 'straight' ? `${D.f(r.distance_m, 2)} m <span class="muted">of ${D.f(pr.straight_run_m, 1)} m</span>`
+      : `${D.f(r.yaw_deg, 0)}° <span class="muted">of ${D.f(pr.circle_yaw_deg, 0)}°, ${D.f(r.distance_m, 2)} m driven</span>`}</div>` +
+      `<div class="bar"><i style="width:${Math.round(Math.min(1, f) * 100)}%"></i></div>` +
+      `<p class="muted" style="font-size:12px">${r.phase === 'settling' ? 'Settling the IMU…' : r.phase === 'stopping' ? 'Stopping…' : `${D.f(r.elapsed_s, 0)} s of at most ${D.f(pr.timeout_s, 0)} s`}</p>`;
+  } else liveHtml += `<div class="muted">${running ? 'Waiting for Go.' : 'Not driving.'}</div>`;
+  const circ = (r && r.circles) || {};
+  const res = st.result || {};
+  const cl = Object.keys(circ).length ? circ : (res.left ? { left: { radius_m: res.left.radius_m, yaw_deg: res.left.yaw_change_deg, distance_m: res.left.distance_m },
+    right: { radius_m: res.right.radius_m, yaw_deg: res.right.yaw_change_deg, distance_m: res.right.distance_m } } : {});
+  liveHtml += '<h4 style="margin:12px 0 4px">Full-lock circles</h4>' + (Object.keys(cl).length
+    ? '<table class="calruns"><tr><th>Side</th><th class="r">Driven</th><th class="r">Turned</th><th class="r">Radius</th></tr>' +
+      Object.keys(cl).map(k => `<tr><td>${k}</td><td class="r">${D.f(cl[k].distance_m, 2)} m</td><td class="r">${D.f(cl[k].yaw_deg, 0)}°</td>` +
+        `<td class="r ${cl[k].radius_m <= lv.limits.min_radius_m_max ? 'ok-t' : 'bad-t'}">${D.f(cl[k].radius_m, 3)} m</td></tr>`).join('') + '</table>'
+    : '<div class="muted">Not driven yet.</div>');
+  const sr = (r && r.straights) || (res.straight_runs || []).map(x => ({ distance_m: x.distance_m, drift_cm_per_m: x.drift_m_per_m * 100 }));
+  liveHtml += '<h4 style="margin:12px 0 4px">Straight runs</h4>' + (sr.length
+    ? '<table class="calruns"><tr><th>#</th><th class="r">Driven</th><th class="r">servo_center</th><th class="r">Drift</th></tr>' +
+      sr.map((x, i) => `<tr><td>${i + 1}</td><td class="r">${D.f(x.distance_m, 2)} m</td><td class="r">${x.servo_center != null ? x.servo_center : '—'}</td>` +
+        `<td class="r ${x.drift_cm_per_m <= lv.limits.straight_drift_cm_per_m ? 'ok-t' : 'bad-t'}">${D.f(x.drift_cm_per_m, 2)} cm/m</td></tr>`).join('') + '</table>'
+    : '<div class="muted">Not driven yet.</div>');
+  liveHtml += `<p class="muted" style="font-size:12px;margin:8px 0 0">Limits: radius ≤ ${D.f((lv.limits || {}).min_radius_m_max, 2)} m each side, drift ≤ ${D.f((lv.limits || {}).straight_drift_cm_per_m, 1)} cm/m. ` +
+    `Wheelbase ${D.f(lv.wheelbase_m, 3)} m (common.yaml) converts the radius to the steering limit.</p></div>`;
+
+  /* result */
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');
+  result += running ? Cal.alert('info', 'Calibration drive in progress', 'The result appears after the last straight run.') : calResult(st);
+  if (res.steering && !running) {
+    result += `<table class="metric"><tr><th>Value</th><th class="r">${st.unsaved ? 'to save' : 'saved'}</th></tr>` +
+      `<tr><td>servo_controller.servo_center</td><td class="r">${res.servo_center}</td></tr>` +
+      Object.keys(res.steering).map(k => `<tr><td>command_owner.steering.${Cal.esc(k)}</td><td class="r">${Cal.esc(String(res.steering[k]))}</td></tr>`).join('') +
+      `<tr><td>vehicle.min_turning_radius_m</td><td class="r">${res.min_turning_radius_m}</td></tr></table>` +
+      '<p class="muted" style="font-size:12px;margin:6px 0 0">servo_center is live now; the steering limits apply from the next launch of this session.</p>';
   }
   return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
 };

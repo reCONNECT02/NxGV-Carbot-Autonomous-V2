@@ -56,6 +56,7 @@ class StepImpl:
     """A step with a wizard page. Subclasses: SensorHealthStep (step 1),
     CameraIdentityStep (step 2), ..."""
     can_keep_previous = True     # False while a keep would need data files copied
+    ops_while_running = False    # True: page operations (STEP) also reach handle() while RUNNING (step 7 Go)
 
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -429,7 +430,7 @@ class Wizard:
         impl = self.impls.get(s.id)
         if impl is None:
             return result(False, f'Step {s.index} has no wizard page yet')
-        if self.running is s:
+        if self.running is s and not impl.ops_while_running:
             return result(False, 'Wait for the running measurement (or Cancel it) first')
         try:
             a = json.loads(arg or '{}')

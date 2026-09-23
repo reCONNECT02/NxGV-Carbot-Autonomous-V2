@@ -36,6 +36,7 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 32 | Run calibration step 6 on the car (IMU + wheel odometry page): 2 distance runs, 2 spins, 60 s drift, Save; check `<session>/params_overlay.yaml servo_controller` | 8 / on site | TODO | Car pushed by hand, motors off. Corrections are set live, so step 7 in the same launch uses them |
 | 33 | `calib_odometry` (terminal) drift hint says `ros2 topic pub --once /imu/calibrate std_msgs/String` for a hardware IMU calibration; servo_controller only accepts JSON `{"action": "zero"}` / `"set_scale"`, so that command does nothing | 8 | TODO | Wizard page gives a power-cycle-still fix instead. Also `topics.py IMU_CALIBRATE` comment says "String (empty)" |
 | 34 | `imu_yaw_scale` is not in `base_nodes.yaml` (servo_controller declares default 1.0) | 8 | TODO | Tunable should be in YAML. Adding the key = new key only (value 1.0); step 6 writes it into the session overlay anyway |
+| 35 | Run calibration step 7 on the car (servo + steering page): Run, Go x 4+, Save; check `<session>/params_overlay.yaml` servo_center, command_owner steering, min_turning_radius_m | 8 / on site | TODO | The car drives ITSELF (duty 0.16): clear 1.5 x 2.5 m floor, hand on STOP MOTORS. Needs step 6 saved in the same session first. Watch the servo at full lock (buzzing -> lower servo_range_* in Tuning) |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

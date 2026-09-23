@@ -10,8 +10,11 @@ makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be 
 Step 6 (IMU + wheel odometry) runs against MockCar: a car whose encoder really has
 1120 ticks/m (repo YAML 1050) and whose IMU reads 5 % short, so the first distance run
 and the first spin get corrected and the second ones verify. The "hand" pushes / turns
-it by itself while a test is in progress. --skip-to 6 records MOCK passes for steps
-1-5 in a new session so step 6 can be run straight away.
+it by itself while a test is in progress. Step 7 (servo + steering) drives the same car
+from the wizard's CALIBRATION_RAW requests (MockDrive): full-lock radii 0.42 / 0.44 m, and
+it drives straight at servo_center 93 (repo YAML 90), so the first straight run corrects.
+--skip-to N records MOCK passes for steps 1..N-1 in a new session so step N can be run
+straight away.
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -34,6 +37,7 @@ REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_gui'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_ops'))
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_control'))
 from carbot_gui import gui_core as G  # noqa: E402
 
 WEB = os.path.join(REPO, 'src', 'carbot_gui', 'web')
@@ -279,10 +283,11 @@ class Mock:
 
 
 class MockServo:
-    """servo_controller parameter services (step 6): immediate replies."""
+    """servo_controller (steps 6-7) / command_owner (step 7) parameter services: immediate replies."""
 
-    def __init__(self):
-        self.values = {'ticks_per_meter': 1050.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0}
+    def __init__(self, values=None):
+        self.values = values or {'ticks_per_meter': 1050.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0,
+                                 'servo_center': 90, 'servo_range_left': 50, 'servo_range_right': 70}
 
     def get(self, names, done):
         done({n: self.values.get(n) for n in names})
@@ -292,15 +297,38 @@ class MockServo:
         done(True)
 
 
-class MockCar:
-    """Pushed / turned by a mock hand while step 6 has a test in progress; publishes like
-    servo_controller (/odom integrated per increment, /imu/rpy = normalise(raw * scale))."""
-    TPM, IMU_GAIN, DRIFT_DEG_MIN = 1120.0, 0.95, 0.4
+class MockDrive:
+    """/carbot/calibration/request stream (step 7)."""
 
-    def __init__(self, rec, servo):
-        self.rec, self.servo = rec, servo
-        self.x, self.raw_yaw, self.t = 0.0, 37.0, time.monotonic()
+    def __init__(self):
+        self.cmd = None
+
+    def command(self, source, speed, steer, reason):
+        self.cmd = (source, speed, steer, reason)
+
+    def stop(self):
+        self.cmd = None
+
+
+class MockCar:
+    """Pushed / turned by a mock hand while step 6 has a test in progress, driven by the step 7
+    requests; publishes like servo_controller (/odom integrated per increment,
+    /imu/rpy = normalise(raw * scale))."""
+    TPM, IMU_GAIN, DRIFT_DEG_MIN = 1120.0, 0.95, 0.4
+    RL, RR, TRUE_CENTRE, MPS_PER_DUTY = 0.42, 0.44, 93, 1.25
+
+    def __init__(self, rec, servo, drive):
+        self.rec, self.servo, self.drive = rec, servo, drive
+        self.x, self.y, self.th, self.raw_yaw, self.t = 0.0, 0.0, 0.0, 37.0, time.monotonic()
         self.test, self.done_m, self.done_deg = None, 0.0, 0.0
+
+    def _curvature(self, z):
+        if z < 0:                         # steer_sign -1: negative angular.z = LEFT
+            return 1.0 / self.RL
+        if z > 0:
+            return -1.0 / self.RR
+        v = self.servo.values
+        return (self.TRUE_CENTRE - v['servo_center']) * (1.0 / self.RR) / v['servo_range_right']
 
     def update(self, step):
         from carbot_ops.step_imu_odometry import wrap_deg
@@ -319,10 +347,17 @@ class MockCar:
                     dd = min(45.0 * dt, 360.0 - self.done_deg)
             self.done_m += dm
             self.done_deg += dd
+            c = self.drive.cmd
+            if c is not None:                                   # step 7: the car drives itself
+                dm = c[1] * self.MPS_PER_DUTY * dt
+                dd = math.degrees(dm * self._curvature(c[2]))
             v = self.servo.values
-            self.x += (-1.0 if v['odom_reverse_polarity'] else 1.0) * dm * self.TPM / v['ticks_per_meter']
+            ds = (-1.0 if v['odom_reverse_polarity'] else 1.0) * dm * self.TPM / v['ticks_per_meter']
+            self.th += math.radians(dd)
+            self.x += ds * math.cos(self.th)
+            self.y += ds * math.sin(self.th)
             self.raw_yaw += self.IMU_GAIN * dd + self.DRIFT_DEG_MIN * dt / 60.0
-            self.rec.on_odom(self.t, self.x, 0.0, 0.0)
+            self.rec.on_odom(self.t, self.x, self.y, self.th)
             self.rec.on_imu(self.t, wrap_deg(wrap_deg(self.raw_yaw) * v['imu_yaw_scale']))
 
 
@@ -335,6 +370,7 @@ class MockWizard:
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
+        from carbot_ops.step_servo_steering import ServoSteeringStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
@@ -342,14 +378,17 @@ class MockWizard:
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
-        self.motion, self.servo = MotionRecorder(), MockServo()
-        self.car = MockCar(self.motion, self.servo)
+        step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        self.motion, self.servo, self.drive = MotionRecorder(), MockServo(), MockDrive()
+        owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0})
+        self.car = MockCar(self.motion, self.servo, self.drive)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
+        self.step7 = ServoSteeringStep(step7, self.motion, self.servo, owner, self.drive, 0.216)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
-                              'imu_odometry': self.step6})
+                              'imu_odometry': self.step6, 'servo_steering': self.step7})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
             for x in self.wiz.slots:
@@ -357,6 +396,8 @@ class MockWizard:
                     cs.update_step(sess, x.id, 'PASS', '', summary='MOCK pass (--skip-to)')
             self.wiz.refresh()
             self.wiz.current = skip_to
+            if skip_to > 6:        # as if step 6 had calibrated the mock car's encoder and IMU
+                self.servo.values.update(ticks_per_meter=MockCar.TPM, imu_yaw_scale=round(1 / MockCar.IMU_GAIN, 4))
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -475,6 +516,9 @@ def main():
                 return self._send(200, {'ok': True, 'message': 'Manual control ' + ('ON' if mock.manual else 'OFF')})
             if p == '/api/estop':
                 mock.estop = True
+                if mock.mode == 'calibrate':                 # as calibration_wizard._on_estop
+                    mock.wiz.drive.stop()
+                    mock.wiz.wiz.cancel_running('STOP MOTORS pressed')
                 return self._send(200, {'ok': True})
             if p == '/api/calibration/action':
                 if mock.mode != 'calibrate':

@@ -7,13 +7,15 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               result, instructions, sessions (for rollback), running task
   /carbot/calibration/action  CalibrationAction: SELECT | RUN | REDO | SAVE | KEEP_PREVIOUS |
                               CANCEL | ROLLBACK | RESTART_CAMERAS | STEP (page operation, JSON {"op"})
-  /odom, /imu/rpy (in)        fed to step 6 (IMU + wheel odometry); its corrections go to
+  /odom, /imu/rpy (in)        fed to steps 6-7 (MotionRecorder); corrections go to
                               servo_controller's parameter services (servo_link, non-blocking)
+  /carbot/calibration/request MotionRequest (out, step 7 only, while its drive segment runs):
+                              the car drives itself through the command owner (calibrate mode)
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
-step 6: step_imu_odometry).
+step 6: step_imu_odometry, step 7: step_servo_steering).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -47,6 +49,7 @@ from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
+from .step_servo_steering import ServoSteeringStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -54,7 +57,7 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             'data.uwb',
             # phase 8
             'resume_max_age_h', 'page_watch_s', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
-            'input_timeout_s', 'servo_param_timeout_s',
+            'input_timeout_s', 'servo_param_timeout_s', 'drive_request_hz', 'vehicle.wheelbase_m',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
@@ -76,6 +79,33 @@ class BrokenStep(StepImpl):
         return {'error': self.error}
 
 
+class DriveRequests:
+    """Step 7: repeats the current calibration MotionRequest at rate_hz; stop() ends the stream
+    at once (the command owner's watchdog then holds zero)."""
+
+    def __init__(self, node, rate_hz: float):
+        from carbot_interfaces.msg import MotionRequest
+        self.node, self.Msg, self.cmd = node, MotionRequest, None
+        self.pub = node.create_publisher(MotionRequest, T.CALIBRATION_REQUEST, 10)
+        node.create_timer(1.0 / max(rate_hz, 5.0), self._publish)
+
+    def command(self, source: str, speed: float, steer: float, reason: str) -> None:
+        self.cmd = (source, float(speed), float(steer), reason)
+        self._publish()
+
+    def stop(self) -> None:
+        self.cmd = None
+
+    def _publish(self) -> None:
+        c = self.cmd
+        if c is None:
+            return
+        r = self.Msg()
+        r.header.stamp = self.node.get_clock().now().to_msg()
+        r.source, r.speed_mps, r.steer_rad, r.reason = c
+        self.pub.publish(r)
+
+
 class CalibrationWizard(CarbotNode):
 
     def __init__(self):
@@ -83,6 +113,7 @@ class CalibrationWizard(CarbotNode):
         self.error = ''
         self.wiz = None
         self.restart = None
+        self.drive = None
         self.health = self.uwb_status = self.battery = None
         self.health_seq = 0
         self.tap = None
@@ -108,12 +139,16 @@ class CalibrationWizard(CarbotNode):
         cameras, uwb = load_data(self, 'cameras'), load_data(self, 'uwb')
         self.domain = int((uwb.get('agent') or {}).get('domain_id', 1))
         self.servo = ServoLink(self, timeout_s=float(self.p('servo_param_timeout_s')))
+        self.owner = ServoLink(self, 'command_owner', timeout_s=float(self.p('servo_param_timeout_s')))
+        self.drive = DriveRequests(self, float(self.p('drive_request_hz')))
         # one line per built step page (step id -> StepImpl); every other step is a placeholder
         factories = {
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
+            'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
+                                                          float(self.p('vehicle.wheelbase_m'))),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -139,7 +174,8 @@ class CalibrationWizard(CarbotNode):
         self.sub(UwbStatus, T.UWB_STATUS, lambda m: setattr(self, 'uwb_status', (time.monotonic(), m)), 5)
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
-        if isinstance(impls.get('imu_odometry'), ImuOdometryStep):
+        if isinstance(impls.get('imu_odometry'), ImuOdometryStep) or isinstance(impls.get('servo_steering'),
+                                                                                  ServoSteeringStep):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
@@ -179,6 +215,8 @@ class CalibrationWizard(CarbotNode):
         self.motion.on_imu(time.monotonic(), yaw)
 
     def _on_estop(self, m):
+        if m.data and self.drive is not None:
+            self.drive.stop()                         # before anything else
         if m.data and self.wiz is not None:
             r = self.wiz.cancel_running('STOP MOTORS pressed')
             if r:

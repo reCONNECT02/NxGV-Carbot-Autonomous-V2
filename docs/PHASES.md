@@ -512,7 +512,7 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
 ## Phase 8 — calibration wizard, page by page
 
 Built one wizard page per chat. Status: **steps 1 (sensor health), 2 (camera identity),
-3 (camera intrinsics) and 6 (IMU + wheel odometry) done**; step 5 is being built in a parallel
+3 (camera intrinsics), 6 (IMU + wheel odometry) and 7 (servo centre + steering) done**; step 5 is being built in a parallel
 session; the other steps are placeholder pages; race mode (preflight / READY / START) not started.
 
 ### Page 1 — sensor health check (done, untested on the car)
@@ -600,9 +600,30 @@ nothing on this page commands the motors.
 * `calibration_wizard`: subscribes `/odom`, `/imu/rpy` (only when step 6 is built); action `STEP`.
   `carbot_ops/package.xml`: + `nav_msgs`, `rcl_interfaces`.
 
-### For the next page (step 7, servo centre + steering)
-* The car drives ITSELF via `/carbot/calibration/request` (command owner, calibrate mode). Step 7 needs
-  step 6's IMU yaw: after a step-6 Save (or keep) the values are already live in servo_controller.
-* Reuse `servo_link.ServoLink` for `servo_center` (live set) and `MotionRecorder` for distance / yaw.
-* Merging with step 5: `calibration_wizard.py` `factories` / imports / `inputs()` and
-  `calibration_steps.yaml` will conflict textually (one line each); keep all entries.
+### Page 7 — servo centre + steering limits (done, untested on the car)
+The car DRIVES ITSELF (CALIBRATION_RAW through the command owner, calibrate mode only; the
+owner never accepts it while armed and the e-stop always wins).
+
+| Piece | Where | Notes |
+|---|---|---|
+| Step | `carbot_ops/step_servo_steering.py` | Same drives, `carbot_control.calib_core` analysis and outputs as `calib_steering`. **Run** starts the sequence; before EVERY segment it waits at **Go** (op `go`, action STEP while RUNNING): LEFT full-lock circle, RIGHT circle, straight runs (servo_center corrected live, the next run verifies; stops at pass, < 1 unit, or `max_runs`). Each segment: IMU settle, drive at `raw_duty` until `circle_yaw_deg` / `circle_max_distance_m` / `straight_run_m`, speed 0 for `stop_settle_s`, then the request stream stops. Aborts (FAIL, car stopped) on `timeout_s` or `/odom` older than `odom_timeout_s`. Both locks wrong -> steer_sign flipped. IMU measured at scale ±1 (BACKLOG #31), scale restored at the end / on cancel |
+| Drive stream | `calibration_wizard.DriveRequests` | Repeats the current MotionRequest on `/carbot/calibration/request` at `drive_request_hz` (20; owner expiry 200 ms). `/e_stop` stops the stream FIRST, then cancels the step. Owner values via a second `ServoLink(node, 'command_owner')` (`mode`, `steering.steer_sign`); Run refused unless mode == calibrate |
+| Save / keep | `save_data` / `keep_data` | overlay `servo_controller.servo_center`, `command_owner.steering.{steer_sign,left_max_rad,right_max_rad,trim_rad,angular_limit}`, `tunnel_bridge.command_owner_steering.*`, `'/**' vehicle.min_turning_radius_m` (exactly as the terminal tool). Save refused if the live servo_center differs from the verified one. Keep copies all of them and sets servo_center live. **Steering limits apply from the next launch of the session** (the owner reads them at start) |
+| Wizard (shared) | `wizard_core.py` | `StepImpl.ops_while_running` (default False): STEP ops reach `handle()` while RUNNING only for pages that opt in. Changed the one guard line of the shared STEP hunk (step 5's rebase will show it) |
+| GUI | `tabs_calib.js STEP_PAGES.servo_steering` | Controls: live values + mode check, Start / Redo, Go button naming the next segment and where to put the car, driving warning (Cancel / STOP MOTORS). Live: yaw or distance progress, circles and straight-run tables |
+| Mock + tests | `gui_mock_server.py --skip-to 7` (MockDrive; car radii 0.42 / 0.44 m, straight at servo_center 93; `--skip-to` > 6 presets step 6 values), `carbot_ops/test/test_step_servo_steering.py` (19) | Simulated car drives from the requests (bicycle model, `normalise(raw * scale)` IMU). Headless Chrome on the mock: Run, 4 x Go, PASS (90 -> 93), Save -> all overlays; STOP MOTORS mid-circle cancels; 0 JS errors |
+
+### Contract changes (page 7; additions only)
+* `calibration_steps.yaml` step 7: new `need`; `instructions` now a list (page stages); new `procedure`
+  keys `stop_settle_s`, `imu_settle_s`, `odom_timeout_s`. Id, index, `tool`, `writes`, `pass`, old keys unchanged.
+* `ops.yaml calibration_wizard.drive_request_hz`; REQUIRED + `drive_request_hz`, `vehicle.wheelbase_m` (common.yaml).
+* `calibration_wizard` publishes `/carbot/calibration/request` (step 7 only, while a segment drives).
+  `carbot_ops/package.xml`: + exec_depend `carbot_control` (calib_core). Test conftest adds `carbot_control`.
+
+### For the next page (step 8, speed PID)
+* Same drive stream (`DriveRequests`, CALIBRATION_RAW for the duty sweep, CALIBRATION for closed-loop steps)
+  and the Go-before-each-segment pattern (`ops_while_running`); `calib_core.fit_feedforward` / `step_metrics` /
+  `pid_verdict` / `retune` are ready. MotionRecorder has no speed yet: add `/odom` twist.linear.x to it.
+* Step 8 needs the step-7 steering in the owner: after a step-7 Save, relaunch the session
+  (`calibrate.launch.py session:=NAME`) or it drives with the old steering limits (straight runs only, so
+  minor; servo_center is already live).
