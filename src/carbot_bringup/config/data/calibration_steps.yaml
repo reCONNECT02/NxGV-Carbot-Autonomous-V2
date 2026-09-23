@@ -89,27 +89,35 @@ steps:
     pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}
   - {index: 4,  id: extrinsics_ipm,    title: 3-camera extrinsics + IPM,     required: true,  tab: perception,
      need: "Step 3 passed and saved. Put the car on the floor sheet with each printed board fully visible in its camera.",
-     instructions: ["Print the floor sheet at 100% and align the rear axle and car centre line with its marks.",
+     instructions: ["Print the floor sheet at 100% and align the rear axle and car centre line with its marks (the axle line is 150 mm further back relative to the boards than on the first sheet: axle_offset_m).",
                     "Check each enabled camera preview: its floor board must be flat, fully visible and still.",
                     "Press Run. The page captures a fresh picture from each enabled camera and solves the mounts.",
                     "Read any camera-specific error, adjust the board or camera, and press Redo. Save only after all checks pass."],
      procedure: {capture_timeout_s: 20.0},
      writes: [cameras.yaml mounts, cameras.yaml extrinsics_calibrated],
      tool: ros2 run carbot_perception calib_extrinsics,
-     # Floor chessboards (tools/calibration/make_boards.py -> A3 PDF, 6x4 inner
-     # corners, 50 mm squares, 350 x 250 mm). centre_m = centre of the printed board in base_link
-     # (rear-axle centre on the ground); yaw_deg = direction of the board's long
-     # side. Defaults are where the CAD mounts should see each board fully; if a
-     # board is cut off, move it and MEASURE the new centre.
+     # Floor chessboard (tools/calibration/make_boards.py -> A3 PDF, 6x4 inner
+     # corners, 50 mm squares, 350 x 250 mm). centre_m = centre of the printed board on the
+     # layout, measured from the layout's reference line (the rear-axle line when axle_offset_m is
+     # 0); yaw_deg = direction of the board's long side. Defaults are where the CAD mounts should
+     # see each board fully; if a board is cut off, move it and MEASURE the new centre.
+     # axle_offset_m (2026-09-24, BACKLOG #54): the car's REAR AXLE sits this far BEHIND the reference
+     # line (the front camera did not see its whole board), so in base_link (origin = rear-axle
+     # centre on the ground, +x forward) every board is axle_offset_m FURTHER FORWARD:
+     #   base_link x = centre_m[0] + axle_offset_m   (y and yaw unchanged; 0.0 = as first printed).
+     # carbot_common.calib_tools.floor_board_dicts applies it for the solver, the sheet and the
+     # picture. The sheet's boards stay where they are: only the axle line / car outline move.
      # Alternative: make_boards.py --sheet -> docs/calibration/floor_sheet.pdf,
-     # all boards on ONE large print at exactly these positions (no measuring).
-     # After editing centre_m / yaw_deg, regenerate and reprint the sheet.
+     # the board on ONE print at exactly this position, with the car outline, centre line and axle line.
+     # After editing centre_m / yaw_deg / axle_offset_m, regenerate and reprint the sheet.
      target: {type: floor_markers, layout: docs/images/calib_mat.png,
               warn_nominal_offset_m: 0.03, warn_nominal_angle_deg: 5.0,
+              axle_offset_m: 0.150,
               boards: [
-                {name: front, roles: [front],      inner_corners: [6, 4], square_m: 0.050, centre_m: [0.62, 0.0],   yaw_deg: 90.0},
-                {name: left,  roles: [left_rear],  inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, 0.47],  yaw_deg: 0.0},
-                {name: right, roles: [right_rear], inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, -0.47], yaw_deg: 0.0}]},
+                # 2026-09-24: front camera only (the side cameras are removed from the project), one board.
+                # Removed with the side cameras (put back together with their roles in cameras.yaml):
+                #   left  [left_rear]  centre_m [0.10,  0.47] yaw 0     right [right_rear] centre_m [0.10, -0.47] yaw 0
+                {name: front, roles: [front],      inner_corners: [6, 4], square_m: 0.050, centre_m: [0.62, 0.0],   yaw_deg: 90.0}]},
      pass: {max_ground_error_m: 0.02, max_seam_error_m: 0.03}}
   - index: 5
     id: lidar_camera

@@ -8,16 +8,18 @@ Needs step 3 (intrinsics) in the same session first.
 Floor set-up (calibration_steps.yaml step 4 target.boards, picture
 docs/images/calib_mat.png): tape a cross on the floor where the REAR-AXLE
 CENTRE goes and a straight line for the car's centre line. Lay each floor
-board flat at its centre_m position (centre of the printed board, measured
-from the cross along / across the line) with its long side along yaw_deg.
+board flat at its position in base_link = centre_m + target.axle_offset_m in x
+(carbot_common.calib_tools.floor_board_dicts; the rear axle sits axle_offset_m
+BEHIND the layout's reference line, 0.150 m since 2026-09-24), measured from the
+cross along / across the line, with its long side along yaw_deg.
 If a board is not fully visible in its camera, move it, MEASURE the new
 centre and edit centre_m - the measurement is what matters, not the default.
 
 Or use the single floor sheet (tools/calibration/make_boards.py --sheet ->
-docs/calibration/floor_sheet.pdf): all boards printed at their exact centre_m /
-yaw_deg, with the car's centre line and rear-axle line on the sheet. Tape it
-flat, put the car on the lines, check the scale bars - nothing to measure. The
-sheet must be regenerated whenever centre_m / yaw_deg change.
+docs/calibration/floor_sheet.pdf): the board printed at its exact position, with
+the car's centre line and rear-axle line on the sheet. Tape it flat, put the car
+on the lines, check the scale bars - nothing to measure. The sheet must be
+regenerated whenever centre_m / yaw_deg / axle_offset_m change.
 
 For every camera the tool averages the board corners over several frames,
 solves the camera pose, reports how well the pose maps the board back onto
@@ -34,6 +36,7 @@ import sys
 import cv2
 import numpy as np
 from carbot_common import calibration_store as cs
+from carbot_common.calib_tools import floor_board_dicts
 
 from .calib_core import FloorBoard, detect_chessboard, seam_error, solve_mount
 from .calib_io import (FrameGrabber, bringup_config_dir, common_args, draw_corners,
@@ -109,7 +112,7 @@ def main(argv=None):
     root = cs.data_root(a.data_root)
     cfg_dir = bringup_config_dir(a.config_dir)
     step = step_cfg(cfg_dir, STEP)
-    boards = [FloorBoard.from_yaml(b) for b in step['target']['boards']]
+    boards = [FloorBoard.from_yaml(b) for b in floor_board_dicts(step['target'])]      # base_link, axle_offset_m applied
     pas = step['pass']
     session = cs.open_session(root, a.session)
     cameras = effective_cameras(session, cfg_dir, root)
@@ -214,7 +217,7 @@ def main(argv=None):
     doc = {'status': 'PASS' if all_ok else 'FAIL', 'cameras': per_role,
            'seam_error_m': {k: round(v, 4) for k, v in seams.items()} or 'not measured (no board seen by two cameras)',
            'limits': {'max_ground_error_m': limit_g, 'max_seam_error_m': limit_s},
-           'boards': step['target']['boards'], 'problems': problems, 'ipm_check': ipm}
+           'boards': floor_board_dicts(step['target']), 'problems': problems, 'ipm_check': ipm}
     cs.write_yaml(os.path.join(session, RESULT), doc)
     cs.update_step(session, STEP, doc['status'], RESULT)
     if a.activate:

@@ -71,7 +71,8 @@ def main():
     session = os.path.join(root, 'calibration', a.session)
     steps = sb.load_yaml(os.path.join(sb.CONFIG, 'data', 'calibration_steps.yaml'))['steps']
     target = [s for s in steps if s['id'] == 'extrinsics_ipm'][0]['target']
-    boards = [FloorBoard.from_yaml(b) for b in target['boards']]
+    from carbot_common.calib_tools import floor_board_dicts
+    boards = [FloorBoard.from_yaml(b) for b in floor_board_dicts(target)]
     truth = {}
     if a.synth:
         rng = np.random.default_rng(a.seed)

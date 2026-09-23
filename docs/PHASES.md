@@ -102,13 +102,27 @@ never rename silently.
   `ipm_check.png`). Results go to the session layout of `calibration_store`.
 * **Boards**: `tools/calibration/make_boards.py` -> `docs/calibration/*.pdf`;
   layout picture `tools/calibration/draw_mat.py` -> `docs/images/calib_mat.png`.
-* **Floor sheet** (step-4 alternative to three A3 boards):
-  `make_boards.py --sheet` -> `docs/calibration/floor_sheet.pdf`, one large
-  print (1310 x 940 mm with the default YAML, fits a 1067 mm / 42 in roll) with
-  all boards at their exact `centre_m` / `yaw_deg` plus the centre line and
-  rear-axle line for placing the car. Tests: `python3 -m pytest -q tools/calibration`
-  (rasterises the layout and the PDF and re-detects every board against
-  `FloorBoard.ground_points`). No YAML keys or calibration code changed.
+* **Floor sheet** (step-4 alternative to printing the A3 board): `make_boards.py --sheet`
+  -> `docs/calibration/floor_sheet.pdf`, one print with the board at its exact position plus
+  the car outline, centre line and rear-axle line for placing the car. Tests:
+  `python3 -m pytest -q tools/calibration` (rasterises the layout and the PDF and re-detects
+  every board against `FloorBoard.ground_points`).
+* **Step 4 = front camera only, rear axle 150 mm further back (2026-09-24)**: the side cameras
+  are gone, so `calibration_steps.yaml` step 4 `target.boards` holds ONE board (`front`, yaw 90,
+  6x4 inner corners, 50 mm squares; the left/right entries are kept as a comment). New key
+  `target.axle_offset_m: 0.150`: the car's rear axle sits 150 mm BEHIND the layout's reference line
+  because at `centre_m` x 0.62 the front camera lost the near corners of the board (2 of 4 outer
+  corners outside the 320x240 picture). `centre_m` stays the board position on the layout;
+  `carbot_common.calib_tools.floor_board_dicts` turns it into base_link (x + `axle_offset_m`,
+  so the front board is at x 0.77) for the solver (`calib_extrinsics`), `make_boards.py` and
+  `draw_mat.py`. A missing key is an error. `axle_offset_m: 0.0` gives the layout as first printed.
+  The front-board-only sheet is 470 x 1037 mm (fits a 610 mm / 24 in roll, 470 mm across) and must
+  be reprinted: the board keeps its printed shape, only the axle line / car outline move relative
+  to it. Checked offline, not on the car: all 24 inner and 4 outer corners project inside the front
+  camera picture (u 55..280, v 146..168 of 320x240, hfov 60 deg, mount z 0.0935 m, pitch 2.5 deg).
+  Watch on the car: at 320x240 the board's rows are only 3.6-8.9 px apart (foreshortened, the camera
+  is 9 cm high): if detection fails, capture step 4 at 640x480 (`cameras.yaml sensors.astra`
+  width/height/fps feed `astra_rgb.launch.py`).
 
 ### Phase 2 contract changes
 * `LocalGrid.msg`: + `float32[] travel_since_m` (additive).

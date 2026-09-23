@@ -18,10 +18,13 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, os.path.join(REPO, 'src', 'carbot_perception'), os.path.join(REPO, 'src', 'carbot_common')]
 
 import make_boards as mb  # noqa: E402
+import yaml  # noqa: E402
+from carbot_common.calib_tools import floor_board_dicts  # noqa: E402
 from carbot_perception.calib_core import FloorBoard, detect_chessboard  # noqa: E402
 
 STEPS, VEHICLE = mb.load_yaml()
-BOARDS = STEPS['extrinsics_ipm']['target']['boards']
+TARGET = STEPS['extrinsics_ipm']['target']
+BOARDS = floor_board_dicts(TARGET)      # base_link: centre_m + axle_offset_m in x
 
 
 def _check_image(img, lay, ppm):
@@ -60,6 +63,44 @@ def test_layout_matches_floorboard_geometry():
     assert _check_image(img, lay, ppm) < 0.001
 
 
+def test_axle_offset_moves_the_boards_forward_of_the_axle_line():
+    off = float(TARGET['axle_offset_m'])
+    assert off == 0.150                                       # 2026-09-24: rear axle 150 mm further back
+    for raw, eff in zip(TARGET['boards'], BOARDS):
+        assert eff['centre_m'][0] == pytest.approx(raw['centre_m'][0] + off)
+        assert eff['centre_m'][1] == raw['centre_m'][1] and eff['yaw_deg'] == raw['yaw_deg']
+    front = next(b for b in BOARDS if b['name'] == 'front')
+    lay = mb.sheet_layout(BOARDS, VEHICLE)
+    fb = next(b for b in lay['boards'] if b['name'] == 'front')
+    near_edge = min(p[0] for p in fb['outline'])              # nearest board edge to the rear axle line (x = 0)
+    half_x = (front['inner_corners'][1] + 1) * front['square_m'] / 2    # yaw 90: the rows axis runs along x
+    assert near_edge == pytest.approx(0.62 + off - half_x)
+
+
+def test_axle_offset_zero_gives_the_layout_as_first_printed():
+    t0 = copy.deepcopy(TARGET)
+    t0['axle_offset_m'] = 0.0
+    assert [b['centre_m'] for b in floor_board_dicts(t0)] == [b['centre_m'] for b in TARGET['boards']]
+
+
+def test_front_board_is_fully_inside_the_front_camera_view():
+    """The reason for the 150 mm axle move: at 0.62 the near corners were outside the picture."""
+    from carbot_perception.camera_model import Intrinsics, Mount, project_ground
+    root = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
+    cams = yaml.safe_load(open(os.path.join(root, 'cameras.yaml'), encoding='utf-8'))
+    mount = Mount.from_yaml(cams['mounts']['front'])
+    astra = cams['sensors'][cams['roles']['front']]
+    w, h = int(astra['width']), int(astra['height'])
+    intr = Intrinsics.ideal(w, h, float(cams['mounts']['front']['hfov_deg']))
+    fb = next(b for b in mb.sheet_layout(BOARDS, VEHICLE)['boards'] if b['name'] == 'front')
+    pts = np.array([[x, y, 0.0] for x, y in fb['outline']])
+    uv, ok, _ = project_ground(intr, mount, pts)
+    margin = 10                                                 # px
+    assert ok.all()
+    assert (uv[:, 0] >= margin).all() and (uv[:, 0] <= w - 1 - margin).all()
+    assert (uv[:, 1] >= margin).all() and (uv[:, 1] <= h - 1 - margin).all()
+
+
 def test_alignment_lines_present_and_clear_of_boards():
     lay = mb.sheet_layout(BOARDS, VEHICLE)
     assert len(lay['lines']['centre']) == 2 and len(lay['lines']['axle']) == 2
@@ -71,7 +112,9 @@ def test_alignment_lines_present_and_clear_of_boards():
 
 def test_overlapping_boards_are_rejected():
     boards = copy.deepcopy(BOARDS)
-    boards[1]['centre_m'] = [boards[0]['centre_m'][0] - 0.05, 0.05]     # left board onto the front one
+    second = copy.deepcopy(boards[0])                                   # a second board (the sheet supports several)
+    second.update(name='second', roles=['left_rear'], centre_m=[boards[0]['centre_m'][0] - 0.05, 0.05])
+    boards.append(second)                                               # ... placed onto the front one
     assert any('overlap' in p for p in mb.sheet_layout(boards, VEHICLE)['problems'])
     boards = copy.deepcopy(BOARDS)
     boards[0]['centre_m'] = [0.15, 0.0]                                   # front board under the car
@@ -80,6 +123,7 @@ def test_overlapping_boards_are_rejected():
 
 def test_roll_fit():
     assert mb.roll_fit(1310, 940) == 1067
+    assert mb.roll_fit(470, 1037) == 610                      # the front-board-only sheet: a 24 in roll
     assert mb.roll_fit(1310, 880) == 914
     assert mb.roll_fit(1300, 1200) is None
 

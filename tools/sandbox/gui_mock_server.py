@@ -624,8 +624,9 @@ class MockWizard:
         from run_calib_extrinsics import FloorWorld
         import sandbox_common as sb
 
-        boards = [FloorBoard.from_yaml(b) for b in next(
-            s for s in self.steps['steps'] if s['id'] == 'extrinsics_ipm')['target']['boards']]
+        from carbot_common.calib_tools import floor_board_dicts
+        boards = [FloorBoard.from_yaml(b) for b in floor_board_dicts(next(
+            s for s in self.steps['steps'] if s['id'] == 'extrinsics_ipm')['target'])]
         world = FloorWorld(boards)
         for role, sensor in self.cams['roles'].items():
             if not self.cams['sensors'][sensor].get('enabled', True):

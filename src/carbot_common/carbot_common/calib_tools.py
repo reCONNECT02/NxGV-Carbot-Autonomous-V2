@@ -65,6 +65,30 @@ def step_cfg(config_dir: str, step_id: str) -> Dict:
     raise KeyError(f'calibration step {step_id} not in calibration_steps.yaml')
 
 
+def floor_board_dicts(target: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Step-4 `target` -> board dicts with `centre_m` in base_link (what FloorBoard, the solver,
+    the sheet generator and the layout picture all use).
+
+    In calibration_steps.yaml `boards[].centre_m` is the board centre on the printed layout,
+    measured from the layout's reference line (the rear-axle line when axle_offset_m is 0).
+    The car's rear axle is placed `axle_offset_m` BEHIND that line (2026-09-24: 0.150, so the
+    front camera sees its whole board), which puts every board `axle_offset_m` further FORWARD of
+    the axle: base_link x = centre_m x + axle_offset_m. y and yaw do not change. `axle_offset_m` is
+    required (a missing key is an error). The result also carries `sheet_centre_m` (the YAML value)."""
+    if 'axle_offset_m' not in target:
+        raise KeyError('calibration_steps.yaml extrinsics_ipm.target.axle_offset_m is missing '
+                       '(metres the rear axle sits behind the sheet reference line; 0.0 = as printed)')
+    off = float(target['axle_offset_m'])
+    out = []
+    for b in target['boards']:
+        d = copy.deepcopy(b)
+        cx, cy = (float(v) for v in b['centre_m'])
+        d['sheet_centre_m'] = [cx, cy]
+        d['centre_m'] = [round(cx + off, 6), cy]
+        out.append(d)
+    return out
+
+
 def effective_data(session: str, config_dir: str, root: str, fname: str) -> Dict:
     """This session's copy of a data file, else the ACTIVE session's, else the repo default."""
     own = os.path.join(session, 'data', fname)

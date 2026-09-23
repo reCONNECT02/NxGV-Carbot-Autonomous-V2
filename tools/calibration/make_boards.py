@@ -5,8 +5,8 @@
     python3 tools/calibration/make_boards.py --sheet    -> docs/calibration/floor_sheet.pdf
 
 intrinsics_board_A4.pdf  step 3: 9 x 6 inner corners, 25 mm squares (hand-held)
-floor_board_A3.pdf       step 4: 6 x 4 inner corners, 50 mm squares (print 3)
-floor_sheet.pdf          step 4 ALTERNATIVE: all floor boards on ONE large
+floor_board_A3.pdf       step 4: 6 x 4 inner corners, 50 mm squares (print 1: front camera only)
+floor_sheet.pdf          step 4 ALTERNATIVE: the floor board(s) on ONE large
                          sheet at their exact calibration_steps.yaml positions,
                          plus the car's centre line and rear-axle line to line
                          the car up with. Nothing to measure except that the
@@ -14,8 +14,10 @@ floor_sheet.pdf          step 4 ALTERNATIVE: all floor boards on ONE large
                          the script prints the sheet size and which roll fits.
 
 Sizes AND the sheet's board positions come from calibration_steps.yaml, so the
-PDFs always match the tools. If you change a board's centre_m / yaw_deg,
-regenerate and reprint the sheet.
+PDFs always match the tools. The boards are drawn in base_link: centre_m plus
+target.axle_offset_m in x (the rear axle sits that far behind the layout's
+reference line, see carbot_common.calib_tools.floor_board_dicts). If you change a
+board's centre_m / yaw_deg / axle_offset_m, regenerate and reprint the sheet.
 
 PRINT AT 100 % / "Actual size" (never "fit to page"), then measure the scale
 bars. If a bar is not its printed length, the print is scaled: for the A4/A3
@@ -33,6 +35,8 @@ import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CFG = os.path.join(REPO, 'src', 'carbot_bringup', 'config')
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
+from carbot_common.calib_tools import floor_board_dicts  # noqa: E402
 STEPS = os.path.join(CFG, 'data', 'calibration_steps.yaml')
 COMMON = os.path.join(CFG, 'params', 'common.yaml')
 MM = 72.0 / 25.4                        # PDF points per millimetre
@@ -298,8 +302,15 @@ def draw_sheet(path, lay):
             else:
                 c.line(px - t, py, px + t, py)
         c.setFont('Helvetica', 8)
-        c.drawString(*label_at, f'{n_dm * 100} mm scale bar - measure it; if it is not exactly '
-                     f'{n_dm * 100} mm the print is scaled: reprint at 100 %')
+        text = f'{n_dm * 100} mm scale bar - measure it; if it is not exactly {n_dm * 100} mm the print is scaled: reprint at 100 %'
+        if p_start[1] == p_end[1]:
+            c.drawString(*label_at, text)
+        else:                          # the along-the-car bar: text runs up the left margin, clear of the boards
+            c.saveState()
+            c.translate(*label_at)
+            c.rotate(90)
+            c.drawString(0, 0, text)
+            c.restoreState()
 
     n_across = min(10, int(((y1 - y0) - 2 * m) * 10))
     n_along = min(10, int(((x1 - x0) - 2 * m) * 10))
@@ -308,7 +319,7 @@ def draw_sheet(path, lay):
     bar((xs, ytop), (xs + n_across * 100 * MM, ytop), n_across, (xs, ytop + 4 * MM))
     xl = m * 1000 * MM * 0.35
     y_s = m * 1000 * MM
-    bar((xl, y_s), (xl, y_s + n_along * 100 * MM), n_along, (xl + 5 * MM, y_s + n_along * 100 * MM - 3 * MM))
+    bar((xl, y_s), (xl, y_s + n_along * 100 * MM), n_along, (xl + 8 * MM, y_s + 4 * MM))
 
     # title + board list + instructions in the bottom margin
     lines = ['RISA Bot - calibration step 4 floor sheet (generated from calibration_steps.yaml). '
@@ -318,7 +329,10 @@ def draw_sheet(path, lay):
     lines.append('Boards (base_link, m): ' + '   '.join(
         f'{b["name"]}: centre ({b["centre_m"][0]:.3f}, {b["centre_m"][1]:.3f}) yaw {b["yaw_deg"]:.0f} deg, '
         f'{b["cols"]}x{b["rows"]} inner, {b["square_m"] * 1000:.0f} mm' for b in lay['boards']))
-    lines.append('If you edit centre_m / yaw_deg in calibration_steps.yaml, regenerate '
+    off = lay['axle_offset_m']
+    lines.append(f'Rear axle placed {off * 1000:.0f} mm further BACK relative to the boards than on the first sheet '
+                 f'(axle_offset_m {off:g}): the boards above are drawn in base_link, i.e. centre_m + {off:g} m in x.')
+    lines.append('If you edit centre_m / yaw_deg / axle_offset_m in calibration_steps.yaml, regenerate '
                  '(make_boards.py --sheet) and reprint - the sheet and the YAML must match.')
     c.setFont('Helvetica', 8)
     c.setFillGray(0.0)
@@ -353,10 +367,12 @@ def main(argv=None):
               t3['square_m'] * 1000, 'Step 3 intrinsics board', False)
         fb = steps['extrinsics_ipm']['target']['boards'][0]
         board(os.path.join(a.out, 'floor_board_A3.pdf'), A3, *fb['inner_corners'],
-              fb['square_m'] * 1000, 'Step 4 floor board (print 3)', True)
+              fb['square_m'] * 1000, 'Step 4 floor board (print 1)', True)
         return 0
 
-    lay = sheet_layout(steps['extrinsics_ipm']['target']['boards'], vehicle, a.margin, a.quiet)
+    target = steps['extrinsics_ipm']['target']
+    lay = sheet_layout(floor_board_dicts(target), vehicle, a.margin, a.quiet)      # base_link, axle_offset_m applied
+    lay['axle_offset_m'] = float(target['axle_offset_m'])
     if lay['problems']:
         for p in lay['problems']:
             print('ERROR:', p)
