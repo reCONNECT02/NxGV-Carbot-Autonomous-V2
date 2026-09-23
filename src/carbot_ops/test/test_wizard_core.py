@@ -52,7 +52,8 @@ def test_thirteen_steps_placeholders_and_optional(tmp_path):
     w, _ = make(tmp_path)
     st = w.state()
     assert len(st['steps']) == 13 and st['session'] == ''
-    assert [s['status'] for s in st['steps']][-2:] == ['SKIPPED_OPTIONAL', 'SKIPPED_OPTIONAL']
+    # step 12 mission_planner is required since its page exists (BACKLOG #20); 13 practice stays optional
+    assert [s['status'] for s in st['steps']][-2:] == ['PENDING', 'SKIPPED_OPTIONAL']
     r = w.action('camera_identity', 'RUN', '', {})
     assert not r['ok'] and 'no wizard page yet' in r['message']
 
