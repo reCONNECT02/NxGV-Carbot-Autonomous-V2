@@ -15,7 +15,8 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
-step 6: step_imu_odometry, step 7: step_servo_steering).
+step 6: step_imu_odometry, step 7: step_servo_steering,
+step 13: step_practice_runs).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -36,6 +37,7 @@ from carbot_common.data import load_data
 from carbot_common.node import CarbotNode
 from carbot_common.qos import LATCHED
 from carbot_interfaces.msg import CalibrationState, CalibrationStepState, NodeStatus, SystemHealth, UwbStatus
+from carbot_interfaces.msg import MissionEvent, MissionState  # step 13 (practice runs)
 from carbot_interfaces.srv import CalibrationAction
 from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
@@ -50,6 +52,7 @@ from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
 from .step_servo_steering import ServoSteeringStep
+from .step_practice_runs import PracticeRunsStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -58,6 +61,7 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             # phase 8
             'resume_max_age_h', 'page_watch_s', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
             'input_timeout_s', 'servo_param_timeout_s', 'drive_request_hz', 'vehicle.wheelbase_m',
+            'data.challenges',                 # step 13 (practice runs)
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
@@ -118,6 +122,10 @@ class CalibrationWizard(CarbotNode):
         self.health_seq = 0
         self.tap = None
         self.motion = MotionRecorder()                # step 6, fed from /odom and /imu/rpy
+        # step 13 (practice runs): what mission_logic publishes; the wizard never commands motion
+        self.mission = self.armed = self.manual = None
+        self.mission_events = []
+        self.mission_seq = 0
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -149,6 +157,7 @@ class CalibrationWizard(CarbotNode):
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
+            'practice_runs': lambda s: PracticeRunsStep(s, load_data(self, 'challenges')),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -178,6 +187,12 @@ class CalibrationWizard(CarbotNode):
                                                                                   ServoSteeringStep):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
+        # step 13 (practice runs): read-only mission observation
+        self.sub(MissionState, T.MISSION_STATE, lambda m: setattr(self, 'mission', (time.monotonic(), m)), LATCHED)
+        # sparse topics: plain subscriptions (not tracked as stale inputs)
+        self.create_subscription(MissionEvent, T.MISSION_EVENTS, self._on_mission_event, 50)
+        self.create_subscription(Bool, T.RACE_ARMED, lambda m: setattr(self, 'armed', bool(m.data)), LATCHED)
+        self.create_subscription(Bool, T.MANUAL_TAKEOVER, lambda m: setattr(self, 'manual', bool(m.data)), LATCHED)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
         self.create_timer(1.0 / max(float(self.p('live_rate_hz')), 0.2), self._publish_live)
         self.create_timer(1.0 / max(float(self.p('state_rate_hz')), 0.2), self._publish_state)
@@ -214,6 +229,12 @@ class CalibrationWizard(CarbotNode):
             return
         self.motion.on_imu(time.monotonic(), yaw)
 
+    def _on_mission_event(self, m):
+        self.mission_seq += 1
+        self.mission_events.append({'seq': self.mission_seq, 'name': m.name, 'detail': m.detail,
+                                    'challenge_id': int(m.challenge_id)})
+        del self.mission_events[:-100]
+
     def _on_estop(self, m):
         if m.data and self.drive is not None:
             self.drive.stop()                         # before anything else
@@ -245,7 +266,15 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
+        mission = None
+        if self.mission is not None:
+            t0, ms = self.mission
+            mission = {'mode': ms.mode, 'challenge_id': int(ms.challenge_id), 'challenge_name': ms.challenge_name,
+                       'hold_reason': ms.hold_reason, 'banner': ms.banner, 'age_s': round(now - t0, 1)}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None,
+                # step 13 (practice runs)
+                'mission': mission, 'mission_events': list(self.mission_events), 'armed': self.armed,
+                'manual': self.manual}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):

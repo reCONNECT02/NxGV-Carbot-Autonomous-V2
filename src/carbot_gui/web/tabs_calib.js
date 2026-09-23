@@ -3,7 +3,7 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7), practice_runs (step 13). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -631,6 +631,86 @@ STEP_PAGES.servo_steering = st => {
       '<p class="muted" style="font-size:12px;margin:6px 0 0">servo_center is live now; the steering limits apply from the next launch of this session.</p>';
   }
   return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
+};
+
+/* ---- step 13: per-challenge practice runs (optional). The page never drives: it records attempts
+ *      from /carbot/mission/state + events; the user grades them. RUN argument JSON {op: start|grade|done}. */
+STEP_PAGES.practice_runs = st => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 13 cannot run', lv.error, 'Fix calibration_steps.yaml / challenges.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, null) };
+  const running = st.status === 'RUNNING';
+  const cur = lv.current;
+  const rows = lv.challenges || [];
+  const atts = lv.attempts || [];
+  const levels = lv.levels || [];
+  const blocked = !!st.blocked_by;
+  const ins = Cal.list(st.meta.instructions);
+  const act = (st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status ? 'REDO' : 'RUN';
+  const arg = o => Cal.esc(JSON.stringify(o));
+  const t = v => v == null ? '—' : D.f(v, 1) + ' s';
+  const LV = { EXCELLENT: 'ok-t', COMPLETED: 'ok-t', PARTIAL: 'warn-t', FAIL: 'bad-t' };
+  const lvl = v => v ? `<span class="${LV[v] || ''}">${Cal.esc(v.toLowerCase())}</span>` : '<span class="muted">not graded</span>';
+
+  let stage = 0;
+  if (st.saved_status === 'PASS' && !st.unsaved) stage = ins.length;
+  else if (st.status === 'PASS') stage = ins.length - 1;
+  else if (running) stage = 2;
+  else if ((lv.ungraded || []).length) stage = 3;
+  else if (lv.n_attempts) stage = ins.length - 1;
+  const todo = Cal.todo(ins.map((x, i) => [x, i < stage ? 'done' : i === stage ? 'now' : 'todo', false]));
+
+  /* controls: current attempt (Stop) or one Start button per challenge, then Practice done */
+  let ctl = '';
+  if (running && cur) {
+    ctl = `<div class="alert info"><b class="t">Recording attempt ${cur.n}: ${cur.challenge} · ${Cal.esc(cur.name)}</b>` +
+      `${D.f(cur.elapsed_s, 0)} s${cur.entered_s != null ? ` · in the challenge since ${D.f(cur.entered_s, 0)} s` : ' · mission has not entered it yet'}` +
+      `${cur.left_s != null ? ` · left at ${D.f(cur.left_s, 0)} s` : ''}</div>` +
+      `<button class="btn" data-act="CANCEL">Stop attempt<small>Ends and keeps the attempt (outcome: stopped). STOP MOTORS also ends it.</small></button>`;
+  } else if (running) {
+    ctl = '<div class="muted">Working…</div>';
+  } else {
+    ctl = `<table class="calcheck"><tr><th>#</th><th>Challenge</th><th class="r"></th></tr>` + rows.map(r =>
+      `<tr><td>${r.id}</td><td>${Cal.esc(r.name)}${r.mandatory ? '' : ' <span class="muted">(bonus)</span>'}</td>` +
+      `<td class="r"><button class="btn ${r.attempts ? '' : 'primary'}" data-act="${act}" data-arg="${arg({ op: 'start', challenge: r.id })}" ${blocked ? 'disabled' : ''}>Start attempt</button></td></tr>`).join('') + '</table>' +
+      `<button class="btn good" style="margin-top:10px" data-act="${act}" data-arg="${arg({ op: 'done' })}" ${lv.n_attempts && !blocked ? '' : 'disabled'}>Practice done` +
+      `<small>${lv.n_attempts ? `${lv.n_attempts} attempt(s) recorded; failed ones are kept` : 'Record at least one attempt first'}</small></button>`;
+  }
+
+  /* live: warnings, mission line, per-challenge table, current attempt timeline */
+  let liveHtml = (lv.warnings || []).map(w => Cal.alert('info', 'Note', w)).join('');
+  const m = lv.mission;
+  liveHtml += `<div class="panel"><h3>Mission <small>${m ? `state ${D.f(m.age_s, 1)} s old` : 'no /carbot/mission/state'}</small></h3>` +
+    (m ? `<div class="kv"><span>Mode</span><b>${Cal.esc(m.mode || '—')}</b><span>Challenge</span><b>${m.challenge_id ? `${m.challenge_id} ${Cal.esc(m.challenge_name)}` : 'between challenges'}</b>` +
+      `<span>Hold</span><b>${Cal.esc(m.hold_reason || '—')}</b><span>Armed</span><b>${lv.armed === true ? 'yes' : lv.armed === false ? 'no' : 'unknown'}</b>` +
+      `<span>Manual control</span><b class="${lv.manual ? 'bad-t' : ''}">${lv.manual ? 'ON' : 'off'}</b></div>` : '<div class="muted">mission_logic is not publishing.</div>') + '</div>';
+  const practised = rows.filter(r => r.attempts);
+  liveHtml += `<div class="panel"><h3>Practice so far <small>${lv.n_attempts || 0} attempts</small></h3>` +
+    (practised.length ? `<table class="calcheck"><tr><th>Challenge</th><th class="r">Attempts</th><th>Last result</th><th class="r">Last time</th><th class="r">Best time</th><th class="r">Best marks</th></tr>` +
+      practised.map(r => `<tr${r.last_level === 'FAIL' ? ' class="badrow"' : ''}><td><b>${r.id}</b> ${Cal.esc(r.name)}</td><td class="r">${r.attempts}${r.failed ? ` <span class="muted">(${r.failed} failed)</span>` : ''}</td>` +
+        `<td>${lvl(r.last_level)}</td><td class="r">${t(r.last_time_s)}</td><td class="r">${t(r.best_time_s)}</td><td class="r">${r.best_marks == null ? '—' : `${r.best_marks} / ${r.max_marks}`}</td></tr>`).join('') + '</table>'
+      : '<div class="empty">No attempt yet. Press Start attempt next to a challenge.</div>') + '</div>';
+  if (cur) {
+    const tl = (cur.transitions || []).map(x => `<tr><td class="r">${D.f(x.t_s, 1)} s</td><td>mode ${Cal.esc(x.mode)}${x.challenge_id ? ` · challenge ${x.challenge_id}` : ''}${x.hold_reason ? ` · ${Cal.esc(x.hold_reason)}` : ''}</td></tr>`)
+      .concat((cur.events || []).map(e => `<tr><td class="r">${D.f(e.t_s, 1)} s</td><td><b>${Cal.esc(e.name)}</b> ${Cal.esc(e.detail)}</td></tr>`));
+    liveHtml += `<div class="panel"><h3>This attempt</h3>${tl.length ? `<table class="metric">${tl.join('')}</table>` : '<div class="muted">No mission change yet.</div>'}</div>`;
+  }
+
+  /* result: recent attempts with grade buttons */
+  let result = st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '';
+  if (st.status === 'PASS') result += Cal.alert('ok', st.unsaved ? 'Practice done: press Save' : 'Practice saved', (st.result || {}).summary || '');
+  else if (st.status === 'KEPT_PREVIOUS') result += Cal.alert('info', 'Using the previous practice record', `Kept from ${st.from_session || st.previous}.`);
+  result += atts.length ? `<table class="metric"><tr><th>#</th><th>Challenge</th><th>Ended</th><th class="r">Time</th><th>Grade</th></tr>` + atts.map(a =>
+    `<tr><td>${a.n}</td><td>${a.challenge} ${Cal.esc(a.name)}</td><td class="muted">${Cal.esc(a.outcome_text)}</td>` +
+    `<td class="r">${t(a.challenge_time_s != null ? a.challenge_time_s : a.duration_s)}</td><td>${lvl(a.level)}${a.marks != null ? ` · ${a.marks} marks` : ''}` +
+    (running ? '' : `<div style="margin-top:4px">${levels.map(L => `<button class="btn" style="padding:2px 8px;font-size:11.5px" data-act="${act}" data-arg="${arg({ op: 'grade', attempt: a.n, level: L })}">${Cal.esc(L.toLowerCase())}</button>`).join(' ')}</div>`) +
+    '</td></tr>').join('') + '</table>' : '<div class="muted">Attempts appear here; grade each one.</div>';
+  result += `<p class="muted" style="font-size:12px;margin:8px 0 0">The scoreboard node is not running, so grades are yours; only a manual intervention is graded FAIL automatically (rulebook: 0 marks).</p>`;
+
+  const save = `<button class="btn good" data-act="SAVE" ${st.status === 'PASS' && st.unsaved ? '' : 'disabled'}>Save</button>`;
+  const keep = st.can_keep && !running ? `<button class="btn" data-act="KEEP_PREVIOUS">Keep previous practice<small>${Cal.esc(st.previous)}</small></button>` : '';
+  const actions = save + keep + '<span class="hint">Optional step: it never blocks race mode. Save writes practice/&lt;challenge&gt;.yaml + practice/summary.yaml into the session.</span>';
+  return { todo, ctl, live: liveHtml, result, actions };
 };
 
 /* ---- a built step without a custom page (fallback) */

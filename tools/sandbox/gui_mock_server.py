@@ -15,6 +15,8 @@ from the wizard's CALIBRATION_RAW requests (MockDrive): full-lock radii 0.42 / 0
 it drives straight at servo_center 93 (repo YAML 90), so the first straight run corrects.
 --skip-to N records MOCK passes for steps 1..N-1 in a new session so step N can be run
 straight away.
+Step 13 (practice runs) sees a synthetic mission: it enters the chosen challenge 3 s after
+Start attempt and leaves it 6 s later (--skip-to 13 unlocks the page at once).
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -362,7 +364,8 @@ class MockCar:
 
 
 class MockWizard:
-    """Real wizard_core + steps 1, 2, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
+    """Real wizard_core + steps 1, 2, 6, 7 and 13 against synthetic SystemHealth/UwbStatus/mission
+    snapshots and MockCar."""
 
     def __init__(self, sensors, root, skip_to=0):
         import yaml
@@ -371,6 +374,7 @@ class MockWizard:
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
         from carbot_ops.step_servo_steering import ServoSteeringStep
+        from carbot_ops.step_practice_runs import PracticeRunsStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
@@ -379,16 +383,20 @@ class MockWizard:
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
         step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        step13 = next(x for x in self.steps['steps'] if x['id'] == 'practice_runs')
         self.motion, self.servo, self.drive = MotionRecorder(), MockServo(), MockDrive()
         owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0})
         self.car = MockCar(self.motion, self.servo, self.drive)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
         self.step7 = ServoSteeringStep(step7, self.motion, self.servo, owner, self.drive, 0.216)
+        self.practice = PracticeRunsStep(step13, ld('challenges.yaml'))
+        self.mission_events, self.mission_seq, self.mission_mark = [], 0, None
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
-                              'imu_odometry': self.step6, 'servo_steering': self.step7})
+                              'imu_odometry': self.step6, 'servo_steering': self.step7,
+                              'practice_runs': self.practice})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
             for x in self.wiz.slots:
@@ -421,7 +429,26 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return dict({'snap': snap, 'health_seq': self.seq}, **self.mission())
+
+    def mission(self):
+        """Synthetic mission for step 13: enter the attempted challenge after 3 s, leave 6 s later."""
+        cur, now = self.practice.cur, time.time()
+        st = {'mode': 'ROAD', 'challenge_id': 0, 'challenge_name': '', 'hold_reason': '', 'banner': '', 'age_s': 0.1}
+        if cur is None:
+            self.mission_mark = None
+        else:
+            if self.mission_mark is None or self.mission_mark[0] != cur['n']:
+                self.mission_mark = (cur['n'], now)
+            dt = now - self.mission_mark[1]
+            if 3.0 <= dt < 9.0:
+                st.update(challenge_id=cur['challenge'], challenge_name=cur['name'])
+                if self.mission_seq == 0 or self.mission_events[-1]['n'] != cur['n']:
+                    self.mission_seq += 1
+                    self.mission_events.append({'seq': self.mission_seq, 'n': cur['n'], 'name': 'CHALLENGE',
+                                                'detail': f'Entered challenge {cur["challenge"]}: {cur["name"]}',
+                                                'challenge_id': cur['challenge']})
+        return {'mission': st, 'mission_events': self.mission_events[-50:], 'armed': True, 'manual': False}
 
     def tick(self):
         self.car.update(self.step6)

@@ -241,6 +241,32 @@ steps:
       - Place P0 (start), P1, P2 (parking) and P3 (finish); every car pose must be fully on the road.
       - Check all routes and their roundabout exits, then save the mission.
     pass: {}
-  - {index: 13, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
-     writes: [practice/<challenge>.yaml],
-     pass: {}}
+  # Step 13 (phase 8 page 13, optional). The page NEVER commands motion: the car drives through
+  # the normal stack. One Run = one attempt at one challenge (RUN argument JSON
+  # {"op": "start", "challenge": N}); it watches /carbot/mission/state + /carbot/mission/events
+  # (+ /carbot/manual/takeover, /carbot/race/armed) and ends on its own when the mission leaves
+  # the challenge, completes, or a manual intervention is seen, else on Stop / STOP MOTORS or
+  # procedure.max_attempt_s. The user grades each attempt ({"op": "grade", ...}); the scoreboard
+  # node is not launched, so nothing is graded automatically except manual intervention = FAIL.
+  # PASS = the user pressed Practice done ({"op": "done"}), failed attempts included.
+  # Save also writes practice/summary.yaml next to the per-challenge files.
+  - index: 13
+    id: practice_runs
+    title: Per-challenge practice runs (optional)
+    required: false
+    tab: scoreboard
+    writes: [practice/<challenge>.yaml]
+    need: Every required step saved (Run stays refused until then). Mission planned (step 12), clear track, e-stop ready.
+    instructions:
+      - Pick a challenge and put the car where that challenge starts.
+      - "Press Start attempt, then let the car drive it through the normal stack (this page never drives)."
+      - "The attempt ends by itself when the mission leaves the challenge, finishes, or sees a manual
+         intervention; or press Stop attempt (STOP MOTORS also stops it)."
+      - Grade the attempt (Excellent / Completed / Partial / Fail) and add a note if useful.
+      - Repeat for any challenge you want to practise, then press Practice done and Save.
+    procedure: {max_attempt_s: 300.0,         # an attempt still running after this ends as TIME_LIMIT
+                end_on_challenge_exit: true,   # end when MissionState.challenge_id leaves the challenge
+                max_events: 60,                # mission events kept per attempt
+                max_transitions: 60,           # mission mode / challenge / hold changes kept per attempt
+                recent_attempts: 12}           # attempts listed on the page
+    pass: {user_marked_done: true}
