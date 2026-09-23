@@ -131,17 +131,22 @@ steps:
     required: true
     tab: control
     tool: ros2 run carbot_control calib_steering
-    instructions: >-
-      The car drives ITSELF slowly through the command owner (calibrate mode only):
-      clear flat floor of about 1.5 x 2.5 m, e-stop ready. It drives a full-LEFT
-      circle and a full-RIGHT circle until the IMU has turned circle_yaw_deg (radius
-      each side), then straight runs of straight_run_m; the residual curve sets the
-      integer servo_center live until the drift passes. If the servo strains or buzzes
-      at full lock, lower servo_range_left / right in the Tuning tab and redo.
-      Needs step 6 (IMU yaw) first.
-    # writes command_owner.steering (+ the tunnel_bridge copy); servo_range_* stay as set
-    writes: [params_overlay servo_controller.servo_center, command_owner.steering.*, tunnel_bridge.command_owner_steering.*, vehicle.min_turning_radius_m]
-    procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25}
+    need: Steps 1-6 passed (step 6 = IMU yaw sign). command_owner in calibrate mode (calibrate.launch.py), battery on, STOP MOTORS released.
+    # Wizard page (phase 8): the wizard drives through the command owner (CALIBRATION_RAW on
+    # /carbot/calibration/request, carbot_ops.wizard_drive), never the motion topic itself.
+    # Run "circles" = LEFT then RIGHT full lock; Run "straight" = one straight run (repeat;
+    # a failed run corrects servo_center LIVE). The step passes once both are done and pass.
+    instructions:
+      - "The car drives ITSELF slowly through the command owner: clear flat floor of about
+         1.5 x 2.5 m, keep STOP MOTORS (header) ready. Any press stops the car and cancels the run."
+      - "Press Run circles: a full-LEFT circle, then a full-RIGHT circle, each until the IMU has
+         turned circle_yaw_deg (radius each side). If the servo strains or buzzes at full lock,
+         lower servo_range_left / right in the Tuning tab and redo."
+      - "Line the car up with straight_run_m free ahead and press Straight run. A drift above the
+         limit corrects the integer servo_center LIVE: line up again and repeat (max_runs)."
+      - Press Save (writes servo_center, command_owner steering limits and min_turning_radius_m).
+    procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25,
+                settle_s: 0.8}   # settle_s: phase 8 (= calib_drive.Driver.run default), zero duty after each run
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
     id: speed_pid

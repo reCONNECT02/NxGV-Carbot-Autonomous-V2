@@ -27,6 +27,7 @@ from carbot_common import calibration_store as cs
 from . import calib_core as cc
 
 STEP_ID = 'servo_steering'
+STEERING_KEYS = ('steer_sign', 'left_max_rad', 'right_max_rad', 'trim_rad', 'angular_limit')
 
 
 def analyse(cap: dict, cfg: dict, wheelbase: float) -> dict:
@@ -37,6 +38,27 @@ def analyse(cap: dict, cfg: dict, wheelbase: float) -> dict:
     summary = cc.steering_summary(left, right, last, cfg['pass'])
     return {'left': left.as_dict(), 'right': right.as_dict(), 'straight_runs': [r.as_dict() for r in runs],
             **summary}
+
+
+def steering_params(res: dict, steer_sign: float) -> dict:
+    """command_owner.steering.* from an analyse() result (also used by the phase-8 wizard page)."""
+    return {'steer_sign': float(steer_sign), 'left_max_rad': round(res['left_max_rad'], 4),
+            'right_max_rad': round(res['right_max_rad'], 4), 'trim_rad': 0.0, 'angular_limit': 1.0}
+
+
+# params_overlay entries this step writes: (node, parameter) -- calibration_steps.yaml `writes`
+OVERLAY_KEYS = ([('servo_controller', 'servo_center')]
+                + [('command_owner', f'steering.{k}') for k in STEERING_KEYS]
+                + [('tunnel_bridge', f'command_owner_steering.{k}') for k in STEERING_KEYS]
+                + [('/**', 'vehicle.min_turning_radius_m')])
+
+
+def write_overlay(session: str, res: dict, steering: dict, servo_center: int) -> str:
+    """Write the step's params_overlay.yaml entries (CLI and wizard page alike)."""
+    ct.merge_overlay(session, 'servo_controller', {'servo_center': int(servo_center)})
+    ct.merge_overlay(session, 'command_owner', {f'steering.{k}': v for k, v in steering.items()})
+    ct.merge_overlay(session, 'tunnel_bridge', {f'command_owner_steering.{k}': v for k, v in steering.items()})
+    return ct.merge_overlay(session, '/**', {'vehicle.min_turning_radius_m': round(res['min_turning_radius_m'], 4)})
 
 
 def main(argv=None):
@@ -68,12 +90,8 @@ def main(argv=None):
         print(f'  {k:10s} {"PASS" if v else "FAIL"}')
     print(f'  radius L {res["left"]["radius_m"]:.3f} m  R {res["right"]["radius_m"]:.3f} m  '
           f'-> min_turning_radius {res["min_turning_radius_m"]:.3f} m; servo_center {servo_center}')
-    steering = {'steer_sign': steer_sign, 'left_max_rad': round(res['left_max_rad'], 4),
-                'right_max_rad': round(res['right_max_rad'], 4), 'trim_rad': 0.0, 'angular_limit': 1.0}
-    ct.merge_overlay(session, 'servo_controller', {'servo_center': servo_center})
-    ct.merge_overlay(session, 'command_owner', {f'steering.{k}': v for k, v in steering.items()})
-    ct.merge_overlay(session, 'tunnel_bridge', {f'command_owner_steering.{k}': v for k, v in steering.items()})
-    ct.merge_overlay(session, '/**', {'vehicle.min_turning_radius_m': round(res['min_turning_radius_m'], 4)})
+    steering = steering_params(res, steer_sign)
+    write_overlay(session, res, steering, servo_center)
     doc = dict(res, step=STEP_ID, wheelbase_m=wb, servo_center=servo_center, steering=steering)
     fname = ct.write_step(session, int(cfg['index']), STEP_ID, cc.plain(doc))
     ct.finish(session, root, STEP_ID, bool(res['passed']), fname, a.activate)

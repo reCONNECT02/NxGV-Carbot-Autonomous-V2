@@ -22,6 +22,13 @@ calibration_wizard:
       settle_s: 6.0                 # wait before checking the drivers are still alive
       timeout_s: 20.0               # kill helper time limit
       log_dir: /tmp/carbot_camera_restart
+    drive:                          # steps 7/8 drive through the command owner (carbot_ops.wizard_drive)
+      publish_hz: 20.0              # MotionRequest re-publish rate (owner request_expiry_s is 0.2 s)
+      command_hold_s: 0.6           # request dropped this long after the step stops refreshing it (> 1 / tick_hz)
+      input_max_age_s: 0.5          # /odom, /imu/rpy, owner state older than this = stale (a drive aborts)
+      param_timeout_s: 3.0          # servo_controller / command_owner parameter get/set reply
+      owner_accept_s: 1.0           # the owner must show the calibration source as winner within this
+      history_n: 3000               # /odom samples kept for speed averages (about 150 s at 20 Hz)
 
 race_supervisor:
   ros__parameters:

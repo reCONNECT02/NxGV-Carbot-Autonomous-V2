@@ -9,7 +9,8 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               CANCEL | ROLLBACK | RESTART_CAMERAS
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
-per built step page (step 1: step_sensor_health, step 2: step_camera_identity).
+per built step page (step 1: step_sensor_health, step 2: step_camera_identity, ...,
+step 7: step_servo_steering, which drives through the command owner via wizard_drive).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -39,7 +40,9 @@ from .frame_tap import FrameTap
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_sensor_health import SensorHealthStep
+from .step_servo_steering import ServoSteeringStep
 from .wizard_core import StepImpl, Wizard
+from .wizard_drive import DRIVE_KEYS, WizardDrive
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
             'data.uwb',
@@ -49,7 +52,10 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
-            'restart_cameras.settle_s', 'restart_cameras.timeout_s', 'restart_cameras.log_dir']
+            'restart_cameras.settle_s', 'restart_cameras.timeout_s', 'restart_cameras.log_dir',
+            # steps 7/8 drive through the command owner (= wizard_drive.DRIVE_KEYS); common.yaml
+            'drive.publish_hz', 'drive.command_hold_s', 'drive.input_max_age_s', 'drive.param_timeout_s',
+            'drive.owner_accept_s', 'drive.history_n', 'vehicle.wheelbase_m']
 
 
 class BrokenStep(StepImpl):
@@ -77,6 +83,7 @@ class CalibrationWizard(CarbotNode):
         self.health = self.uwb_status = self.battery = None
         self.health_seq = 0
         self.tap = None
+        self.drive = None
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -97,11 +104,13 @@ class CalibrationWizard(CarbotNode):
         steps_doc = load_data(self, 'calibration_steps')
         cameras, uwb = load_data(self, 'cameras'), load_data(self, 'uwb')
         self.domain = int((uwb.get('agent') or {}).get('domain_id', 1))
+        self.drive = WizardDrive(self, {k: self.p(f'drive.{k}') for k in DRIVE_KEYS})   # steps 7/8
         # one line per built step page (step id -> StepImpl); every other step is a placeholder
         factories = {
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
+            'servo_steering': lambda s: ServoSteeringStep(s, float(self.p('vehicle.wheelbase_m')), self.drive.kit),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -179,7 +188,8 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None,
+                **(self.drive.inputs() if self.drive else {})}      # 'drive', 'drive_history' (wizard_drive)
 
     # ------------------------------------------------------------------ loop
     def _tick(self):
@@ -276,6 +286,8 @@ class CalibrationWizard(CarbotNode):
         return resp
 
     def destroy_node(self):
+        if self.drive is not None:
+            self.drive.stop()
         if self.restart is not None:
             self.restart.stop()
         super().destroy_node()
