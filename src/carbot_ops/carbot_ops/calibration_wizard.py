@@ -16,8 +16,9 @@ Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImp
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
 step 6: step_imu_odometry, step 7: step_servo_steering,
-step 10: step_uwb_survey). Raw UWB tag reports reach the steps as
-inputs['uwb_raw'] (wizard_uwb.UwbFeed; step 11 reuses it).
+step 10: step_uwb_survey, step 11: step_map_uwb_alignment). Raw UWB tag reports reach
+the steps as inputs['uwb_raw'] (wizard_uwb.UwbFeed, steps 10-11); step 11's lap pose
+is dead-reckoned from the same MotionRecorder as steps 6-7.
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -53,6 +54,7 @@ from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
+from .step_map_uwb_alignment import MapUwbAlignmentStep
 from .step_servo_steering import ServoSteeringStep
 from .step_sensor_health import SensorHealthStep
 from .step_uwb_survey import UwbSurveyStep
@@ -158,6 +160,8 @@ class CalibrationWizard(CarbotNode):
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
             'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir()),
+            'map_uwb_alignment': lambda s: MapUwbAlignmentStep(s, uwb, ct.bringup_config_dir(), self.motion,
+                                                               lambda: self.wiz.session if self.wiz else None),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -185,7 +189,7 @@ class CalibrationWizard(CarbotNode):
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
         if isinstance(impls.get('imu_odometry'), ImuOdometryStep) or isinstance(impls.get('servo_steering'),
-                                                                                  ServoSteeringStep):
+                                                                                  ServoSteeringStep)                 or isinstance(impls.get('map_uwb_alignment'), MapUwbAlignmentStep):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
