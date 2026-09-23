@@ -37,6 +37,12 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 | 33 | `calib_odometry` (terminal) drift hint says `ros2 topic pub --once /imu/calibrate std_msgs/String` for a hardware IMU calibration; servo_controller only accepts JSON `{"action": "zero"}` / `"set_scale"`, so that command does nothing | 8 | TODO | Wizard page gives a power-cycle-still fix instead. Also `topics.py IMU_CALIBRATE` comment says "String (empty)" |
 | 34 | `imu_yaw_scale` is not in `base_nodes.yaml` (servo_controller declares default 1.0) | 8 | TODO | Tunable should be in YAML. Adding the key = new key only (value 1.0); step 6 writes it into the session overlay anyway |
 | 35 | Run calibration step 7 on the car (servo + steering page): Run, Go x 4+, Save; check `<session>/params_overlay.yaml` servo_center, command_owner steering, min_turning_radius_m | 8 / on site | TODO | The car drives ITSELF (duty 0.16): clear 1.5 x 2.5 m floor, hand on STOP MOTORS. Needs step 6 saved in the same session first. Watch the servo at full lock (buzzing -> lower servo_range_* in Tuning) |
+| 36 | Merge wizard pages 8-13 to `main` | 8 | DOING | On branches (`phase8/page-NN-*`, `phase8/integration-pages-9-12-13`); plan in `docs/PHASE8_PAGES_7-13_HANDOFF.md`. Page 11 is WIP. When merged: #20 -> DONE (page 12 makes step 12 required), #21 gains steps 8-13 |
+| 37 | Practice runs (step 13) can't drive: in calibrate mode nothing publishes `/carbot/race/armed`, so mission_logic stays IDLE | 8 | WAITING | Owner decision: how should practice be armed? Until then attempts record time + grade only |
+| 38 | Probable bug: road_perception seed box `seed.x -0.25..0.45 m` is outside the front camera view (floor visible from x ~0.47 m) on the front-only car -> `grown` / `connected` always 0 | 2 / 8 | WAITING | Found by page 9. Owner decision: move to ~0.47..0.70? |
+| 39 | Merge page 9's `param_link.ParamLink` into `servo_link.ServoLink` (same interface) | 8 | TODO | Do while integrating pages 8-13 |
+| 40 | `test_import.py` exists in several packages, so they can't run in one pytest command | 8 | TODO | Run pytest one package at a time, or rename |
+| 41 | Car tests for pages 8-13 on the RDK X5 | 8 / on site | TODO | Per-page list in `docs/PHASE8_PAGES_7-13_HANDOFF.md` "Untested on hardware". Page 8 drives itself: 1.5 m clear floor |
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).

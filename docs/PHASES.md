@@ -13,7 +13,7 @@ never rename silently.
 | 5 | Parking, recovery, command owner + safety | **done** |
 | 6 | Detectors (traffic light, boom gate, bump sign) | **done** |
 | 7 | GUI main tab + diagnostic tabs | **done** |
-| 8 | Calibration wizard + race mode | **in progress** (page by page: steps 1-3 done) |
+| 8 | Calibration wizard + race mode | **in progress** (page by page: steps 1-3, 6, 7 on main; 5, 8-13 on branches — see "Phase 8 progress map") |
 | 9 | Docs | |
 
 ## Phase 1 — what exists
@@ -514,6 +514,35 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
 Built one wizard page per chat. Status: **steps 1 (sensor health), 2 (camera identity),
 3 (camera intrinsics), 6 (IMU + wheel odometry) and 7 (servo centre + steering) done**; step 5 is being built in a parallel
 session; the other steps are placeholder pages; race mode (preflight / READY / START) not started.
+
+### Phase 8 progress map (updated 2026-09-23)
+
+Where every wizard page lives right now. Nothing below "on main" has run on the car.
+Plan, shared contracts, owner questions and draft PHASES sections for pages 7-13:
+`docs/PHASE8_PAGES_7-13_HANDOFF.md`.
+
+| Step | Page | Where (GitHub) | State |
+|---|---|---|---|
+| 1 | sensor_health | `main` | done, untested on car |
+| 2 | camera_identity | `main` | done, untested on car |
+| 3 | camera_intrinsics | `main` | done, untested on car |
+| 4 | camera extrinsics + IPM | — | **not started** |
+| 5 | lidar_camera | `phase8-step5-lidar-camera` (e7ed5db), `phase8-step5-lidar-camera-r3` (2b0d2e6) | built in a parallel session, not merged; pick one branch |
+| 6 | imu_odometry | `main` | done, untested on car |
+| 7 | servo_steering | `main` (795d5d3) | done, untested on car. `phase8/page-07-steering-superseded` = duplicate, **do not merge** |
+| 8 | speed_pid | `phase8/page-08-speed-pid` | done, based on main 795d5d3, not merged |
+| 9 | venue_thresholds | `phase8/page-09-venue-thresholds` | done, merged into the integration branch |
+| 10 | uwb_survey | `phase8/page-10-uwb-survey` | done, merged into the page 11 branch |
+| 11 | map_uwb_alignment | `phase8/page-11-map-uwb-alignment-wip` | **WIP**: tests + browser check not finished |
+| 12 | mission_planner | `phase8/page-12-mission-planner` | done, merged into the integration branch |
+| 13 | practice_runs | `phase8/page-13-practice-runs` | done, merged into the integration branch |
+| 9+12+13 | — | `phase8/integration-pages-9-12-13` | main 795d5d3 + pages 13, 9, 12; post-merge review / tests not finished |
+| — | race mode (preflight / READY / START) | — | **not started** |
+
+Next steps, in order (details in the handoff doc): finish + test the integration branch ->
+finish page 11 -> merge page 8 and page 11 (brings 10) into it -> make page 9 use `ServoLink`
+(drop `param_link.py`) -> decide on page 5 -> page 4 -> merge to `main` with the per-page
+PHASES sections -> car tests on the RDK X5 -> race mode.
 
 ### Page 1 — sensor health check (done, untested on the car)
 | Piece | Where | Notes |
