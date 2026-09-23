@@ -2,12 +2,14 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
-                                             [--sensors ok|bad] [--data-root DIR]
+                                             [--sensors ok|bad] [--data-root DIR] [--unlock 12]
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
 makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
-Sessions are written to --data-root (default: a temp folder).
+Sessions are written to --data-root (default: a temp folder). Step 12 (mission
+planner) runs the real tools/map planner; --unlock 12 makes steps 1-11 optional so it
+can be tried alone.
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
 GUI changes without the car. Data shapes match carbot_gui/gui_server.py; the
@@ -276,20 +278,28 @@ class Mock:
 class MockWizard:
     """Real wizard_core + steps 1-2 against synthetic SystemHealth/UwbStatus snapshots."""
 
-    def __init__(self, sensors, root):
+    def __init__(self, sensors, root, unlock=0):
         import yaml
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
+        from carbot_ops.step_mission_planner import MissionPlannerStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
+        for x in self.steps['steps']:           # --unlock N: steps before N optional (try a later page alone)
+            if x['index'] < unlock:
+                x['required'] = False
+        step12 = next(x for x in self.steps['steps'] if x['id'] == 'mission_planner')
+        sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_planning'))      # step 12 race-time route check
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
-                              'camera_identity': CameraIdentityStep(step2, self.cams)})
+                              'camera_identity': CameraIdentityStep(step2, self.cams),
+                              'mission_planner': MissionPlannerStep(step12, os.path.dirname(data),
+                                                                    lambda: self.wiz.session)})
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -345,12 +355,13 @@ def main():
     ap.add_argument('--port', type=int, default=8081)
     ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
     ap.add_argument('--data-root', default='')
+    ap.add_argument('--unlock', type=int, default=0, help='calibrate: steps before N are optional (e.g. 12)')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
     if a.mode == 'calibrate':
         import tempfile
         root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
-        mock.wiz = MockWizard(a.sensors, root)
+        mock.wiz = MockWizard(a.sensors, root, a.unlock)
         print(f'calibration sessions -> {root}')
 
     class Handler(http.server.BaseHTTPRequestHandler):
