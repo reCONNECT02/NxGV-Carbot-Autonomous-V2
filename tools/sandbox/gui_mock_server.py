@@ -19,6 +19,12 @@ Step 10 (UWB survey) gets a synthetic tag at 10 Hz (repo anchor layout, ~1 m ran
 bias per anchor, 1 cm noise); Measure offsets / Verify move the fake tag to the spot
 you type. --unlock makes every step without a mock page optional so later pages
 (step 10) can be opened and run without passing steps 3-9.
+Step 11 (map-UWB alignment): Start lap makes a mock hand push MockCar clockwise once
+around the lane centre at 0.3 m/s (~70 s); the fake tag rides on the car, placed in
+the venue with track_map.yaml venue_transform as the TRUE alignment, so the fit
+should come back near x 1.23, y -0.40, yaw 1.79 deg. Record point parks the car on
+the chosen pose. --skip-to 11 (or more) also writes step 10's data/uwb.yaml (the
+mock tag's true offsets) into the new session.
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -43,6 +49,7 @@ sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_ops'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_control'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'uwb_localization'))
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_localization'))
 from carbot_gui import gui_core as G  # noqa: E402
 
 WEB = os.path.join(REPO, 'src', 'carbot_gui', 'web')
@@ -326,6 +333,56 @@ class MockCar:
         self.rec, self.servo, self.drive = rec, servo, drive
         self.x, self.y, self.th, self.raw_yaw, self.t = 0.0, 0.0, 0.0, 37.0, time.monotonic()
         self.test, self.done_m, self.done_deg = None, 0.0, 0.0
+        self.hand11, self.lap = None, None      # step 11: the "hand" pushes the car once around the track
+
+    LAP_V, LAP_R = 0.3, 0.75                    # m/s, corner radius (track lane centre, clockwise)
+
+    def _lap_segments(self, start):
+        """Start pose (bottom lane, facing west) -> clockwise lap along the lane centre:
+        [(seconds, v, w)]. Lane corners at x 0.25 / 6.75, y 0.75 / 4.75 (track_map.yaml)."""
+        v, r = self.LAP_V, self.LAP_R
+        turn = (math.pi / 2 * r / v, v, -v / r)
+        out = []
+        for L in (start[0] - 1.0, 4.0 - 1.5, 6.0 - 1.0, 4.0 - 1.5, 6.0 - start[0]):
+            if L > 0:
+                out.append((L / v, v, 0.0))
+            out.append(turn)
+        return out[:-1]
+
+    def _lap_hand(self, dt):
+        """While step 11 records a lap: (dm, dd deg) for this increment; the true track pose is kept
+        in self.lap['hist'] so the fake UWB tag reports from where the car really is."""
+        h = self.hand11
+        run = h.run if h is not None else None
+        if run is None or run['mode'] != 'lap':
+            return None
+        if self.lap is None or self.lap['run'] is not run:
+            p = h.poses['start_pose']
+            self.lap = {'run': run, 't0': self.t, 'pose': list(p), 'segs': self._lap_segments(p),
+                        'hist': [(self.t, p[0], p[1], p[2])]}
+        el = self.t - self.lap['t0']
+        v = w = 0.0
+        for d, vv, ww in self.lap['segs']:
+            if el < d:
+                v, w = vv, ww
+                break
+            el -= d
+        q = self.lap['pose']
+        q[2] += w * dt
+        q[0] += v * dt * math.cos(q[2])
+        q[1] += v * dt * math.sin(q[2])
+        self.lap['hist'].append((self.t, q[0], q[1], q[2]))
+        del self.lap['hist'][:-400]
+        return v * dt, math.degrees(w * dt)
+
+    def lap_pose_at(self, t):
+        if not self.lap:
+            return None
+        best = self.lap['hist'][0]
+        for e in self.lap['hist']:
+            if e[0] <= t:
+                best = e
+        return best[1:]
 
     def _curvature(self, z):
         if z < 0:                         # steer_sign -1: negative angular.z = LEFT
@@ -356,6 +413,9 @@ class MockCar:
             if c is not None:                                   # step 7: the car drives itself
                 dm = c[1] * self.MPS_PER_DUTY * dt
                 dd = math.degrees(dm * self._curvature(c[2]))
+            lap = self._lap_hand(dt)
+            if lap is not None:                                 # step 11: pushed around the track
+                dm, dd = lap
             v = self.servo.values
             ds = (-1.0 if v['odom_reverse_polarity'] else 1.0) * dm * self.TPM / v['ticks_per_meter']
             self.th += math.radians(dd)
@@ -380,7 +440,8 @@ class MockWizard:
         from carbot_ops.step_servo_steering import ServoSteeringStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         from carbot_ops.step_uwb_survey import UwbSurveyStep
-        data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
+        from carbot_ops.step_map_uwb_alignment import MapUwbAlignmentStep
+        data =os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
@@ -397,6 +458,14 @@ class MockWizard:
                  'camera_identity': CameraIdentityStep(step2, self.cams),
                  'imu_odometry': self.step6, 'servo_steering': self.step7,
                  'uwb_survey': UwbSurveyStep(step10, self.uwb, os.path.join(REPO, 'src', 'carbot_bringup', 'config'))}
+        step11 = next(x for x in self.steps['steps'] if x['id'] == 'map_uwb_alignment')
+        self.step11 = MapUwbAlignmentStep(step11, self.uwb, os.path.join(REPO, 'src', 'carbot_bringup', 'config'),
+                                          self.motion, lambda: self.wiz.session)
+        impls['map_uwb_alignment'] = self.step11
+        self.car.hand11 = self.step11
+        tv = ld('track_map.yaml')['venue_transform']       # the mock venue's TRUE track -> venue
+        self.t2v_true = (float(tv['x']), float(tv['y']), math.radians(float(tv['yaw_deg'])))
+        self.parked = None                                 # step 11 points: pose the car is parked on
         if unlock:
             for x in self.steps['steps']:
                 if x['id'] not in impls:
@@ -419,6 +488,12 @@ class MockWizard:
         self.uwb_tag = wu.SyntheticTag(truth, float(self.uwb['tag']['z_m']),
                                        {a: 0.9 + 0.05 * k for k, a in enumerate(sorted(truth))}, 0.01, xy=(5.0, 1.5))
         self.uwb_t = time.monotonic()
+        if skip_to > 10:           # as if step 10 had saved the survey + the mock tag's real offsets
+            from carbot_common import calib_tools as ct
+            ct.merge_data(self.wiz._ensure_session(), 'uwb.yaml', self.uwb, {
+                'anchors': [dict(a, range_offset_m=round(self.uwb_tag.bias[str(a['id'])], 4))
+                            for a in self.uwb['anchors']],
+                'anchors_surveyed': True, 'offsets_calibrated': True})
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -444,8 +519,19 @@ class MockWizard:
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
         while self.uwb_t + 0.1 <= time.monotonic():         # 10 Hz synthetic tag reports
             self.uwb_t += 0.1
+            self._tag_to_car(self.uwb_t)
             self.uwb_feed.add(self.uwb_tag.report(), self.uwb_t)
         return {'snap': snap, 'health_seq': self.seq, self.wu.INPUT_KEY: self.uwb_feed}
+
+    def _tag_to_car(self, t):
+        """Step 11: the fake tag sits on the car (lap: pushed around; points: parked on a named pose)."""
+        from carbot_localization.alignment import tag_position
+        pose = self.car.lap_pose_at(t) if self.car.lap and self.step11.run is self.car.lap['run'] else self.parked
+        if pose is None:
+            return
+        tx, ty = tag_position(tuple(pose), self.step11._lever())
+        x, y, a = self.t2v_true
+        self.uwb_tag.xy = [math.cos(a) * tx - math.sin(a) * ty + x, math.sin(a) * tx + math.cos(a) * ty + y]
 
     def tick(self):
         self.car.update(self.step6)
@@ -466,6 +552,11 @@ class MockWizard:
             spot = json.loads(str(body.get('argument', '')) or '{}').get('spot')
             if a in ('RUN', 'REDO') and spot:
                 self.uwb_tag.xy = [float(spot[0]), float(spot[1])]
+            arg = json.loads(str(body.get('argument', '')) or '{}')
+            if a in ('RUN', 'REDO') and arg.get('mode') == 'points':      # step 11: car parked on the pose
+                self.parked = self.step11.poses.get(str(arg.get('pose')))
+            elif a in ('RUN', 'REDO') and arg.get('mode') == 'lap':
+                self.parked = None
         except (ValueError, AttributeError, TypeError, IndexError):
             pass
         return self.wiz.action(str(body.get('step', '')), a, str(body.get('argument', '')), self.inputs())
