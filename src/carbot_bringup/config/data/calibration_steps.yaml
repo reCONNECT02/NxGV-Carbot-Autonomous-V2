@@ -170,13 +170,21 @@ steps:
     required: true
     tab: control
     tool: ros2 run carbot_control calib_speed
-    instructions: >-
-      The car drives ITSELF straight, forward and back alternately (about 1.5 m free
-      ahead and behind), e-stop ready. A duty sweep fits the feedforward (duty =
-      static + per_mps * speed), then closed-loop steps check steady error and
-      overshoot, retuning kp / ki if needed. Needs step 7 first.
+    need: Step 7 passed (the car drives straight). calibrate.launch.py running. Straight clear floor, about 1.5 m free ahead AND behind, e-stop ready.
+    instructions:
+      - "The car drives ITSELF straight, forward and back alternately (about 1.5 m free ahead
+         and behind), through the command owner (calibrate mode only). E-stop ready. Press Run."
+      - "DUTY SWEEP: press Go before each step (raw duty, alternating direction; move the car
+         back to the middle if needed). The steady /odom speeds fit the feedforward
+         duty = static + per_mps * speed, set live on command_owner."
+      - "SPEED STEPS: press Go before each closed-loop step to step_targets_mps. Steady error
+         and overshoot are checked; a failing run retunes kp / ki and runs again (max_runs)."
+      - Press Save. It writes the feedforward and the speed PID gains into this session.
     writes: [params_overlay command_owner.speed_pid.*, command_owner.feedforward.*, tunnel_bridge.command_owner_feedforward.*]
-    procedure: {sweep_duties: [0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.22], step_targets_mps: [0.03, 0.075, 0.15], hold_s: 3.0, steady_s: 1.0, max_runs: 3}
+    # phase 8 page: stop_settle_s = speed-0 requests after each step (as calib_drive);
+    # odom_timeout_s = /odom older than this while driving aborts the run.
+    procedure: {sweep_duties: [0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.22], step_targets_mps: [0.03, 0.075, 0.15], hold_s: 3.0, steady_s: 1.0, max_runs: 3,
+                stop_settle_s: 0.8, odom_timeout_s: 0.5}
     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}
   # Step 9 (wizard page, phase 8): measures the venue road / tape colours from what road_perception
   # already publishes (road grid + its stitched debug image, no raw camera images in the wizard) and

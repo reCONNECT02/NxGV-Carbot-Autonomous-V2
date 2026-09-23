@@ -7,16 +7,16 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               result, instructions, sessions (for rollback), running task
   /carbot/calibration/action  CalibrationAction: SELECT | RUN | REDO | SAVE | KEEP_PREVIOUS |
                               CANCEL | ROLLBACK | RESTART_CAMERAS | STEP (page operation, JSON {"op"})
-  /odom, /imu/rpy (in)        fed to steps 6-7 (MotionRecorder); corrections go to
+  /odom, /imu/rpy (in)        fed to steps 6-8 (MotionRecorder); corrections go to
                               servo_controller's parameter services (servo_link, non-blocking)
-  /carbot/calibration/request MotionRequest (out, step 7 only, while its drive segment runs):
+  /carbot/calibration/request MotionRequest (out, steps 7-8 only, while a drive segment runs):
                               the car drives itself through the command owner (calibrate mode)
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
 step 6: step_imu_odometry, step 7: step_servo_steering,
-step 9: step_venue_thresholds, step 12: step_mission_planner,
+step 8: step_speed_pid, step 9: step_venue_thresholds, step 12: step_mission_planner,
 step 13: step_practice_runs).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
@@ -59,6 +59,7 @@ from .step_mission_planner import MissionPlannerStep
 from .step_practice_runs import PracticeRunsStep
 from .step_sensor_health import SensorHealthStep
 from .step_venue_thresholds import VenueThresholdsStep
+from .step_speed_pid import SpeedPidStep
 from .wizard_core import StepImpl, Wizard
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
@@ -89,7 +90,7 @@ class BrokenStep(StepImpl):
 
 
 class DriveRequests:
-    """Step 7: repeats the current calibration MotionRequest at rate_hz; stop() ends the stream
+    """Steps 7-8: repeats the current calibration MotionRequest at rate_hz; stop() ends the stream
     at once (the command owner's watchdog then holds zero)."""
 
     def __init__(self, node, rate_hz: float):
@@ -163,6 +164,7 @@ class CalibrationWizard(CarbotNode):
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
+            'speed_pid': lambda s: SpeedPidStep(s, self.motion, self.owner, self.drive),
             'venue_thresholds': lambda s: VenueThresholdsStep(s, cameras),
             'mission_planner': lambda s: MissionPlannerStep(s, ct.bringup_config_dir(),
                                                             lambda: self.wiz.session if self.wiz else None),
@@ -196,8 +198,9 @@ class CalibrationWizard(CarbotNode):
         self.sub(UwbStatus, T.UWB_STATUS, lambda m: setattr(self, 'uwb_status', (time.monotonic(), m)), 5)
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
-        if isinstance(impls.get('imu_odometry'), ImuOdometryStep) or isinstance(impls.get('servo_steering'),
-                                                                                  ServoSteeringStep):
+        if (isinstance(impls.get('imu_odometry'), ImuOdometryStep)
+                or isinstance(impls.get('servo_steering'), ServoSteeringStep)
+                or isinstance(impls.get('speed_pid'), SpeedPidStep)):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
         # step 13 (practice runs): read-only mission observation
@@ -233,7 +236,7 @@ class CalibrationWizard(CarbotNode):
         q = m.pose.pose
         o = q.orientation
         yaw = math.atan2(2 * (o.w * o.z + o.x * o.y), 1 - 2 * (o.y * o.y + o.z * o.z))
-        self.motion.on_odom(time.monotonic(), q.position.x, q.position.y, yaw)
+        self.motion.on_odom(time.monotonic(), q.position.x, q.position.y, yaw, m.twist.twist.linear.x)
 
     def _on_imu(self, m):
         try:

@@ -74,14 +74,20 @@ class MotionRecorder:
         self.imu_n = 0
         self.imu_t: Optional[float] = None
         self.ignore_until = -math.inf
+        self.v = 0.0                            # /odom twist.linear.x (step 8)
+        self.trace: Optional[List] = None       # [(t, v)] per /odom message while a list (step 8)
 
-    def on_odom(self, t: float, x: float, y: float, yaw_rad: float) -> None:
+    def on_odom(self, t: float, x: float, y: float, yaw_rad: float, v: Optional[float] = None) -> None:
         # = carbot_localization.estimator_core.odom_increment: the base integrates
         # x += v cos(yaw) dt, so the step projected on the heading is the signed distance
         if self.prev is not None and t >= self.ignore_until:
             self.dist += (x - self.prev[0]) * math.cos(yaw_rad) + (y - self.prev[1]) * math.sin(yaw_rad)
             self.odom_n += 1
         self.prev, self.odom_t = (x, y), t
+        if v is not None:
+            self.v = float(v)
+            if self.trace is not None:
+                self.trace.append((t, self.v))
 
     def on_imu(self, t: float, yaw_deg: float) -> None:
         if self.yaw_prev is not None and t >= self.ignore_until:

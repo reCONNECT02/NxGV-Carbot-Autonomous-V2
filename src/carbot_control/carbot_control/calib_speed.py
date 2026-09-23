@@ -26,6 +26,29 @@ from carbot_common import calibration_store as cs
 from . import calib_core as cc
 
 STEP_ID = 'speed_pid'
+OWNER, BRIDGE = 'command_owner', 'tunnel_bridge'
+FF_KEYS = ('duty_per_mps', 'static_duty')
+PID_KEYS = ('kp', 'ki', 'kd', 'integral_limit')
+# params_overlay keys this step writes (calibration_steps.yaml speed_pid.writes); also used
+# by the wizard page (carbot_ops.step_speed_pid) for Save and Keep previous
+OVERLAY_KEYS = {OWNER: [f'feedforward.{k}' for k in FF_KEYS] + [f'speed_pid.{k}' for k in PID_KEYS],
+                BRIDGE: [f'command_owner_feedforward.{k}' for k in FF_KEYS]}
+
+
+def overlays(ff: dict, pid: dict) -> dict:
+    """{node: {param: value}} written for a feedforward fit + PID gains (ff rounded to 4 places)."""
+    f = {'feedforward.duty_per_mps': round(ff['duty_per_mps'], 4),
+         'feedforward.static_duty': round(ff['static_duty'], 4)}
+    return {OWNER: dict(f, **{f'speed_pid.{k}': v for k, v in pid.items()}),
+            BRIDGE: {'command_owner_' + k: v for k, v in f.items()}}
+
+
+def write_overlay(session: str, ff: dict, pid: dict) -> str:
+    """Merge overlays(ff, pid) into <session>/params_overlay.yaml. -> its path."""
+    path = ''
+    for node, params in overlays(ff, pid).items():
+        path = ct.merge_overlay(session, node, params)
+    return path
 
 
 def analyse(cap: dict, cfg: dict) -> dict:
@@ -62,10 +85,7 @@ def main(argv=None):
     ff, pid = res['feedforward'], res['pid']
     print(f'  feedforward duty = {ff["static_duty"]:.3f} + {ff["duty_per_mps"]:.3f} * |v|;  pid {pid}')
     if ff['duty_per_mps'] > 0:
-        f = {'feedforward.duty_per_mps': round(ff['duty_per_mps'], 4),
-             'feedforward.static_duty': round(ff['static_duty'], 4)}
-        ct.merge_overlay(session, 'command_owner', dict(f, **{f'speed_pid.{k}': v for k, v in pid.items()}))
-        ct.merge_overlay(session, 'tunnel_bridge', {'command_owner_' + k: v for k, v in f.items()})
+        write_overlay(session, ff, pid)
     fname = ct.write_step(session, int(cfg['index']), STEP_ID, cc.plain(dict(res, step=STEP_ID)))
     ct.finish(session, root, STEP_ID, bool(res['passed']), fname, a.activate)
     return 0 if res['passed'] else 2

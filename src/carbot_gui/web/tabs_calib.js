@@ -3,8 +3,9 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7), venue_thresholds (step 9), mission_planner (step 12),
- * practice_runs (step 13). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7), speed_pid (step 8),
+ * venue_thresholds (step 9), mission_planner (step 12), practice_runs (step 13).
+ * Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -1057,6 +1058,115 @@ STEP_PAGES.practice_runs = st => {
   const keep = st.can_keep && !running ? `<button class="btn" data-act="KEEP_PREVIOUS">Keep previous practice<small>${Cal.esc(st.previous)}</small></button>` : '';
   const actions = save + keep + '<span class="hint">Optional step: it never blocks race mode. Save writes practice/&lt;challenge&gt;.yaml + practice/summary.yaml into the session.</span>';
   return { todo, ctl, live: liveHtml, result, actions };
+};
+
+/* ---- step 8: speed feedforward + PID. The car DRIVES ITSELF straight, forward and back alternately.
+ *      Run starts the sequence; it waits at Go (action STEP {"op":"go"}) before every segment:
+ *      duty sweep (CALIBRATION_RAW), then closed-loop speed steps (CALIBRATION). */
+const calSpark = (pts, target) => {
+  if (!pts || pts.length < 2) return '';
+  const W = 300, Hh = 70, t1 = pts[pts.length - 1][0] || 1;
+  const vs = pts.map(p => p[1]).concat(target != null ? [target, 0] : [0]);
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo || 1;
+  const X = t => (t / t1 * W).toFixed(1), Y = v => (Hh - 4 - (v - lo) / span * (Hh - 8)).toFixed(1);
+  const tl = target != null ? `<line x1="0" x2="${W}" y1="${Y(target)}" y2="${Y(target)}" stroke="currentColor" stroke-dasharray="4 3" opacity=".45"/>` : '';
+  return `<svg viewBox="0 0 ${W} ${Hh}" style="width:100%;height:70px;display:block;margin:6px 0;color:var(--muted)">${tl}` +
+    `<polyline fill="none" stroke="var(--lane)" stroke-width="2" points="${pts.map(p => X(p[0]) + ',' + Y(p[1])).join(' ')}"/></svg>`;
+};
+STEP_PAGES.speed_pid = st => {
+  const lv = st.live || {};
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const r = lv.run;
+  const v = lv.values;
+  const busy = lv.busy || '';
+  const pr = lv.procedure || {};
+  const lim = lv.limits || {};
+  const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
+  let stage = 0;
+  if (saved) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = 3;
+  else if (running && r) stage = r.kind === 'sweep' ? 1 : 2;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+  const cms = x => x == null ? '—' : `${D.f(x * 100, 1)} cm/s`;
+
+  /* controls */
+  let ctl = '';
+  if (lv.error) ctl += Cal.alertBad('Step 8 cannot run', lv.error, 'Fix calibration_steps.yaml (speed_pid), then relaunch calibrate.launch.py.');
+  if (lv.link_error) ctl += Cal.alertBad('command_owner not reachable', lv.link_error, '');
+  ctl += '<div class="calvals">' + (v
+    ? `feedforward <b>${D.f(v.ff.static_duty, 3)}</b> + <b>${D.f(v.ff.duty_per_mps, 3)}</b> × |v| · ` +
+      `kp <b>${D.f(v.pid.kp, 3)}</b> ki <b>${D.f(v.pid.ki, 3)}</b> kd <b>${D.f(v.pid.kd, 3)}</b><br>command_owner mode <b>${Cal.esc(v.mode)}</b>`
+    : '<span class="muted">reading command_owner…</span>') +
+    (busy ? `<br><span class="muted">${Cal.esc(busy)}…</span>` : '') + '</div>';
+  if (v && v.mode !== 'calibrate') ctl += Cal.alertBad('Not in calibrate mode', `command_owner runs in ${v.mode} mode`, 'Start ros2 launch carbot_bringup calibrate.launch.py.');
+  if (!running) {
+    const hasRun = !!(st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status;
+    const ok = v && v.mode === 'calibrate' && !busy;
+    ctl += `<button class="btn primary" data-act="${hasRun ? 'REDO' : 'RUN'}" ${ok ? '' : 'disabled'}>${hasRun ? 'Redo speed calibration' : 'Start speed calibration'}` +
+      '<small>Nothing moves yet: the car waits for Go before every step</small></button>' +
+      `<button class="btn" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'reread' }))}" ${busy ? 'disabled' : ''}>Re-read values</button>`;
+  } else if (r) {
+    const sg = r.segment;
+    if (r.phase === 'ready' && sg) {
+      ctl += Cal.alert('info', `Next: ${sg.label}`, `The car drives ${sg.direction.toUpperCase()} for ${D.f(pr.hold_s, 0)} s. ` +
+        'Keep about 1.5 m free that way (move it back to the middle if needed) and a hand near STOP MOTORS.') +
+        `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'go' }))}" ${busy ? 'disabled' : ''}>Go: ${Cal.esc(sg.direction)}` +
+        `<small>${sg.source === 'CALIBRATION_RAW' ? `raw duty ${D.f(sg.command, 2)}` : `${D.f(sg.command, 3)} m/s closed loop`}, stops by itself</small></button>`;
+    } else if (r.phase === 'applying') ctl += Cal.alert('info', 'Setting command_owner parameters…', r.kind === 'verify' && r.fit ? `feedforward ${D.f(r.fit.static_duty, 3)} + ${D.f(r.fit.duty_per_mps, 3)} × |v|, kp ${D.f(r.pid.kp, 3)} ki ${D.f(r.pid.ki, 3)}` : '');
+    else ctl += Cal.alert('bad', `Driving: ${sg ? sg.label : ''}`, 'Press Cancel below or STOP MOTORS (top right) to stop at once.');
+    if (r.note) ctl += Cal.alert('info', 'Note', r.note);
+  }
+
+  /* live */
+  const ages = lv.ages || {};
+  const ageTxt = x => x == null ? 'never' : x > 1 ? `${D.f(x, 1)} s old` : 'live';
+  let liveHtml = `<div class="panel"><h3>Live <small>/odom ${Cal.esc(ageTxt(ages.odom))} · speed ${D.f(lv.speed_mps, 3)} m/s</small></h3>`;
+  if (r && ['driving', 'stopping'].includes(r.phase) && r.segment) {
+    const sg = r.segment;
+    const tgt = sg.source === 'CALIBRATION' ? sg.command : null;
+    liveHtml += `<div class="calbig">${D.f(r.speed_mps, 3)} m/s <span class="muted">${tgt != null ? `target ${D.f(tgt, 3)}` : `duty ${D.f(sg.command, 2)}`} · ${D.f(r.distance_m, 2)} m</span></div>` +
+      `<div class="bar"><i style="width:${Math.round(Math.min(1, r.elapsed_s / (r.hold_s || 1)) * 100)}%"></i></div>` + calSpark(r.trace, tgt) +
+      `<p class="muted" style="font-size:12px">${r.phase === 'stopping' ? 'Stopping…' : `${D.f(r.elapsed_s, 1)} s of ${D.f(r.hold_s, 0)} s; steady = mean of the last ${D.f(pr.steady_s, 1)} s`}</p>`;
+  } else liveHtml += `<div class="muted">${running ? (r && r.phase === 'applying' ? 'Setting parameters…' : 'Waiting for Go.') : 'Not driving.'}</div>`;
+  const res = st.result || {};
+  const cap = res.capture || {};
+  const sweep = (r && r.sweep) || (cap.sweep || []).map(x => ({ duty: x[0], speed_mps: x[1] }));
+  liveHtml += `<h4 style="margin:12px 0 4px">Duty sweep <small class="muted">${sweep.length} of ${(pr.sweep_duties || []).length}</small></h4>` + (sweep.length
+    ? '<table class="calruns"><tr><th>#</th><th class="r">Duty</th><th class="r">Steady speed</th></tr>' +
+      sweep.map((x, i) => `<tr><td>${i + 1}</td><td class="r">${D.f(x.duty, 2)}</td><td class="r">${D.f(x.speed_mps, 3)} m/s</td></tr>`).join('') + '</table>'
+    : '<div class="muted">Not driven yet.</div>');
+  const fit = (r && r.fit) || (res.feedforward && res.feedforward.duty_per_mps > 0 ? { static_duty: res.feedforward.static_duty, duty_per_mps: res.feedforward.duty_per_mps, residual_mps: res.feedforward.fit_residual_mps } : null);
+  if (fit) liveHtml += `<p style="margin:6px 0">Fit: duty = <b>${D.f(fit.static_duty, 3)}</b> + <b>${D.f(fit.duty_per_mps, 3)}</b> × |v| <span class="muted">(residual ${cms(fit.residual_mps)})</span></p>`;
+  const runs = (r && r.runs ? r.runs.map(x => ({ pid: x.pid, metrics: x.metrics })) : (res.verify_runs || []).map(x => ({ pid: x.pid, metrics: x.metrics })));
+  if (r && r.kind === 'verify' && r.metrics.length) runs.push({ pid: r.pid, metrics: r.metrics, current: true });
+  liveHtml += '<h4 style="margin:12px 0 4px">Speed steps</h4>' + (runs.length
+    ? '<table class="calruns"><tr><th>Run</th><th class="r">Target</th><th class="r">Steady</th><th class="r">Error</th><th class="r">Overshoot</th></tr>' +
+      runs.map((u, k) => u.metrics.map((m, i) => `<tr><td>${i ? '' : `${k + 1}${u.current ? '*' : ''} <span class="muted">kp ${D.f(u.pid.kp, 2)} ki ${D.f(u.pid.ki, 2)}</span>`}</td>` +
+        `<td class="r">${D.f(m.target, 3)}</td><td class="r">${D.f(m.steady, 3)}</td>` +
+        `<td class="r ${m.steady_error * 100 <= lim.max_steady_error_cm_s ? 'ok-t' : 'bad-t'}">${cms(m.steady_error)}</td>` +
+        `<td class="r ${m.overshoot_pct <= lim.max_overshoot_pct ? 'ok-t' : 'bad-t'}">${D.f(m.overshoot_pct, 0)} %</td></tr>`).join('')).join('') + '</table>'
+    : '<div class="muted">Not driven yet.</div>');
+  const retunes = (r && r.retunes) || res.retunes || [];
+  if (retunes.length) liveHtml += `<p class="muted" style="font-size:12px;margin:6px 0 0">Retuned: ${retunes.map(Cal.esc).join('; ')}</p>`;
+  liveHtml += `<p class="muted" style="font-size:12px;margin:8px 0 0">Limits: steady error ≤ ${D.f(lim.max_steady_error_cm_s, 1)} cm/s, overshoot ≤ ${D.f(lim.max_overshoot_pct, 0)} %, ` +
+    `slowest moving sweep speed ≤ ${D.f(lim.creep_limit_cm_s, 1)} cm/s. Up to ${Cal.esc(pr.max_runs)} runs of the speed steps.</p></div>`;
+
+  /* result (a terminal-tool result has checks as a {name: bool} dict: show it as rows) */
+  let stc = st;
+  if (res.checks && !Array.isArray(res.checks)) {
+    stc = Object.assign({}, st, { result: Object.assign({}, res, { checks: Object.keys(res.checks).map(k => ({ label: k, measured: '', limit: '', passed: res.checks[k], why: '' })) }) });
+  }
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');
+  result += running ? Cal.alert('info', 'Speed calibration in progress', 'The result appears after the last speed step.') : calResult(stc);
+  if (res.feedforward && res.pid && !running && res.feedforward.duty_per_mps > 0) {
+    result += `<table class="metric"><tr><th>command_owner</th><th class="r">${st.unsaved ? 'to save' : 'saved'}</th></tr>` +
+      `<tr><td>feedforward.static_duty</td><td class="r">${D.f(res.feedforward.static_duty, 4)}</td></tr>` +
+      `<tr><td>feedforward.duty_per_mps</td><td class="r">${D.f(res.feedforward.duty_per_mps, 4)}</td></tr>` +
+      Object.keys(res.pid).map(k => `<tr><td>speed_pid.${Cal.esc(k)}</td><td class="r">${D.f(res.pid[k], 4)}</td></tr>`).join('') + '</table>' +
+      '<p class="muted" style="font-size:12px;margin:6px 0 0">Live on command_owner now (a failed run puts the old values back). Save also writes the tunnel_bridge copy and captures/speed.json.</p>';
+  }
+  return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
 };
 
 /* ---- a built step without a custom page (fallback) */
