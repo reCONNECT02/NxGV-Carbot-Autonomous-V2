@@ -654,3 +654,35 @@ owner never accepts it while armed and the e-stop always wins).
 * Step 8 needs the step-7 steering in the owner: after a step-7 Save, relaunch the session
   (`calibrate.launch.py session:=NAME`) or it drives with the old steering limits (straight runs only, so
   minor; servo_center is already live).
+
+### Phase 8 — first car sessions and CPU load (2026-09-24; risabot1 + risabot5)
+
+What exists (all **untested on a driving car**; measured standing still on the RDK X5 unless noted):
+
+| Area | Change | Where |
+|---|---|---|
+| GUI crash | `gui_server` no longer calls `destroy_subscription` while the MultiThreadedExecutor spins (rclpy `InvalidHandle` killed it); idle groups stay subscribed and are dropped in `_on`. `/api/core` leg progress is cached (`gui.yaml legs_refresh_s`) | `carbot_gui/gui_server.py` |
+| Step 3 detector | `calib_core.detect_chessboard(fast=True)` halves only frames >= 640 px wide. The Astra publishes 320x240, halving left ~10 px squares and "no board in view" | `carbot_perception/calib_core.py` |
+| Step 2 / 3 tuning | step 2 `max_image_age_s` 1.0 -> 2.0; step 3 `extra_views` 10 -> 3, `capture_timeout_s` 300 -> 600, `novelty` 0.12 -> 0.07, `still_px` 1.5 -> 3.0, "new view captured" (green) held 1 s. All temporary until the load is fixed (BACKLOG #42, #44) | `calibration_steps.yaml`, `step_camera_intrinsics.py` |
+| Lite calibration | `calibrate.launch.py calibrate_profile:=lite` starts only `drivers.yaml carbot_launch.calibrate_lite_keep` and loads `params/calibrate_lite.yaml` (lower rates). Default `full` unchanged; race refuses `lite`; step 13 needs `full`. Calibration must ultimately run under the FULL stack (that is the point), so lite is a shortcut, not the way to calibrate | `stack.py`, `calibrate_lite.yaml` |
+| Astra colour only | `launch/astra_rgb.launch.py` (no depth, IR, D2C, point clouds, TF) chosen by `cameras.yaml sensors.astra.launch_package / launch_file / launch_args`; `fps: 15`, 320x240. `carbot_common.data.astra_launch` is used by `stack.py` and `camera_restart.py`. astra_camera_container 67 % -> 12.6 % of a core | `launch/astra_rgb.launch.py`, `cameras.yaml`, `carbot_common/data.py` |
+| /tf_static only | `carbot_common/static_tf.StaticMount` replaces tf2 `TransformListener` in safety_monitor, local_planner and recovery_planner (they only need base_link -> laser_frame). /tf has 2 subscribers instead of 5 | `carbot_common/static_tf.py` |
+| Safety heartbeat | `SafetyStatus` goes out at once when (motion_allowed, veto_check, veto_reason) changes, else at `control.yaml safety_monitor.status_publish_hz` (25). A test keeps 1/hz <= half of every consumer's `safety_max_age_s` (command_owner 0.1 s). Measured 19 Hz, longest gap 90 ms on a loaded car | `safety_core.publish_due`, `safety_monitor.py` |
+| Detector | `decode_level` tests raw logits first (same output as before, tested); `detectors.yaml class_map` ignores the 8 INFO-only signs (only traffic light, boom gate, speed bump drive anything; old list kept as a comment). `inference_ms` 96/61/41 -> 36/32/28 | `carbot_detectors/detector_core.py`, `detectors.yaml` |
+| Tool | `tools/measure_load.py`: per-process CPU, load, SoC/DDR temperature -> CSV | `tools/measure_load.py` |
+
+Measurements (BACKLOG #47, #49-#52, #53): the whole Carbot stack, idle and unarmed, uses ~97 % of the 8 cores on
+both cars (load 18-26). Every received message costs a bare rclpy node ~4.4 ms of CPU (empty callback), so CPU ~
+(messages/s) x (subscribers); `/carbot/safety/status` (6 subscribers) and `/odom` (12) dominate. SoC max 88-92 C on
+risabot1 vs 68.6 C on risabot5 under the same load (cooling differs).
+
+Handoff / open:
+* The stack is still saturated, so `/carbot/safety/status` arrives with gaps close to command_owner's 0.1 s limit.
+  Not done (safety path, needs a moving-car test): single-threaded executors for parking/recovery, mode-gated
+  subscriptions, fewer `/odom` subscribers (four nodes pair `local_pose` with the `/odom` stamp, so it cannot be
+  decimated for them), `bpu_detector` rate (debounce 3 x period must stay under `state_expiry_s` 0.4 s).
+* `test_closed_loop_full_mission` (carbot_planning): failed once on this branch after a ~50 min run on a loaded
+  laptop, then passed in 59 s on untouched HEAD, then timed out on untouched HEAD too. `route_core` has a
+  wall-clock `time_budget_s`, so the test is load sensitive; the cause is NOT established (BACKLOG #53).
+* Side cameras: see BACKLOG #22 and the camera notes; they produced no frames on risabot5 on 2026-09-24.
+
