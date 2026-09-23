@@ -22,7 +22,8 @@ Step side (inputs[INPUT_KEY] is a UwbFeed, or None when the node has none):
 
 Helpers: session_uwb(session, base_doc) (this session's data/uwb.yaml, i.e. what
 step 10 saved, else the launch's doc), anchor_set(doc, zero_offsets),
-fresh_samples(rows), fixes(anchors, rows).
+fresh_samples(rows), fixes(anchors, rows). Tests / sandbox: SyntheticTag (fake tag JSON
+with a per-anchor range bias; used by test_step_uwb_survey and gui_mock_server).
 """
 import json
 import math
