@@ -178,9 +178,48 @@ steps:
     writes: [params_overlay command_owner.speed_pid.*, command_owner.feedforward.*, tunnel_bridge.command_owner_feedforward.*]
     procedure: {sweep_duties: [0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.22], step_targets_mps: [0.03, 0.075, 0.15], hold_s: 3.0, steady_s: 1.0, max_runs: 3}
     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}
-  - {index: 9,  id: venue_thresholds,  title: Venue colour / lighting thresholds, required: true, tab: perception,
-     writes: [params_overlay road_perception.classify.*, bpu_detector.thresholds.*],
-     pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}}
+  # Step 9 (wizard page, phase 8): measures the venue road / tape colours from what road_perception
+  # already publishes (road grid + its stitched debug image, no raw camera images in the wizard) and
+  # proposes road_perception.classify.* (V4 rule: ROAD luma < road_max_luma and chroma <
+  # road_max_chroma, else PAINT luma > paint_min_luma). "Apply live" sets them on road_perception
+  # (ROS parameters) before Save writes params_overlay. bpu_detector.thresholds.* are detector
+  # confidences, not colours: the page leaves them unchanged (Detections / Tuning tab, BACKLOG #15/#16).
+  - index: 9
+    id: venue_thresholds
+    title: Venue colour / lighting thresholds
+    required: true
+    tab: perception
+    writes: [params_overlay road_perception.classify.*, bpu_detector.thresholds.*]
+    need: Steps 3 and 4 saved (the road grid uses the camera calibration). Venue lights on as in the race.
+    instructions:
+      - "OPEN ROAD: put the car in the middle of a straight lane, lights as in the race. The sample box
+         on the map (just ahead of the car) must hold only bare road; both lane lines in view beside it."
+      - Press Sample open road and keep everyone out of the picture for a few seconds.
+      - "TUNNEL: push the car into the tunnel, turned so the tunnel box on the map lies on the tunnel
+         floor (no tape), and press Sample tunnel."
+      - Check the proposed values and the before / after numbers, then press Apply live and look at the
+        Perception tab (road green, tape cream, no cream blobs on bare road).
+      - Press Save. It writes the values into this session's params_overlay.yaml.
+    # Sample boxes are in base_link (rear-axle centre on the ground). The front camera (Astra,
+    # CAD mount) sees the floor from x ~0.47 m; lane width 0.30 m -> half_width 0.08 m keeps the
+    # tape out of the box with ~5 cm of slack. The tunnel is a curve (r 0.75 m), so its box is short.
+    procedure: {sample_s: 4.0,              # sampling time per box
+                min_frames: 8,              # stitched frames needed per sample
+                frame_timeout_s: 15.0,      # give up when min_frames have not arrived by then
+                roi: {x_min_m: 0.50, x_max_m: 0.80, half_width_m: 0.08},
+                tunnel_roi: {x_min_m: 0.48, x_max_m: 0.62, half_width_m: 0.06},
+                min_roi_cells: 40,          # box cells seen per frame
+                road_percentile: 99.0,      # the road's bright end = this percentile of box luma / chroma
+                luma_margin: 10,            # road_max_luma = road bright end + this
+                chroma_margin: 8,           # road_max_chroma = road chroma end + this
+                paint_gap: 25,              # tape candidates: seen cells outside the box brighter than road end + this
+                paint_percentile: 10.0,     # the tape's dark end
+                min_paint_cells: 20,        # tape cells per frame for a tape measurement (open road must have it)
+                min_paint_margin: 15,       # paint_min_luma at least this above the road's bright end
+                tunnel_min_luma: 12,        # tunnel box darker than this = the camera sees nothing
+                min_decode_agreement: 0.9,  # decoded stitched colours must reproduce road_perception's kinds
+                param_timeout_s: 3.0}       # road_perception parameter get / set
+    pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}
   - index: 10
     id: uwb_survey
     title: UWB anchor survey + uwb_calib offsets
