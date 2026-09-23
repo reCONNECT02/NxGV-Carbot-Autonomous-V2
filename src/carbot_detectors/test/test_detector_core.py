@@ -118,3 +118,42 @@ def test_locate_bearing_and_range():
     left = dc.Det(13, 'hill_sign', 0.9, (0, 0, 20, 20))    # no size -> unit bearing, to the LEFT (+y)
     x, y, r = dc.locate(left, cam, sizes)
     assert r == -1.0 and y > 0 and math.isclose(math.hypot(x, y), 1.0)
+
+
+# --------------------------------------------------------------------------- faster decode (BACKLOG #52)
+def _decode_level_reference(cls, box, stride, thresh, reg_max):
+    """The original implementation (sigmoid over every class score first)."""
+    scores = 1.0 / (1.0 + np.exp(-np.clip(cls, -30.0, 30.0)))
+    cid = np.argmax(scores, axis=-1)
+    best = np.take_along_axis(scores, cid[..., None], axis=-1)[..., 0]
+    ys, xs = np.where(best >= thresh[cid])
+    ltrb = box[ys, xs].reshape(-1, 4, reg_max)
+    ltrb = ltrb - ltrb.max(axis=-1, keepdims=True)
+    e = np.exp(ltrb)
+    off = (e / e.sum(axis=-1, keepdims=True) * np.arange(reg_max, dtype=np.float32)).sum(axis=-1)
+    gx, gy = xs.astype(np.float32) + 0.5, ys.astype(np.float32) + 0.5
+    boxes = np.stack([(gx - off[:, 0]) * stride, (gy - off[:, 1]) * stride,
+                      (gx + off[:, 2]) * stride, (gy + off[:, 3]) * stride], axis=1)
+    return boxes.astype(np.float32), best[ys, xs].astype(np.float32), cid[ys, xs].astype(np.int32)
+
+
+@pytest.mark.parametrize('seed', [0, 1, 2])
+def test_decode_level_matches_the_original(seed):
+    rng = np.random.default_rng(seed)
+    nc, reg = 14, 16
+    thresh = np.array([0.25] * 3 + [0.35, 0.5, 1.01, 0.25, 0.5, 0.25, 0.25, 0.25, 0.25, 0.35, 0.35], np.float32)
+    for hw, stride in ((40, 16), (20, 32)):
+        cls = rng.normal(-4.0, 3.0, (hw, hw, nc)).astype(np.float32)       # a few cells score high
+        box = rng.normal(0.0, 2.0, (hw, hw, 4 * reg)).astype(np.float32)
+        got = dc.decode_level(cls, box, stride, thresh, reg)
+        want = _decode_level_reference(cls, box, stride, thresh, reg)
+        assert len(want[1]) > 0 and len(got[1]) == len(want[1])
+        for a, b in zip(got, want):
+            np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-4)
+        assert (got[2] != 5).all()                                          # class with threshold 1.01 never passes
+
+
+def test_decode_level_nothing_passes():
+    cls = np.full((8, 8, 14), -20.0, np.float32)
+    b, s, c = dc.decode_level(cls, np.zeros((8, 8, 64), np.float32), 8, np.full(14, 0.5, np.float32), 16)
+    assert b.shape == (0, 4) and s.shape == (0,) and c.shape == (0,)

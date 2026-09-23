@@ -42,7 +42,8 @@ def test_plan_uses_sudo_helpers_and_explicit_size(tmp_path, monkeypatch):
     assert [m['cmd'][3] for m in mipi] == ['/cam_imx219', '/cam_ov5647']      # channel 0 then 2
     assert mipi[0]['cmd'][5:7] == ['960', '544'] and mipi[0]['cmd'][7] == '1'
     assert mipi[1]['delay'] == 2.0
-    assert p[-1]['cmd'][:3] == ['ros2', 'launch', 'astra_camera']
+    assert p[-1]['cmd'][:2] == ['ros2', 'launch'] and p[-1]['cmd'][2:4] == ['carbot_bringup', 'astra_rgb.launch.py']
+    assert p[-1]['cmd'][4:] == ['width:=320', 'height:=240', 'fps:=15']       # colour only, from cameras.yaml
 
 
 def test_refuses_without_helpers(tmp_path):
@@ -60,7 +61,7 @@ def test_worker_success_and_driver_death(tmp_path):
         return types.SimpleNamespace(returncode=0, stdout='[kill_stale] no stale processes\n', stderr='')
 
     def popen(cmd, **kw):
-        p = FakeProc(alive='astra_camera' not in cmd)
+        p = FakeProc(alive=not any('astra' in str(c) for c in cmd))
         spawned.append(p)
         return p
     r = CameraRestart(cfg(tmp_path), CAMERAS, '/share', popen=popen, run=run, is_root=False, sleep=lambda s: None)

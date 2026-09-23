@@ -46,6 +46,11 @@ carbot_tf:
 # -----------------------------------------------------------------------------
 carbot_launch:
   ros__parameters:
+    # calibrate.launch.py calibrate_profile:=lite starts ONLY these Carbot/base nodes (executable names),
+    # plus the drivers, TFs, joy, calibration_wizard and gui_server; and loads config/params/calibrate_lite.yaml.
+    # Step 13 (practice runs) needs the full profile. Race mode ignores this key.
+    calibrate_lite_keep: [road_perception, camera_preview, uwb_ranges, safety_monitor, command_owner,
+                          system_monitor, servo_controller]
     # Killed (SIGINT, then SIGKILL) before anything starts. Camera_Setup.md:
     # Ctrl+C does not always kill mipi_cam / hobot_codec / websocket, and a stale
     # mipi_cam makes the next one fail with "There are no available host".

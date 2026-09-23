@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Callable, Dict, List, Optional
 
-from carbot_common.data import sensor_enabled
+from carbot_common.data import astra_launch, sensor_enabled
 
 CFG_KEYS = ('enabled', 'kill_patterns', 'grace_s', 'root_helper_dir', 'delay_mipi_second_s',
             'settle_s', 'timeout_s', 'log_dir')
@@ -81,9 +81,9 @@ class CameraRestart:
                               env.get('FASTRTPS_DEFAULT_PROFILES_FILE', ''), ''])})
         astra = (self.cameras.get('sensors') or {}).get('astra')
         if astra and sensor_enabled(self.cameras, 'astra'):
-            steps.append({'what': 'start Astra Pro (base launch file)', 'kind': 'spawn', 'delay': 0.0,
-                          'log': 'astra',
-                          'cmd': ['ros2', 'launch', 'astra_camera', astra.get('launch_file', 'astra_mini.launch.py')]})
+            a_pkg, a_file, a_args = astra_launch(astra)
+            steps.append({'what': f'start Astra Pro ({a_pkg} {a_file})', 'kind': 'spawn', 'delay': 0.0,
+                          'log': 'astra', 'cmd': ['ros2', 'launch', a_pkg, a_file] + a_args})
         return steps
 
     # ------------------------------------------------------------------ run

@@ -18,15 +18,16 @@ from carbot_common import topics as T
 from carbot_common.course import course_from_params
 from carbot_common.node import CarbotNode
 from carbot_common.qos import LATCHED, SENSOR
+from carbot_common.static_tf import StaticMount
 from carbot_interfaces.msg import (Corridor, LocalGrid, LocalizationStatus, MissionState, NodeStatus, SafetyCheck,
                                    SafetyStatus)
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
 
-from .safety_core import SafetyCfg, SafetyCore, SafetyInputs
+from .safety_core import SafetyCfg, SafetyCore, SafetyInputs, publish_due
 
-REQUIRED = ['rate_hz', 'camera_max_age_s', 'motion_max_age_s', 'local_sigma_max_m', 'road_min_connected_cells',
+REQUIRED = ['rate_hz', 'status_publish_hz', 'camera_max_age_s', 'motion_max_age_s', 'local_sigma_max_m', 'road_min_connected_cells',
             'road_low_dwell_s', 'tunnel_front_half_angle_rad', 'tunnel_min_clearance_m', 'lidar_max_age_s',
             'hold_on_branch_conflict', 'recoverable_branch_reason', 'localization_max_age_s',
             'tunnel_zone_margin_m', 'corridor_max_age_s', 'lidar_mount', 'frames.base', 'frames.laser',
@@ -47,10 +48,9 @@ class SafetyMonitor(CarbotNode):
         self.mount_yaw = math.pi
         self._tf = None
         if str(self.p('lidar_mount')) == 'tf':
-            from tf2_ros import Buffer, TransformListener
-            self._tf = Buffer()
-            self._tfl = TransformListener(self._tf, self)
+            self._tf = StaticMount(self, str(self.p('frames.base')), str(self.p('frames.laser')))   # /tf_static only
         self.pub = self.create_publisher(SafetyStatus, T.SAFETY_STATUS, 10)
+        self._pub_last = None                # (time, (allowed, veto_check, veto_reason)) of the last status sent
         self.sub(Bool, T.E_STOP, self._on_estop, 10)
         self.sub(LocalGrid, T.ROAD_GRID, self._on_grid, 10)
         self.sub(Odometry, T.ODOM, self._on_odom, SENSOR)
@@ -93,14 +93,9 @@ class SafetyMonitor(CarbotNode):
 
     def _mount_yaw(self) -> float:
         if self._tf is not None:
-            try:
-                from rclpy.time import Time
-                tr = self._tf.lookup_transform(str(self.p('frames.base')), str(self.p('frames.laser')), Time())
-                q = tr.transform.rotation
-                self.mount_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-                self._tf = None
-            except Exception:  # noqa: BLE001  not yet published: keep pi (reversed mount)
-                pass
+            got = self._tf.get()
+            if got is not None:              # not yet published: keep pi (reversed mount)
+                self.mount_yaw = got[2]
         return self.mount_yaw
 
     def _tick(self) -> None:
@@ -119,6 +114,10 @@ class SafetyMonitor(CarbotNode):
             i.scan_ranges = np.asarray(s.ranges, float)
             i.scan_angles = s.angle_min + np.arange(len(s.ranges)) * s.angle_increment + self._mount_yaw()
         r = self.core.evaluate(i)
+        key = (r.motion_allowed, r.veto_check, r.veto_reason)
+        if not publish_due(self._pub_last, key, t, 1.0 / float(self.p('status_publish_hz'))):
+            return                          # unchanged and not yet time for the heartbeat
+        self._pub_last = (t, key)
         m = SafetyStatus()
         m.header.stamp = self.get_clock().now().to_msg()
         m.motion_allowed, m.veto_check, m.veto_reason = r.motion_allowed, r.veto_check, r.veto_reason

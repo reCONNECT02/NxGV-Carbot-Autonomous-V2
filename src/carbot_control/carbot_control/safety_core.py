@@ -135,3 +135,11 @@ class SafetyCore:
             checks.append(Check('tunnel_clearance', True, -1.0, c.tunnel_min_clearance_m, 'not in the tunnel'))
         veto = next((k for k in checks if not k.ok), None)
         return SafetyResult(veto is None, veto.name if veto else '', veto.detail if veto else '', checks)
+
+
+def publish_due(last, key, now: float, period_s: float) -> bool:
+    """Should SafetyStatus go out now? (BACKLOG #50) last = (time, key) of the previous publish or None.
+    A CHANGE of (motion_allowed, veto_check, veto_reason) goes out at once, so a veto is never delayed;
+    an unchanged status is only a heartbeat, sent every period_s. Consumers treat a status older than
+    command_owner.safety_max_age_s (0.1 s) as SAFETY STOP, so period_s must stay well below that."""
+    return last is None or key != last[1] or now - last[0] >= period_s

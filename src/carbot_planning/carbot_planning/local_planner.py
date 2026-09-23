@@ -25,11 +25,11 @@ from carbot_common.course import course_from_params
 from carbot_common.geometry import geometry
 from carbot_common.node import CarbotNode
 from carbot_common.qos import LATCHED, SENSOR
+from carbot_common.static_tf import StaticMount
 from carbot_interfaces.msg import (Candidate, CandidateArray, CommandOwnerState, Corridor, MissionState,
                                    NodeStatus)
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Path
-from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 
 from .corridor_core import closest
@@ -84,9 +84,7 @@ class LocalPlannerNode(CarbotNode):
         self.sub(LaserScan, T.SCAN, self._on_scan, SENSOR)
         self.sub(CommandOwnerState, T.OWNER_STATE, self._on_owner, 10)
         if str(self.p('lidar_mount')) == 'tf':
-            from tf2_ros import Buffer, TransformListener
-            self._tf = Buffer()
-            self._tfl = TransformListener(self._tf, self)
+            self._tf = StaticMount(self, str(self.p('frames.base')), str(self.p('frames.laser')))   # /tf_static only
         self.create_timer(1.0 / max(float(self.p('rate_hz')), 0.5), self._tick)
         self.set_status(NodeStatus.WARN, 'WAITING_INPUT', 'waiting for corridor + local pose')
 
@@ -100,15 +98,9 @@ class LocalPlannerNode(CarbotNode):
     def _lidar_mount(self):
         if self._tf is None:
             return self.mount
-        try:
-            tr = self._tf.lookup_transform(str(self.p('frames.base')), str(self.p('frames.laser')),
-                                           Time())
-            q = tr.transform.rotation
-            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            self.mount = (tr.transform.translation.x, tr.transform.translation.y, yaw)
-            self._tf = None                  # static: look it up once
-        except Exception:  # noqa: BLE001  (not published yet: keep the fallback)
-            pass
+        got = self._tf.get()
+        if got is not None:                  # static: /tf_static is latched, the value never changes
+            self.mount = got
         return self.mount
 
     def _on_corr(self, m: Corridor):

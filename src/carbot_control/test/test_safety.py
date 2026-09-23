@@ -56,3 +56,14 @@ def test_tunnel_forward_clearance():
     rng3[np.abs(ang - np.pi) < 0.1] = 0.1                        # obstacle BEHIND: fine
     assert core.evaluate(good(in_tunnel=True, scan_t=9.9, scan_ranges=rng3, scan_angles=ang)).motion_allowed
     assert core.evaluate(good(in_tunnel=False, scan_t=0.0)).motion_allowed      # outside the tunnel: n/a
+
+
+# --------------------------------------------------------------------------- status heartbeat (BACKLOG #50)
+def test_publish_due_change_is_immediate_heartbeat_is_periodic():
+    from carbot_control.safety_core import publish_due
+    k = (True, '', '')
+    assert publish_due(None, k, 0.0, 0.04)                            # first status always goes out
+    assert not publish_due((0.0, k), k, 0.02, 0.04)                   # unchanged, too early
+    assert publish_due((0.0, k), k, 0.04, 0.04)                       # heartbeat
+    assert publish_due((0.0, k), (False, 'lidar', 'stale'), 0.001, 0.04)   # a veto is never delayed
+    assert publish_due((0.0, (False, 'lidar', 'stale')), k, 0.001, 0.04)   # nor is the release

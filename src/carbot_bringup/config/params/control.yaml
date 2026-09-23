@@ -5,6 +5,11 @@
 safety_monitor:
   ros__parameters:
     rate_hz: 50.0
+    # SafetyStatus goes out at once when (motion_allowed, veto_check, veto_reason) changes, otherwise
+    # as a heartbeat at this rate (was every tick = 50 Hz x 6 subscribers, BACKLOG #50). command_owner
+    # treats a status older than its safety_max_age_s (0.1 s) as SAFETY STOP: keep 1/status_publish_hz
+    # <= half of the smallest safety_max_age_s (a test checks it).
+    status_publish_hz: 25.0
     camera_max_age_s: 0.45          # V4: camera age above 0.45 s stops motion
     motion_max_age_s: 0.2           # V4: motion sensor stale
     local_sigma_max_m: 0.035        # V4: local uncertainty exceeds clearance budget

@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 import yaml
 
 from carbot_common import calibration_store as cs
-from carbot_common.data import DATA_KEYS, sensor_enabled
+from carbot_common.data import DATA_KEYS, astra_launch, sensor_enabled
 
 PACKAGE = 'carbot_bringup'
 
@@ -114,6 +114,47 @@ def param_file_list(share_dir: str, session: Optional[str]) -> List[str]:
     if overlay:
         files.append(overlay)          # last wins
     return files
+
+
+PROFILES = ('full', 'lite')
+LITE_FILE = 'calibrate_lite'
+
+
+def check_profile(profile: str, mode: str) -> str:
+    """'' -> full. lite exists only for calibrate (race must always run the whole stack)."""
+    profile = (profile or 'full').strip().lower()
+    if profile not in PROFILES:
+        raise ValueError(f'calibrate_profile must be one of {PROFILES}, not {profile!r}')
+    if profile == 'lite' and mode != 'calibrate':
+        raise ValueError('calibrate_profile:=lite is for calibrate.launch.py only')
+    return profile
+
+
+def lite_keep(cfg: Dict) -> List[str]:
+    """carbot_launch.calibrate_lite_keep: executable names the lite profile still starts."""
+    if 'calibrate_lite_keep' not in cfg:
+        raise KeyError('missing YAML key carbot_launch.calibrate_lite_keep (drivers.yaml)')
+    keep = [str(x) for x in cfg['calibrate_lite_keep']]
+    known = {exe for _, exe in CARBOT_NODES['common'] + BASE_NODES}
+    unknown = sorted(set(keep) - known)
+    if unknown:
+        raise KeyError(f'carbot_launch.calibrate_lite_keep names unknown nodes: {unknown} (known: {sorted(known)})')
+    return keep
+
+
+def select_nodes(nodes: List[tuple], keep: Optional[List[str]]) -> List[tuple]:
+    """(package, executable) list filtered to `keep` (None = all), order preserved."""
+    return list(nodes) if keep is None else [n for n in nodes if n[1] in keep]
+
+
+def with_lite_overlay(files: List[str], share_dir: str) -> List[str]:
+    """Insert calibrate_lite.yaml after the normal params files, before the session overlay."""
+    path = os.path.join(share_dir, 'config', 'params', f'{LITE_FILE}.yaml')
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f'calibrate_profile:=lite needs {path}')
+    out = list(files)
+    out.insert(len(PARAM_FILES), path)
+    return out
 
 
 def launch_cfg(share_dir: str, session: Optional[str]) -> Dict:
@@ -206,6 +247,11 @@ def build(context, mode: str):
     cfg = launch_cfg(share, session)
     dpaths = data_paths(share, session)
     params = param_file_list(share, session)
+    profile = check_profile(arg('calibrate_profile'), mode)
+    keep = None
+    if profile == 'lite':
+        keep = lite_keep(cfg)
+        params = with_lite_overlay(params, share)
     cameras = load_yaml(dpaths['data.cameras'])
     uwb = load_yaml(dpaths['data.uwb'])
     agent = uwb['agent']
@@ -223,7 +269,8 @@ def build(context, mode: str):
         SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', shm_xml),
         SetEnvironmentVariable('CARBOT_DATA', root),
         SetEnvironmentVariable('CARBOT_MODE', mode),
-        LogInfo(msg=f'[carbot] mode={mode} domain={domain} data_root={root}'),
+        LogInfo(msg=f'[carbot] mode={mode} domain={domain} data_root={root}'
+                    + (f' profile=LITE (only {keep}; step 13 needs profile:=full)' if keep is not None else '')),
         LogInfo(msg=f'[carbot] calibration session: {session or "NONE"}'
                     + ('' if session or mode == 'calibrate' else
                        '  -> race_supervisor will REFUSE TO ARM until a calibration is saved')),
@@ -254,9 +301,10 @@ def build(context, mode: str):
 
     drivers = []
     if truthy('start_cameras'):
-        drivers.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('astra_camera'), 'launch',
-            cameras['sensors']['astra'].get('launch_file', 'astra_mini.launch.py')))))
+        a_pkg, a_file, a_args = astra_launch(cameras['sensors']['astra'])
+        drivers.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(get_package_share_directory(a_pkg), 'launch', a_file)),
+            launch_arguments=[tuple(x.split(':=', 1)) for x in a_args]))
         for i, s in enumerate(mipi_sensors(cameras)):
             cmd = root_helper_cmd(cfg, share, 'run_mipi_cam.sh', [
                 s['namespace'], str(s['channel']), str(s['image_width']), str(s['image_height']),
@@ -301,11 +349,11 @@ def build(context, mode: str):
 
     # ---------------------------------------------------------------- 5. base nodes
     if truthy('start_base'):
-        base = [node(pkg, exe, extra_params=False) for pkg, exe in BASE_NODES]
+        base = [node(pkg, exe, extra_params=False) for pkg, exe in select_nodes(BASE_NODES, keep)]
         later.append(TimerAction(period=float(cfg.get('delay_base_nodes_s', 2.0)), actions=base))
 
     # ---------------------------------------------------------------- 6. carbot stack + GUI
-    stack = [node(pkg, exe) for pkg, exe in CARBOT_NODES['common'] + CARBOT_NODES[mode]]
+    stack = [node(pkg, exe) for pkg, exe in select_nodes(CARBOT_NODES['common'], keep) + CARBOT_NODES[mode]]
     later.append(TimerAction(period=float(cfg.get('delay_stack_s', 4.0)), actions=stack))
     later.append(TimerAction(period=float(cfg.get('delay_gui_s', 5.0)),
                              actions=[node('carbot_gui', 'gui_server')]))
@@ -326,6 +374,11 @@ def declare_arguments():
         DeclareLaunchArgument('start_cameras', default_value='true'),
         DeclareLaunchArgument('start_lidar', default_value='true'),
         DeclareLaunchArgument('start_uwb_agent', default_value='true'),
+        DeclareLaunchArgument('calibrate_profile', default_value='full',
+                              description="calibrate.launch.py only: 'lite' starts just the nodes in "
+                                          "drivers.yaml carbot_launch.calibrate_lite_keep and lowers GUI/"
+                                          "monitor rates (calibrate_lite.yaml). Steps 1-12 only; "
+                                          "step 13 needs 'full'."),
         DeclareLaunchArgument('start_base', default_value='true',
                               description='servo_controller + tunnel_wall_follower (base repo)'),
     ]

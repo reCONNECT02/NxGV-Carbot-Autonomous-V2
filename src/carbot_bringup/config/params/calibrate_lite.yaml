@@ -1,0 +1,28 @@
+# =============================================================================
+# calibrate_lite.yaml -- OPTIONAL overlay for  calibrate.launch.py calibrate_profile:=lite
+# Loaded AFTER the normal params files (and before the session overlay), only in that profile.
+# It may only CHANGE keys that already exist in the normal YAML (no key added or renamed) and
+# lowers rates so the RDK is not saturated (BACKLOG #23/#42). Race mode never loads this file.
+# Not needed for step 13 (practice runs): it needs the full stack (calibrate_profile:=full).
+# =============================================================================
+gui_server:
+  ros__parameters:
+    state_rate_hz: 5.0              # was 10
+    map_rate_hz: 1.0                # was 2
+    lidar_rate_hz: 3.0              # was 5
+    candidates_rate_hz: 2.0         # was 5
+    image_max_fps: 3.0              # was 5
+    grid_rate_hz: 1.0               # was 2
+    control_history_hz: 5.0         # was 10
+
+road_perception:
+  ros__parameters:
+    process_rate_hz: 4.0            # was 8 (steps 4/9 take their own frames, not this stream)
+
+# Only the topics whose nodes the lite profile still starts (parallel arrays, same order as ops.yaml).
+system_monitor:
+  ros__parameters:
+    watch_topics: [/camera/color/image_raw, /cam_ov5647/image_raw, /cam_imx219/image_raw,
+                   /scan, /odom, /imu/rpy, /uwb3/input_json, /carbot/perception/road_grid,
+                   /carbot/owner/state, /carbot/uwb/ranges, /carbot/safety/status]
+    watch_expected_hz: [15.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 10.0, 50.0]

@@ -22,12 +22,19 @@ sensors:
   astra:
     enabled: true
     driver: astra_camera
-    launch_file: astra_mini.launch.py      # base repo launch, reused unchanged
+    # 2026-09-24 (BACKLOG #48): colour only. astra_rgb.launch.py drops the depth/IR streams, D2C
+    # alignment, point clouds and camera TF that astra_mini.launch.py ran (astra_camera_container was
+    # 67 % of a core). Old behaviour: launch_package astra_camera, launch_file astra_mini.launch.py,
+    # no launch_args. launch_args = sensor keys below handed to the launch as key:=value.
+    launch_package: carbot_bringup
+    launch_file: astra_rgb.launch.py
+    launch_args: [width, height, fps]
     image_topic: /camera/color/image_raw
-    width: 640
-    height: 480
+    width: 320                             # what the driver really published (was 640 here, 320 in the driver)
+    height: 240                            # calibration step 3 intrinsics are for this size
+    fps: 15                                # was 30
     encoding: rgb8
-    expected_hz: 30.0
+    expected_hz: 15.0
     intrinsics_file: ""                    # calibration step 3
   ov5647:
     enabled: false               # 2026-09-23 risabot5: MIPI frame errors (bndry/seq_frm_fatal), side cameras dropped

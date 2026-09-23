@@ -75,14 +75,30 @@ def find_heads(outputs: Sequence[np.ndarray], nc: int, reg_max: int, input_size:
 
 
 def decode_level(cls: np.ndarray, box: np.ndarray, stride: int, thresh: np.ndarray, reg_max: int):
-    """One stride level -> (xyxy at the model input size, scores, class ids)."""
-    h, w = cls.shape[:2]
-    scores = 1.0 / (1.0 + np.exp(-np.clip(cls, -30.0, 30.0)))
-    cid = np.argmax(scores, axis=-1)
-    best = np.take_along_axis(scores, cid[..., None], axis=-1)[..., 0]
-    ys, xs = np.where(best >= thresh[cid])
+    """One stride level -> (xyxy at the model input size, scores, class ids).
+
+    Same result as sigmoid(cls) -> argmax -> threshold, without the sigmoid over every class score of
+    every cell (BACKLOG #52, ~117k exp per frame on the RDK): sigmoid is monotonic, so the best class
+    and the threshold test are done on the raw logits and only the cells that pass are converted."""
+    with np.errstate(divide='ignore'):
+        # logit(threshold); a threshold >= 1 (ignored class) can never pass -> +inf
+        t = np.where(thresh >= 1.0, np.inf, np.log(thresh / np.maximum(1.0 - thresh, 1e-12)))
+    finite = t[np.isfinite(t)]
+    empty = (np.empty((0, 4), np.float32), np.empty((0,), np.float32), np.empty((0,), np.int32))
+    if finite.size == 0:
+        return empty
+    # cheap pass: a cell can only pass if its best logit clears the lowest threshold; argmax only on those
+    ys, xs = np.where(cls.max(axis=-1) >= finite.min())
     if ys.size == 0:
-        return np.empty((0, 4), np.float32), np.empty((0,), np.float32), np.empty((0,), np.int32)
+        return empty
+    sub = cls[ys, xs]
+    cid = np.argmax(sub, axis=-1)
+    best = sub[np.arange(len(cid)), cid]
+    ok = best >= t[cid]
+    if not ok.any():
+        return empty
+    ys, xs, cid, best = ys[ok], xs[ok], cid[ok], best[ok]
+    best_p = 1.0 / (1.0 + np.exp(-np.clip(best, -30.0, 30.0)))
     ltrb = box[ys, xs].reshape(-1, 4, reg_max)
     ltrb = ltrb - ltrb.max(axis=-1, keepdims=True)
     e = np.exp(ltrb)
@@ -90,7 +106,7 @@ def decode_level(cls: np.ndarray, box: np.ndarray, stride: int, thresh: np.ndarr
     gx, gy = xs.astype(np.float32) + 0.5, ys.astype(np.float32) + 0.5
     boxes = np.stack([(gx - off[:, 0]) * stride, (gy - off[:, 1]) * stride,
                       (gx + off[:, 2]) * stride, (gy + off[:, 3]) * stride], axis=1)
-    return boxes.astype(np.float32), best[ys, xs].astype(np.float32), cid[ys, xs].astype(np.int32)
+    return boxes.astype(np.float32), best_p.astype(np.float32), cid.astype(np.int32)
 
 
 def nms(boxes: np.ndarray, scores: np.ndarray, iou: float) -> List[int]:

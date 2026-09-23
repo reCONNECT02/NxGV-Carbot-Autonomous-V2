@@ -12,6 +12,7 @@ from typing import Optional, Tuple
 import numpy as np
 from carbot_common import topics as T
 from carbot_common.qos import SENSOR
+from carbot_common.static_tf import StaticMount
 from carbot_interfaces.msg import LocalGrid
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
@@ -185,30 +186,18 @@ def scan_hits(scan, pose, mount, max_range: float) -> Optional[np.ndarray]:
 
 
 class LaserMount:
-    """base_link -> laser_frame from the static TF (looked up once), else the
-    fallback (vehicle.lidar_x_m, 0, 0)."""
+    """base_link -> laser_frame from the static TF (latched /tf_static only, no /tf listener),
+    else the fallback (vehicle.lidar_x_m, 0, 0) until it arrives."""
 
     def __init__(self, node, use_tf: bool, base: str, laser: str, fallback):
         self.mount = tuple(fallback)
-        self.base, self.laser = base, laser
-        self._buf = None
-        if use_tf:
-            from tf2_ros import Buffer, TransformListener
-            self._buf = Buffer()
-            self._listener = TransformListener(self._buf, node)
+        self._static = StaticMount(node, base, laser) if use_tf else None
 
     def get(self):
-        if self._buf is None:
-            return self.mount
-        try:
-            from rclpy.time import Time
-            tr = self._buf.lookup_transform(self.base, self.laser, Time())
-            q = tr.transform.rotation
-            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            self.mount = (tr.transform.translation.x, tr.transform.translation.y, yaw)
-            self._buf = None
-        except Exception:  # noqa: BLE001  static TF not there yet: keep the fallback
-            pass
+        if self._static is not None:
+            got = self._static.get()
+            if got is not None:
+                self.mount = got
         return self.mount
 
 

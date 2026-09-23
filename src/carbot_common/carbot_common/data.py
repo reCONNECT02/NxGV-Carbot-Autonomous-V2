@@ -7,7 +7,7 @@ data.track_features, data.mission_rules (phase 4),
 data.calibration_steps (a calibration session may override the repo default).
 """
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -36,6 +36,21 @@ def sensor_enabled(cameras: Dict[str, Any], name: str) -> bool:
     if 'enabled' not in s:
         raise KeyError(f'cameras.yaml sensors.{name}.enabled missing')
     return bool(s['enabled'])
+
+
+def astra_launch(astra: Dict[str, Any]) -> Tuple[str, str, List[str]]:
+    """(package, launch file, ['key:=value', ...]) for cameras.yaml sensors.astra.
+
+    launch_file defaults to the base astra_mini.launch.py in package astra_camera (old behaviour).
+    launch_package overrides the package (carbot_bringup astra_rgb.launch.py). launch_args lists
+    sensor keys handed to the launch as key:=value (e.g. [width, height, fps]); a listed key that
+    is missing is an error, never a silent default."""
+    args = []
+    for key in astra.get('launch_args', []):
+        if key not in astra:
+            raise KeyError(f'cameras.yaml sensors.astra.launch_args lists {key!r} but sensors.astra.{key} is missing')
+        args.append(f'{key}:={astra[key]}')
+    return astra.get('launch_package', 'astra_camera'), astra.get('launch_file', 'astra_mini.launch.py'), args
 
 
 def unconfirmed_roles(cameras: Dict[str, Any]) -> List[str]:

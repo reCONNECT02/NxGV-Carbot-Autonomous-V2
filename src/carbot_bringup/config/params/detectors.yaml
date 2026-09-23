@@ -22,10 +22,15 @@ bpu_detector:
     # Canonical name per model class. "" = ignored (not decoded into detections).
     # Triggers (drive mission states): traffic_light_* and boom_gate_*.
     # Everything else is INFO: shown in the GUI Detections tab and the rosbag, drives nothing.
-    class_map: [end_of_tunnel_sign, hill_sign, obstacle_sign, parallel_parking_sign,
-                perpendicular_parking_sign, roundabout_sign,
+    # 2026-09-24 (BACKLOG #52): only the traffic light, boom gate and speed bump drive anything, so the
+    # 8 INFO-only signs are ignored ("") = no NMS, no publishing, no Detections-tab entries for them.
+    # To show them again put the names back:
+    #   class_map: [end_of_tunnel_sign, hill_sign, obstacle_sign, parallel_parking_sign,
+    #               perpendicular_parking_sign, roundabout_sign, "", traffic_signals_ahead_sign, tunnel_sign,
+    #               traffic_light_red, traffic_light_yellow, traffic_light_green, boom_gate_closed, boom_gate_open]
+    class_map: ["", "", "", "", "", "",
                 "",                         # speed_bump_sign: NOT TRAINED yet (team, phase 6). Map to speed_bump_sign when it is.
-                traffic_signals_ahead_sign, tunnel_sign,
+                "", "",
                 traffic_light_red, traffic_light_yellow, traffic_light_green,
                 boom_gate_closed, boom_gate_open]
     # Per-trigger confidence (team laptop-measured operating points).

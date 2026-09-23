@@ -5,6 +5,9 @@
 * Starts every sensor and every block so each step can show its live
   diagnostic view, plus calibration_wizard and (optionally) the joystick for
   the driving steps.
+* calibrate_profile:=lite (default full) starts only the nodes in drivers.yaml
+  carbot_launch.calibrate_lite_keep and loads params/calibrate_lite.yaml (lower GUI/monitor
+  rates). For steps 1-12 on a loaded RDK; step 13 (practice runs) needs the full profile.
 * The previous ACTIVE session is loaded as the starting point; the wizard
   writes a NEW timestamped session folder (older ones are never deleted, so
   you can roll back with race.launch.py session:=NAME).
