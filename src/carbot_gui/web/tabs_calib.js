@@ -2,7 +2,7 @@
  *   TABS.calibration  Overview: every step, sessions + rollback.
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
- * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3). Every other step is a placeholder that shows its
+ * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3), servo_steering (step 7). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
