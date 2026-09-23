@@ -21,6 +21,7 @@ Pure pieces (no rclpy, unit tested, used by the steps and the mock server):
                                  one "drive until" leg: .start(now, inputs) / .tick(now, inputs, cmd) -> result | None
   DriveKit(cmd, servo, owner, accept_s)   what a driving step's constructor takes
   DictParams(values)             in-memory stand-in for ParamLink (tests, mock server)
+  SimCar(meter, cmd, servo, ...) synthetic car that obeys the DriveCommand (tests, mock server)
 ROS glue (rclpy imported lazily):
   ParamLink(node, target, timeout_s)   non-blocking get(names, done) / set(values, done) on another node
   WizardDrive(node, cfg)               publisher + subscriptions + ParamLinks; .cmd .meter .servo .owner .kit
@@ -269,6 +270,43 @@ class DictParams:
         self.values.update(values)
         self.sets.append(dict(values))
         done(True)
+
+
+class SimCar:
+    """Tiny kinematic car for the tests and the GUI mock (no physics claims): obeys the
+    DriveCommand like the command owner would (CALIBRATION_RAW only), feeds a DriveMeter.
+
+    speed = duty * mps_per_duty. Base angular.z of +-1 is a full lock; a physical LEFT lock is
+    z == true_sign (the base default steer_sign -1). At z = 0 the car curves by
+    (true_center - servo.values['servo_center']) * k_per_unit (+ = left, base convention:
+    a larger servo angle turns right)."""
+
+    def __init__(self, meter: DriveMeter, cmd: DriveCommand, servo: DictParams, true_sign: float = -1.0,
+                 radius_left: float = 0.38, radius_right: float = 0.41, true_center: int = 93,
+                 k_per_unit: float = 0.02, mps_per_duty: float = 2.0):
+        self.meter, self.cmd, self.servo = meter, cmd, servo
+        self.true_sign, self.rl, self.rr = float(true_sign), float(radius_left), float(radius_right)
+        self.true_center, self.ku, self.gain = int(true_center), float(k_per_unit), float(mps_per_duty)
+        self.x = self.y = self.th = 0.0
+        self.blocked = False          # True = the owner refuses (e.g. not calibrate mode)
+
+    def curvature(self, z: float) -> float:
+        if abs(z) < 1e-6:
+            return (self.true_center - int(self.servo.values.get('servo_center', self.true_center))) * self.ku
+        left = (z > 0) == (self.true_sign > 0)
+        return abs(z) / self.rl if left else -abs(z) / self.rr
+
+    def step(self, now: float, dt: float) -> None:
+        c = None if self.meter.estop or self.blocked else self.cmd.current(now)
+        v = float(c[1]) * self.gain if c and c[0] == RAW else 0.0
+        k = self.curvature(float(c[2])) if c else 0.0
+        self.th += v * k * dt
+        self.x += v * math.cos(self.th) * dt
+        self.y += v * math.sin(self.th) * dt
+        self.meter.on_odom(now, self.x, self.y, v)
+        self.meter.on_yaw_deg(now, math.degrees(math.atan2(math.sin(self.th), math.cos(self.th))))
+        self.meter.on_owner(now, 'DISARMED' if self.blocked else (c[0] if c else 'DISARMED'),
+                            'mode race' if self.blocked else '')
 
 
 # --------------------------------------------------------------------------- ROS glue

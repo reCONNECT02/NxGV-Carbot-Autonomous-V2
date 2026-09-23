@@ -2,11 +2,14 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
-                                             [--sensors ok|bad] [--data-root DIR]
+                                             [--sensors ok|bad] [--data-root DIR] [--seed-passed N]
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
 makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
+Step 7 (servo_steering) drives a synthetic car (wizard_drive.SimCar: R 0.38 / 0.41 m, servo
+centre off by 3 units) through the real step logic; Stop motors / release work.
+--seed-passed 6 starts a session with steps 1-6 already PASS, so step 7 can be run at once.
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -29,6 +32,7 @@ REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_gui'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_ops'))
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_control'))
 from carbot_gui import gui_core as G  # noqa: E402
 
 WEB = os.path.join(REPO, 'src', 'carbot_gui', 'web')
@@ -281,15 +285,26 @@ class MockWizard:
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_sensor_health import SensorHealthStep
+        from carbot_ops.step_servo_steering import ServoSteeringStep
+        from carbot_ops import wizard_drive as wd
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
+        step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        # step 7: synthetic car driven through the same DriveCommand the real wizard publishes
+        self.meter, self.cmd = wd.DriveMeter(3000), wd.DriveCommand(0.6)
+        self.servo = wd.DictParams({'servo_center': 90, 'servo_range_left': 50, 'servo_range_right': 70})
+        self.owner = wd.DictParams({'mode': 'calibrate', 'steering.steer_sign': -1.0})
+        self.car = wd.SimCar(self.meter, self.cmd, self.servo)
+        self.t_sim = time.monotonic()
+        kit = wd.DriveKit(self.cmd, self.servo, self.owner, 1.0)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
-                              'camera_identity': CameraIdentityStep(step2, self.cams)})
+                              'camera_identity': CameraIdentityStep(step2, self.cams),
+                              'servo_steering': ServoSteeringStep(step7, 0.216, kit)})
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -313,7 +328,20 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return {'snap': snap, 'health_seq': self.seq, **self.drive_inputs()}
+
+    def drive_inputs(self):
+        now = time.monotonic()
+        while self.t_sim + 0.05 <= now:
+            self.t_sim += 0.05
+            self.car.step(self.t_sim, 0.05)
+        return {'drive': self.meter.snapshot(now, 0.5), 'drive_history': self.meter.history}
+
+    def estop(self, pressed):
+        self.meter.on_estop(time.monotonic(), pressed)
+        if pressed:
+            self.cmd.stop()
+            self.wiz.cancel_running('STOP MOTORS pressed')
 
     def tick(self):
         self.wiz.tick(self.inputs())
@@ -345,11 +373,20 @@ def main():
     ap.add_argument('--port', type=int, default=8081)
     ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
     ap.add_argument('--data-root', default='')
+    ap.add_argument('--seed-passed', type=int, default=0, help='calibrate: new session with steps 1..N already PASS')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
     if a.mode == 'calibrate':
         import tempfile
         root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
+        if a.seed_passed > 0:
+            import yaml
+            from carbot_common import calibration_store as cs
+            steps = yaml.safe_load(open(os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data',
+                                                     'calibration_steps.yaml')))['steps']
+            session = cs.open_session(root)
+            for x in steps[:a.seed_passed]:
+                cs.update_step(session, x['id'], 'PASS', '')
         mock.wiz = MockWizard(a.sensors, root)
         print(f'calibration sessions -> {root}')
 
@@ -403,8 +440,10 @@ def main():
                 mock.manual = bool(body.get('on'))
                 mock.events.add('manual', 'bad' if mock.manual else 'warn', 'gui', 'Manual control ' + ('ON' if mock.manual else 'OFF'))
                 return self._send(200, {'ok': True, 'message': 'Manual control ' + ('ON' if mock.manual else 'OFF')})
-            if p == '/api/estop':
-                mock.estop = True
+            if p in ('/api/estop', '/api/estop_release'):
+                mock.estop = p == '/api/estop'
+                if mock.mode == 'calibrate':
+                    mock.wiz.estop(mock.estop)
                 return self._send(200, {'ok': True})
             if p == '/api/calibration/action':
                 if mock.mode != 'calibrate':

@@ -435,6 +435,88 @@ STEP_PAGES.camera_intrinsics = (st, live) => {
     actions: calActions(st, 'Run next camera') };
 };
 
+/* ---- step 7: servo centre + steering limits (the wizard drives the car through the command owner) */
+STEP_PAGES.servo_steering = st => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 7 cannot run', lv.error, 'Fix calibration_steps.yaml / ops.yaml calibration_wizard.drive, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, 'Run circles') };
+  const running = st.status === 'RUNNING';
+  const lim = lv.limits || {};
+  const circ = lv.circles || {};
+  const runs = lv.straight_runs || [];
+  const drv = lv.drive || {};
+  const hasCircles = !!(circ.left && circ.right);
+  const r = st.result;
+  /* circles done, no straight run yet: not a failure, just the next run to do (no red box) */
+  const interim = !running && r && st.unsaved && !r.passed && !r.aborted && r.next === 'straight' && !(r.straight_runs || []).length;
+  const ins = Cal.list(st.meta.instructions);
+  let stage = hasCircles ? 2 : 1;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && !interim && i === stage]));
+
+  /* controls: e-stop reminder, input state, the two runs */
+  const act = (st.result || st.saved_status) ? 'REDO' : 'RUN';
+  const blocked = running || !!lv.input_problem;
+  const runsLeft = Math.max(0, (lv.max_runs || 0) - runs.length);
+  let ctl = Cal.alert('bad', 'The car drives by itself', 'Clear flat floor of about 1.5 x 2.5 m. Keep STOP MOTORS (header) under your finger: one press stops the car and cancels the run.');
+  const okTxt = (ok, name) => `<span class="${ok ? 'ok-t' : 'bad-t'}">${name} ${ok ? 'ok' : 'missing'}</span>`;
+  ctl += `<p style="margin:8px 0;font-size:12.5px">${okTxt(drv.odom_ok, '/odom')} · ${okTxt(drv.imu_ok, '/imu/rpy')} · ` +
+    `${drv.estop ? '<span class="bad-t">STOP MOTORS pressed</span>' : '<span class="ok-t">STOP MOTORS released</span>'}` +
+    ` · owner: <b>${Cal.esc(drv.owner_winner || '—')}</b></p>`;
+  if (lv.input_problem && !running) ctl += Cal.alert('bad', 'Cannot drive yet', lv.input_problem);
+  ctl += `<button class="btn ${hasCircles ? '' : 'primary'}" data-act="${act}" data-arg="circles" ${blocked ? 'disabled' : ''}>` +
+    `Run circles<small>Full LEFT lock, then full RIGHT lock, until ${Cal.esc(lim.circle_yaw_deg)}° each (starts the step over)</small></button>`;
+  ctl += `<button class="btn ${hasCircles ? 'primary' : ''}" data-act="${act}" data-arg="straight" ${blocked || !hasCircles || !runsLeft ? 'disabled' : ''}>` +
+    `Straight run<small>${hasCircles ? `${Cal.esc(lim.straight_run_m)} m straight ahead; ${runsLeft} of ${Cal.esc(lv.max_runs)} runs left` : 'Run circles first'}</small></button>`;
+
+  /* live view */
+  const seg = lv.segment;
+  const run = st.run || {};
+  const PH = { params: 'Reading servo_controller / command_owner parameters', left: 'Left circle (full LEFT lock)', right: 'Right circle (full RIGHT lock)',
+    straight: `Straight run ${runs.length + 1}`, apply: 'Setting servo_center live' };
+  let liveHtml = `<div class="panel"><h3>Live drive <small>raw duty ${Cal.esc(lim.raw_duty)}${lv.servo_center != null ? ` · servo_center ${Cal.esc(lv.servo_center)}` : ''}${lv.steer_sign != null ? ` · steer_sign ${Cal.esc(lv.steer_sign)}` : ''}</small></h3>`;
+  if (running) {
+    liveHtml += `<p style="margin:0 0 6px;font-size:15px"><b>${Cal.esc(PH[lv.phase] || lv.phase || 'Starting')}</b></p>` +
+      `<div class="bar" style="margin:6px 0"><i style="width:${Math.round((run.fraction || 0) * 100)}%"></i></div>`;
+    if (seg) liveHtml += `<div class="kv"><span>Yaw turned</span><b>${D.f(seg.yaw_deg, 1)}°${lv.phase !== 'straight' ? ` of ${Cal.esc(lim.circle_yaw_deg)}°` : ''}</b>` +
+      `<span>Distance</span><b>${D.f(seg.distance_m, 2)} m${lv.phase === 'straight' ? ` of ${Cal.esc(lim.straight_run_m)} m` : ` (max ${Cal.esc(lim.circle_max_distance_m)} m)`}</b>` +
+      (lv.phase !== 'straight' ? `<span>Radius so far</span><b>${seg.radius_m != null ? D.f(seg.radius_m, 3) + ' m' : '—'}</b>`
+        : `<span>Drift so far</span><b>${seg.drift_m_per_m != null ? D.f(seg.drift_m_per_m * 100, 2) + ' cm/m' : '—'}</b>`) +
+      `<span>Owner</span><b class="${seg.accepted ? 'ok-t' : 'warn-t'}">${seg.accepted ? 'driving (CALIBRATION_RAW)' : 'waiting for the command owner'}</b>` +
+      `<span>State</span><b>${Cal.esc(seg.state)} · ${D.f(seg.elapsed_s, 1)} s</b></div>`;
+  }
+  const yes = ok => `<td class="${ok ? 'ok-t' : 'bad-t'}">${ok ? 'ok' : 'fail'}</td>`;
+  liveHtml += `<table class="calcheck" style="margin-top:8px"><tr><th>Circle</th><th class="r">Distance</th><th class="r">Yaw</th><th class="r">Radius</th><th></th></tr>` +
+    ['left', 'right'].map(s => { const c = circ[s]; return c ? `<tr><td>${s === 'left' ? 'Left lock' : 'Right lock'}</td><td class="r">${D.f(c.distance_m, 2)} m</td>` +
+      `<td class="r">${D.f(c.yaw_deg, 0)}°</td><td class="r">${D.f(c.radius_m, 3)} m</td><td class="${c.ok ? 'ok-t' : 'bad-t'}">${c.ok ? 'ok' : 'wrong way'}</td></tr>`
+      : `<tr class="muted"><td>${s === 'left' ? 'Left lock' : 'Right lock'}</td><td class="r" colspan="4">not run</td></tr>`; }).join('') +
+    `<tr><td colspan="5" class="muted" style="font-size:11.5px">Pass: larger radius <= ${Cal.esc(lim.min_radius_m_max)} m</td></tr></table>`;
+  liveHtml += `<table class="calcheck" style="margin-top:8px"><tr><th>Straight run</th><th class="r">Distance</th><th class="r">Yaw</th><th class="r">Drift</th><th class="r">servo_center</th><th></th></tr>` +
+    (runs.length ? runs.map((r, i) => `<tr><td>Run ${i + 1}</td><td class="r">${D.f(r.distance_m, 2)} m</td><td class="r">${D.f(r.yaw_deg, 1)}°</td>` +
+      `<td class="r">${D.f(r.drift_m_per_m * 100, 2)} cm/m</td><td class="r">${Cal.esc(r.servo_center)}</td>${yes(r.ok)}</tr>`).join('')
+      : '<tr class="muted"><td colspan="6">none yet</td></tr>') +
+    `<tr><td colspan="6" class="muted" style="font-size:11.5px">Pass: drift <= ${D.f((lim.straight_drift_m_per_m || 0) * 100, 1)} cm/m. A failed run corrects servo_center live.</td></tr></table></div>`;
+
+  /* result: the CLI's checks dict stays in the file; the table uses check_rows */
+  let result = st.message && !interim ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '';
+  if (running) result += Cal.alert('info', 'Driving…', 'The result appears here when the car has stopped.');
+  else {
+    if (interim) result += Cal.alert('info', 'Circles measured: next, the straight run', r.summary) +
+      `<table class="metric"><tr><th>Check</th><th class="r">Measured</th><th class="r">Limit</th><th>Result</th></tr>` +
+      (r.check_rows || []).map(c => `<tr><td>${Cal.esc(c.label)}</td><td class="r">${Cal.esc(c.measured)}</td><td class="r">${Cal.esc(c.limit)}</td>` +
+        `<td class="${c.passed ? 'ok-t' : 'muted'}">${c.passed ? 'pass' : 'to do'}</td></tr>`).join('') + '</table>';
+    else result += calResult(r ? Object.assign({}, st, { result: Object.assign({}, r, { checks: r.check_rows || [] }) }) : st);
+    if (r && r.note) result += `<p style="margin:8px 0 0"><b>Last run:</b> ${Cal.esc(r.note)}</p>`;
+    if (r && r.steering) result += `<table class="metric" style="margin-top:8px"><tr><th>Writes</th><th class="r">Value</th></tr>` +
+      `<tr><td>servo_controller.servo_center</td><td class="r">${Cal.esc(r.servo_center)}</td></tr>` +
+      `<tr><td>command_owner.steering.steer_sign</td><td class="r">${Cal.esc(r.steering.steer_sign)}</td></tr>` +
+      `<tr><td>steering.left_max_rad / right_max_rad</td><td class="r">${D.f(r.steering.left_max_rad, 3)} / ${D.f(r.steering.right_max_rad, 3)}</td></tr>` +
+      `<tr><td>vehicle.min_turning_radius_m</td><td class="r">${D.f(r.min_turning_radius_m, 3)}</td></tr></table>`;
+  }
+  return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
+};
+
 /* ---- a built step without a custom page (fallback) */
 STEP_PAGES._generic = st => ({
   todo: Cal.todo(Cal.list(st.meta.instructions).map(t => [t, 'todo'])),
