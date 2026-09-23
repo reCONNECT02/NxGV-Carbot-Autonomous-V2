@@ -2,12 +2,15 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
-                                             [--sensors ok|bad] [--data-root DIR]
+                                             [--sensors ok|bad] [--data-root DIR] [--practice]
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
 makes the LiDAR silent and adds a duplicate mipi_cam so the failure path can be seen.
 Sessions are written to --data-root (default: a temp folder).
+--practice (calibrate): every step except 13 made optional IN THE MOCK ONLY, so the step-13
+practice page can be tried at once; a synthetic mission enters the chosen challenge 3 s
+after Start attempt and leaves it 6 s later.
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
 GUI changes without the car. Data shapes match carbot_gui/gui_server.py; the
@@ -274,22 +277,30 @@ class Mock:
 
 
 class MockWizard:
-    """Real wizard_core + steps 1-2 against synthetic SystemHealth/UwbStatus snapshots."""
+    """Real wizard_core + steps 1-2 and 13 against synthetic SystemHealth/UwbStatus/mission snapshots."""
 
-    def __init__(self, sensors, root):
+    def __init__(self, sensors, root, practice=False):
         import yaml
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
+        from carbot_ops.step_practice_runs import PracticeRunsStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
+        step13 = next(x for x in self.steps['steps'] if x['id'] == 'practice_runs')
+        if practice:                     # mock only: unlock step 13 without passing 1-11
+            for x in self.steps['steps']:
+                x['required'] = False
+        self.practice = PracticeRunsStep(step13, ld('challenges.yaml'))
+        self.mission_events, self.mission_seq, self.mission_mark = [], 0, None
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
-                              'camera_identity': CameraIdentityStep(step2, self.cams)})
+                              'camera_identity': CameraIdentityStep(step2, self.cams),
+                              'practice_runs': self.practice})
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -313,7 +324,26 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return dict({'snap': snap, 'health_seq': self.seq}, **self.mission())
+
+    def mission(self):
+        """Synthetic mission for step 13: enter the attempted challenge after 3 s, leave 6 s later."""
+        cur, now = self.practice.cur, time.time()
+        st = {'mode': 'ROAD', 'challenge_id': 0, 'challenge_name': '', 'hold_reason': '', 'banner': '', 'age_s': 0.1}
+        if cur is None:
+            self.mission_mark = None
+        else:
+            if self.mission_mark is None or self.mission_mark[0] != cur['n']:
+                self.mission_mark = (cur['n'], now)
+            dt = now - self.mission_mark[1]
+            if 3.0 <= dt < 9.0:
+                st.update(challenge_id=cur['challenge'], challenge_name=cur['name'])
+                if self.mission_seq == 0 or self.mission_events[-1]['n'] != cur['n']:
+                    self.mission_seq += 1
+                    self.mission_events.append({'seq': self.mission_seq, 'n': cur['n'], 'name': 'CHALLENGE',
+                                                'detail': f'Entered challenge {cur["challenge"]}: {cur["name"]}',
+                                                'challenge_id': cur['challenge']})
+        return {'mission': st, 'mission_events': self.mission_events[-50:], 'armed': True, 'manual': False}
 
     def tick(self):
         self.wiz.tick(self.inputs())
@@ -345,12 +375,13 @@ def main():
     ap.add_argument('--port', type=int, default=8081)
     ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
     ap.add_argument('--data-root', default='')
+    ap.add_argument('--practice', action='store_true', help='calibrate: unlock step 13 (mock only)')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
     if a.mode == 'calibrate':
         import tempfile
         root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
-        mock.wiz = MockWizard(a.sensors, root)
+        mock.wiz = MockWizard(a.sensors, root, a.practice)
         print(f'calibration sessions -> {root}')
 
     class Handler(http.server.BaseHTTPRequestHandler):
