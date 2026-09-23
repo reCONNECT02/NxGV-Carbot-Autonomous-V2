@@ -16,7 +16,8 @@ Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImp
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
 step 6: step_imu_odometry, step 7: step_servo_steering,
-step 9: step_venue_thresholds, step 13: step_practice_runs).
+step 9: step_venue_thresholds, step 12: step_mission_planner,
+step 13: step_practice_runs).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -31,6 +32,7 @@ import time
 import traceback
 
 import rclpy
+from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
 from carbot_common import topics as T
 from carbot_common.data import load_data
@@ -53,6 +55,7 @@ from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
 from .step_servo_steering import ServoSteeringStep
+from .step_mission_planner import MissionPlannerStep
 from .step_practice_runs import PracticeRunsStep
 from .step_sensor_health import SensorHealthStep
 from .step_venue_thresholds import VenueThresholdsStep
@@ -161,6 +164,8 @@ class CalibrationWizard(CarbotNode):
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
             'venue_thresholds': lambda s: VenueThresholdsStep(s, cameras),
+            'mission_planner': lambda s: MissionPlannerStep(s, ct.bringup_config_dir(),
+                                                            lambda: self.wiz.session if self.wiz else None),
             'practice_runs': lambda s: PracticeRunsStep(s, load_data(self, 'challenges')),
         }
         impls = {}

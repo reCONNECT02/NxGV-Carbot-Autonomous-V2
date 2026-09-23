@@ -18,6 +18,8 @@ straight away.
 Step 9 (venue thresholds) runs against MockVenue: a synthetic road_perception grid +
 stitched colours (venue road lighter than V4, a 35 % dark tunnel) and its classify.*
 parameters (--skip-to 9 unlocks the page at once).
+Step 12 (mission planner) runs the real tools/map planner on the repo track_map.yaml
+(--skip-to 12 unlocks the page at once).
 Step 13 (practice runs) sees a synthetic mission: it enters the chosen challenge 3 s after
 Start attempt and leaves it 6 s later (--skip-to 13 unlocks the page at once).
 Sessions are written to --data-root (default: a temp folder).
@@ -417,7 +419,7 @@ class MockVenue:
 
 
 class MockWizard:
-    """Real wizard_core + steps 1, 2, 6, 7, 9 and 13 against synthetic SystemHealth/UwbStatus/mission
+    """Real wizard_core + steps 1, 2, 6, 7, 9, 12 and 13 against synthetic SystemHealth/UwbStatus/mission
     snapshots, MockCar and MockVenue."""
 
     def __init__(self, sensors, root, skip_to=0):
@@ -427,6 +429,7 @@ class MockWizard:
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
         from carbot_ops.step_servo_steering import ServoSteeringStep
+        from carbot_ops.step_mission_planner import MissionPlannerStep
         from carbot_ops.step_practice_runs import PracticeRunsStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
@@ -436,6 +439,8 @@ class MockWizard:
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
         step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        step12 = next(x for x in self.steps['steps'] if x['id'] == 'mission_planner')
+        sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_planning'))      # step 12 race-time route check
         step13 = next(x for x in self.steps['steps'] if x['id'] == 'practice_runs')
         self.motion, self.servo, self.drive = MotionRecorder(), MockServo(), MockDrive()
         owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0})
@@ -451,6 +456,8 @@ class MockWizard:
                               'camera_identity': CameraIdentityStep(step2, self.cams),
                               'imu_odometry': self.step6, 'servo_steering': self.step7,
                               'venue_thresholds': self.venue.step,
+                              'mission_planner': MissionPlannerStep(step12, os.path.dirname(data),
+                                                                    lambda: self.wiz.session),
                               'practice_runs': self.practice})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
