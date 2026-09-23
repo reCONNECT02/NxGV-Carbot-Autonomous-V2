@@ -2,7 +2,9 @@
 """GUI mock server: the real carbot_gui web/ files with synthetic data, no ROS.
 
     python3 tools/sandbox/gui_mock_server.py [--mode race|calibrate] [--scenario drive|stop] [--port 8081]
-                                             [--sensors ok|bad] [--data-root DIR]
+                                             [--sensors ok|bad] [--data-root DIR] [--prepass N]
+
+--prepass 8 marks steps 1-8 passed so step 9 (venue thresholds, synthetic road grid) can be run.
 
 Calibrate mode runs the REAL calibration wizard logic (carbot_ops.wizard_core +
 step_sensor_health on the repo YAML) against a synthetic sensor feed; --sensors bad
@@ -273,10 +275,60 @@ class Mock:
         return {}
 
 
+class MockVenue:
+    """Step 9: road_perception's grid + stitched colours and its classify.* parameters, synthetic.
+    Venue road lighter than V4 (luma ~125), cream tape at +-0.15 m, coloured floor outside;
+    the tunnel sample sees the same scene at 35 % brightness."""
+    N, RES, X0, Y0 = 100, 0.018, -0.65, -0.9
+
+    def __init__(self, steps, cams):
+        from carbot_ops.step_venue_thresholds import VenueThresholdsStep
+        cfg = next(x for x in steps['steps'] if x['id'] == 'venue_thresholds')
+        self.step = VenueThresholdsStep(cfg, cams)
+        self.vals = {'classify.road_max_luma': 105, 'classify.road_max_chroma': 50, 'classify.paint_min_luma': 190}
+        self.seq = 0
+
+    # fake ParamLink (answers at once)
+    def get(self, names, done):
+        done({n: self.vals.get(n) for n in names})
+
+    def set(self, values, done):
+        self.vals.update(values)
+        done(True)
+
+    def _scene(self):
+        import numpy as np
+        from carbot_ops import step_venue_thresholds as svt
+        n = self.N
+        rng = np.random.RandomState(self.seq % 50)
+        c = self.X0 + (np.arange(n) + 0.5) * self.RES
+        gx, gy = np.meshgrid(c, self.Y0 + (np.arange(n) + 0.5) * self.RES, indexing='ij')
+        seen = (gx > 0.466) & (np.abs(gy) < 0.15 + 0.5 * (gx - 0.466))
+        img = np.full((n, n, 3), 125.0)
+        img[(np.abs(gy) > 0.14) & (np.abs(gy) < 0.175)] = 215
+        img[np.abs(gy) >= 0.30] = (90, 150, 190)
+        img += rng.randn(n, n, 1) * 4 + rng.randn(n, n, 3) * 1.5
+        r = self.step.run
+        dark = 0.35 if r and r['phase'] == 'tunnel' else 1.0
+        img = np.clip(img * dark, 0, 255).astype(np.uint8)
+        luma, chroma = svt.luma_chroma(img)
+        kind = svt.classify(luma, chroma, {k.split('.')[1]: v for k, v in self.vals.items()})
+        kind[~seen] = svt.UNSEEN
+        return img, {'rows': n, 'cols': n, 'res': self.RES, 'x0': self.X0, 'y0': self.Y0, 'kind': kind, 'age_s': 0.1}
+
+    def pair(self):
+        self.seq += 1
+        img, g = self._scene()
+        return self.seq, g, img
+
+    def inputs(self):
+        return {'road_grid': lambda: self._scene()[1], 'road_pair': self.pair, 'road_params': self}
+
+
 class MockWizard:
     """Real wizard_core + steps 1-2 against synthetic SystemHealth/UwbStatus snapshots."""
 
-    def __init__(self, sensors, root):
+    def __init__(self, sensors, root, prepass=0):
         import yaml
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
@@ -286,10 +338,18 @@ class MockWizard:
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
+        if prepass:                              # --prepass N: steps 1..N PASS, so a later page can run
+            from carbot_common import calibration_store as cs
+            ses = cs.open_session(root)
+            for x in self.steps['steps']:
+                if int(x['index']) <= prepass:
+                    cs.update_step(ses, x['id'], 'PASS', '', summary='mock prepass')
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams)})
+        self.venue = MockVenue(self.steps, self.cams)       # step 9 (venue thresholds)
+        self.wiz.impls['venue_thresholds'] = self.venue.step
         self.sensors, self.seq, self.t_last = sensors, 0, 0.0
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
@@ -313,7 +373,7 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return dict({'snap': snap, 'health_seq': self.seq}, **self.venue.inputs())
 
     def tick(self):
         self.wiz.tick(self.inputs())
@@ -345,12 +405,13 @@ def main():
     ap.add_argument('--port', type=int, default=8081)
     ap.add_argument('--sensors', default='ok', choices=['ok', 'bad'])
     ap.add_argument('--data-root', default='')
+    ap.add_argument('--prepass', type=int, default=0, help='calibrate: mark steps 1..N passed (to try a later page)')
     a = ap.parse_args()
     mock = Mock(a.mode, a.scenario)
     if a.mode == 'calibrate':
         import tempfile
         root = a.data_root or tempfile.mkdtemp(prefix='carbot_mock_data_')
-        mock.wiz = MockWizard(a.sensors, root)
+        mock.wiz = MockWizard(a.sensors, root, a.prepass)
         print(f'calibration sessions -> {root}')
 
     class Handler(http.server.BaseHTTPRequestHandler):

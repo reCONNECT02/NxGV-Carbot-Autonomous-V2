@@ -435,6 +435,110 @@ STEP_PAGES.camera_intrinsics = (st, live) => {
     actions: calActions(st, 'Run next camera') };
 };
 
+/* ---- step 9: venue colour / lighting thresholds (road_perception classify.*, measured from its own output) */
+function calVenueMap(m) {
+  /* mini map of road_perception's grid (seen part): forward up, left on the left (V4 bev_view flip),
+   * one rect per run of equal cells per row; sample boxes outlined */
+  if (!m || !m.rows) return '<div class="empty">No road grid from road_perception yet.</div>';
+  const COL = ['rgb(24,33,48)', 'rgb(40,110,160)', 'rgb(249,240,202)', 'rgb(69,80,95)'];
+  const R = m.rows, C = m.cols, k = m.kinds || '';
+  let rects = '';
+  for (let r = 0; r < R; r++) {
+    const y = R - 1 - r;
+    let c = 0;
+    while (c < C) {
+      const v = k[r * C + c]; let e = c + 1;
+      while (e < C && k[r * C + e] === v) e++;
+      rects += `<rect x="${C - e}" y="${y}" width="${e - c}" height="1" fill="${COL[+v] || COL[0]}"/>`;
+      c = e;
+    }
+  }
+  const BOX = { road: ['#2ecc71', 'open road box'], tunnel: ['#f1c40f', 'tunnel box'] };
+  let boxes = '';
+  Object.entries(m.boxes || {}).forEach(([p, b]) => {
+    if (!b) return;
+    const [r0, r1, c0, c1] = b;
+    boxes += `<rect x="${C - 1 - c1}" y="${R - 1 - r1}" width="${c1 - c0 + 1}" height="${r1 - r0 + 1}" fill="none" stroke="${(BOX[p] || ['#fff'])[0]}" stroke-width="0.6"${p === 'tunnel' ? ' stroke-dasharray="1.5 1"' : ''}/>`;
+  });
+  const legend = Object.keys(m.boxes || {}).map(p => `<span style="color:${(BOX[p] || ['#fff'])[0]}">▭ ${Cal.esc((BOX[p] || ['', p])[1])}</span>`).join(' · ');
+  return `<svg viewBox="0 0 ${C} ${R}" style="width:100%;max-height:260px;background:rgb(24,33,48);border-radius:8px" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges">${rects}${boxes}</svg>` +
+    `<p class="muted" style="font-size:12px;margin:4px 0 0">Forward is up, the car is just below the picture. Blue = road, cream = tape, grey = other. ${legend}</p>`;
+}
+
+STEP_PAGES.venue_thresholds = (st) => {
+  const lv = st.live || {};
+  if (lv.error && !lv.phases) return { live: Cal.alertBad('Step 9 cannot run', lv.error, 'Fix calibration_steps.yaml / cameras.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, 'Run') };
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const run = lv.run || (st.run ? { phase: st.run.phase, state: st.run.state } : null);
+  const samples = lv.samples || {};
+  const phases = lv.phases || ['road'];
+  const pct = v => v == null ? '—' : `${D.f(v * 100, 1)} %`;
+  const lim = lv.limits || {};
+  const sampled = phases.every(p => samples[p]);
+  let stage = 0;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  else if (sampled) stage = lv.applied_ok ? ins.length - 1 : 3;
+  else if (samples.road) stage = 2;
+  else if (running && run && run.phase === 'road') stage = 1;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  /* controls (every button is a RUN with the phase as argument; Cancel is in the actions row) */
+  const btn = (arg, label, small, primary, off) => `<button class="btn ${primary ? 'primary' : ''}" data-act="RUN" data-arg="${arg}" ${running || off ? 'disabled' : ''}>${Cal.esc(label)}<small>${Cal.esc(small)}</small></button>`;
+  let ctl = lv.error ? Cal.alertBad('Last action failed', lv.error) : '';
+  ctl += btn('road', samples.road ? 'Sample open road again' : 'Sample open road', 'Car in the middle of a straight lane, green box on bare road', lv.next === 'road');
+  if (lv.tunnel_check) ctl += btn('tunnel', samples.tunnel ? 'Sample tunnel again' : 'Sample tunnel', 'Car in the tunnel, yellow box on the tunnel floor', lv.next === 'tunnel');
+  ctl += btn('apply', 'Apply live', 'Sets the proposed values on road_perception now (Save keeps them)', sampled && !lv.applied_ok, !lv.proposal);
+  if (lv.original && lv.current && JSON.stringify(lv.original) !== JSON.stringify(lv.current)) {
+    ctl += btn('revert', 'Put back the old values', 'What road_perception had before this step changed it', false, false);
+  }
+  const P = ['road_max_luma', 'road_max_chroma', 'paint_min_luma'];
+  const cur = lv.current || {}, org = lv.original || {}, prop = lv.proposal || {};
+  const val = v => Cal.esc(v == null ? '—' : v);
+  ctl += `<table class="calcheck" style="margin-top:10px"><tr><th>road_perception classify.</th><th class="r">Before</th><th class="r">Live now</th><th class="r">Proposed</th></tr>` +
+    P.map(k => `<tr><td>${k}</td><td class="r">${val(org[k])}</td><td class="r">${val(cur[k])}</td><td class="r"><b>${val(prop[k])}</b></td></tr>`).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:6px 0 0">${lv.applied_ok ? 'The proposed values are running on road_perception.' : 'Live now = what road_perception uses at this moment.'} ` +
+    'Rule (V4): road if luma &lt; road_max_luma and colour &lt; road_max_chroma, else tape if luma &gt; paint_min_luma.</p>' +
+    (lv.bpu_note ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${Cal.esc(lv.bpu_note)}</p>` : '');
+
+  /* live: road_perception's grid now, and the samples (before / after) */
+  const now = lv.now || {};
+  const LAB = { road: 'Open road', tunnel: 'Tunnel' };
+  let liveHtml = `<div class="panel"><h3>Road grid (road_perception) <small>${lv.grid_age_s != null ? `${D.f(lv.grid_age_s, 1)} s old` : 'waiting'} · cameras: ${Cal.esc((lv.cameras || []).join(', '))}</small></h3>` +
+    calVenueMap(lv.map) +
+    `<table class="calcheck" style="margin-top:8px"><tr><th>Box, right now</th><th class="r">Cells</th><th class="r">Road</th><th class="r">Tape</th></tr>` +
+    phases.map(p => {
+      const n = now[p] || {};
+      return `<tr><td>${LAB[p] || p}</td><td class="r">${n.cells == null ? '—' : n.cells}</td>` +
+        `<td class="r ${n.road != null && n.road < (lim.min_road_coverage || 0) ? 'bad-t' : ''}">${pct(n.road)}</td>` +
+        `<td class="r ${n.paint != null && n.paint > (lim.max_false_paint_ratio == null ? 1 : lim.max_false_paint_ratio) ? 'bad-t' : ''}">${pct(n.paint)}</td></tr>`;
+    }).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:6px 0 0">Only the box the car is placed for means anything. Limits: road ≥ ${pct(lim.min_road_coverage)}, tape ≤ ${pct(lim.max_false_paint_ratio)} of the box.</p></div>`;
+  const rows = phases.filter(p => samples[p]).map(p => samples[p]);
+  if (rows.length) {
+    liveHtml += `<div class="panel"><h3>Samples <small>before = thresholds live while sampling · after = proposed</small></h3>` +
+      `<table class="metric"><tr><th>Sample</th><th class="r">Road before → after</th><th class="r">Tape in box before → after</th><th class="r">Road luma mean / bright end</th><th class="r">Tape luma dark end</th></tr>` +
+      rows.map(s => `<tr><td>${Cal.esc(s.label)}<br><span class="muted" style="font-size:11.5px">${s.frames} frames · ${s.box_cells} cells · decode ${pct(s.decode_agreement)}</span></td>` +
+        `<td class="r">${pct(s.before.road)} → <b>${pct(s.after.road)}</b></td><td class="r">${pct(s.before.paint)} → <b>${pct(s.after.paint)}</b></td>` +
+        `<td class="r">${D.f(s.road_luma_mean, 0)} / ${D.f(s.road_luma_hi, 0)}</td>` +
+        `<td class="r">${s.tape_luma_lo != null ? D.f(s.tape_luma_lo, 0) : '—'} <span class="muted">(${s.tape_cells} cells)</span></td></tr>`).join('') + '</table>' +
+      (lv.notes || []).map(n => Cal.alert('info', 'Note', n)).join('') + '</div>';
+  }
+
+  let result;
+  if (running && run) {
+    const r = st.run || {};
+    const what = run.phase === 'apply' ? 'Applying the values on road_perception…' : run.phase === 'revert' ? 'Putting back the old values…'
+      : run.state === 'reading' ? 'Reading road_perception\'s current values…' : `Sampling ${LAB[run.phase] || run.phase}… ${D.f(r.remaining_s, 0)} s left`;
+    result = `<div class="alert info"><b class="t">${Cal.esc(what)}</b>${run.frames || r.samples || 0} stitched frames. Keep everyone out of the camera picture.</div>` +
+      `<div class="bar"><i style="width:${Math.round((r.fraction || 0) * 100)}%"></i></div>`;
+  } else result = calResult(st);
+  return { todo, ctl, live: liveHtml, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + result,
+    actions: calActions(st, null) };
+};
+
 /* ---- a built step without a custom page (fallback) */
 STEP_PAGES._generic = st => ({
   todo: Cal.todo(Cal.list(st.meta.instructions).map(t => [t, 'todo'])),
