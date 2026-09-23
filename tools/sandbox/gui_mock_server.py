@@ -15,6 +15,13 @@ from the wizard's CALIBRATION_RAW requests (MockDrive): full-lock radii 0.42 / 0
 it drives straight at servo_center 93 (repo YAML 90), so the first straight run corrects.
 --skip-to N records MOCK passes for steps 1..N-1 in a new session so step N can be run
 straight away.
+Step 9 (venue thresholds) runs against MockVenue: a synthetic road_perception grid +
+stitched colours (venue road lighter than V4, a 35 % dark tunnel) and its classify.*
+parameters (--skip-to 9 unlocks the page at once).
+Step 12 (mission planner) runs the real tools/map planner on the repo track_map.yaml
+(--skip-to 12 unlocks the page at once).
+Step 13 (practice runs) sees a synthetic mission: it enters the chosen challenge 3 s after
+Start attempt and leaves it 6 s later (--skip-to 13 unlocks the page at once).
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -361,8 +368,59 @@ class MockCar:
             self.rec.on_imu(self.t, wrap_deg(wrap_deg(self.raw_yaw) * v['imu_yaw_scale']))
 
 
+class MockVenue:
+    """Step 9: road_perception's grid + stitched colours and its classify.* parameters, synthetic.
+    Venue road lighter than V4 (luma ~125), cream tape at +-0.15 m, coloured floor outside;
+    the tunnel sample sees the same scene at 35 % brightness."""
+    N, RES, X0, Y0 = 100, 0.018, -0.65, -0.9
+
+    def __init__(self, steps, cams):
+        from carbot_ops.step_venue_thresholds import VenueThresholdsStep
+        cfg = next(x for x in steps['steps'] if x['id'] == 'venue_thresholds')
+        self.step = VenueThresholdsStep(cfg, cams)
+        self.vals = {'classify.road_max_luma': 105, 'classify.road_max_chroma': 50, 'classify.paint_min_luma': 190}
+        self.seq = 0
+
+    # fake ServoLink on road_perception (answers at once)
+    def get(self, names, done):
+        done({n: self.vals.get(n) for n in names})
+
+    def set(self, values, done):
+        self.vals.update(values)
+        done(True)
+
+    def _scene(self):
+        import numpy as np
+        from carbot_ops import step_venue_thresholds as svt
+        n = self.N
+        rng = np.random.RandomState(self.seq % 50)
+        c = self.X0 + (np.arange(n) + 0.5) * self.RES
+        gx, gy = np.meshgrid(c, self.Y0 + (np.arange(n) + 0.5) * self.RES, indexing='ij')
+        seen = (gx > 0.466) & (np.abs(gy) < 0.15 + 0.5 * (gx - 0.466))
+        img = np.full((n, n, 3), 125.0)
+        img[(np.abs(gy) > 0.14) & (np.abs(gy) < 0.175)] = 215
+        img[np.abs(gy) >= 0.30] = (90, 150, 190)
+        img += rng.randn(n, n, 1) * 4 + rng.randn(n, n, 3) * 1.5
+        r = self.step.run
+        dark = 0.35 if r and r['phase'] == 'tunnel' else 1.0
+        img = np.clip(img * dark, 0, 255).astype(np.uint8)
+        luma, chroma = svt.luma_chroma(img)
+        kind = svt.classify(luma, chroma, {k.split('.')[1]: v for k, v in self.vals.items()})
+        kind[~seen] = svt.UNSEEN
+        return img, {'rows': n, 'cols': n, 'res': self.RES, 'x0': self.X0, 'y0': self.Y0, 'kind': kind, 'age_s': 0.1}
+
+    def pair(self):
+        self.seq += 1
+        img, g = self._scene()
+        return self.seq, g, img
+
+    def inputs(self):
+        return {'road_grid': lambda: self._scene()[1], 'road_pair': self.pair, 'road_params': self}
+
+
 class MockWizard:
-    """Real wizard_core + steps 1, 2, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
+    """Real wizard_core + steps 1, 2, 6, 7, 9, 12 and 13 against synthetic SystemHealth/UwbStatus/mission
+    snapshots, MockCar and MockVenue."""
 
     def __init__(self, sensors, root, skip_to=0):
         import yaml
@@ -371,6 +429,8 @@ class MockWizard:
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
         from carbot_ops.step_servo_steering import ServoSteeringStep
+        from carbot_ops.step_mission_planner import MissionPlannerStep
+        from carbot_ops.step_practice_runs import PracticeRunsStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
@@ -379,16 +439,26 @@ class MockWizard:
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
         step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        step12 = next(x for x in self.steps['steps'] if x['id'] == 'mission_planner')
+        sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_planning'))      # step 12 race-time route check
+        step13 = next(x for x in self.steps['steps'] if x['id'] == 'practice_runs')
         self.motion, self.servo, self.drive = MotionRecorder(), MockServo(), MockDrive()
         owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0})
         self.car = MockCar(self.motion, self.servo, self.drive)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
         self.step7 = ServoSteeringStep(step7, self.motion, self.servo, owner, self.drive, 0.216)
+        self.practice = PracticeRunsStep(step13, ld('challenges.yaml'))
+        self.mission_events, self.mission_seq, self.mission_mark = [], 0, None
+        self.venue = MockVenue(self.steps, self.cams)       # step 9 (venue thresholds)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
-                              'imu_odometry': self.step6, 'servo_steering': self.step7})
+                              'imu_odometry': self.step6, 'servo_steering': self.step7,
+                              'venue_thresholds': self.venue.step,
+                              'mission_planner': MissionPlannerStep(step12, os.path.dirname(data),
+                                                                    lambda: self.wiz.session),
+                              'practice_runs': self.practice})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
             for x in self.wiz.slots:
@@ -421,7 +491,26 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return dict({'snap': snap, 'health_seq': self.seq}, **self.venue.inputs(), **self.mission())
+
+    def mission(self):
+        """Synthetic mission for step 13: enter the attempted challenge after 3 s, leave 6 s later."""
+        cur, now = self.practice.cur, time.time()
+        st = {'mode': 'ROAD', 'challenge_id': 0, 'challenge_name': '', 'hold_reason': '', 'banner': '', 'age_s': 0.1}
+        if cur is None:
+            self.mission_mark = None
+        else:
+            if self.mission_mark is None or self.mission_mark[0] != cur['n']:
+                self.mission_mark = (cur['n'], now)
+            dt = now - self.mission_mark[1]
+            if 3.0 <= dt < 9.0:
+                st.update(challenge_id=cur['challenge'], challenge_name=cur['name'])
+                if self.mission_seq == 0 or self.mission_events[-1]['n'] != cur['n']:
+                    self.mission_seq += 1
+                    self.mission_events.append({'seq': self.mission_seq, 'n': cur['n'], 'name': 'CHALLENGE',
+                                                'detail': f'Entered challenge {cur["challenge"]}: {cur["name"]}',
+                                                'challenge_id': cur['challenge']})
+        return {'mission': st, 'mission_events': self.mission_events[-50:], 'armed': True, 'manual': False}
 
     def tick(self):
         self.car.update(self.step6)

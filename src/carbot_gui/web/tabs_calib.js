@@ -3,7 +3,8 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7), venue_thresholds (step 9), mission_planner (step 12),
+ * practice_runs (step 13). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -98,6 +99,7 @@ TABS.calstep = {
       <div class="side"><div data-k="cams"></div><div class="panel" data-k="cambox" hidden><h3 data-k="camlbl"></h3>
           <div class="cam" data-k="cam"><img alt="camera"><span class="none">No image yet: is the camera preview running?</span>
           <svg data-k="camsvg" viewBox="0 0 1 1" preserveAspectRatio="none" style="position:absolute;inset:0;pointer-events:none"></svg></div></div>
+        <div data-k="widget"></div>
         <div data-k="live"></div>
         <div class="panel"><h3>Result</h3><div data-k="result"></div><div class="actions" data-k="actions"></div></div>
         <details class="panel" data-k="embedbox" hidden><summary data-k="embedsum" style="cursor:pointer;font-weight:650"></summary><div data-k="embed" style="margin-top:12px"></div></details>
@@ -147,6 +149,16 @@ TABS.calstep = {
       const col = cam.color || 'var(--ok)';
       q('camsvg').innerHTML = pts.map(([u, v]) => `<circle cx="${u}" cy="${v}" r="0.008" fill="${col}" />`).join('') +
         (pts.length > 1 ? `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="0.003" />` : '');
+    }
+
+    /* ---- persistent page widget (out.widget = {id, create(box, ctx) -> {update(data), destroy()}, data}):
+     *      created once per id, so canvases and edits survive the 2 Hz re-render (step 12 map) */
+    let wid = null;
+    function setWidget(w) {
+      if (wid && (!w || wid.id !== w.id)) { if (wid.inst.destroy) wid.inst.destroy(); wid = null; q('widget').innerHTML = ''; }
+      if (!w) return;
+      if (!wid) wid = { id: w.id, inst: w.create(q('widget'), ctx) };
+      wid.inst.update(w.data);
     }
 
     /* ---- selecting this step on the wizard (its live view follows the open page) */
@@ -227,6 +239,7 @@ TABS.calstep = {
       q('result').innerHTML = out.result || '';
       q('actions').innerHTML = out.actions || '';
       drawCam(out.cam);
+      setWidget(out.widget);
       const tab = Cal.TAB[(st.meta && st.meta.tab) || ''];
       const box = q('embedbox');
       if (tab && TABS[tab]) {
@@ -235,7 +248,7 @@ TABS.calstep = {
         q('embedsum').textContent = `Live ${ctx.cfg.tabs.find(t => t.id === tab)?.title || tab} tab (opens its data only while expanded)`;
       } else box.hidden = true;
     }
-    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); stopCams(); camLoop.destroy(); } };
+    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); stopCams(); camLoop.destroy(); setWidget(null); } };
   },
 };
 
@@ -631,6 +644,419 @@ STEP_PAGES.servo_steering = st => {
       '<p class="muted" style="font-size:12px;margin:6px 0 0">servo_center is live now; the steering limits apply from the next launch of this session.</p>';
   }
   return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
+};
+
+/* ---- step 9: venue colour / lighting thresholds (road_perception classify.*, measured from its own output) */
+function calVenueMap(m) {
+  /* mini map of road_perception's grid (seen part): forward up, left on the left (V4 bev_view flip),
+   * one rect per run of equal cells per row; sample boxes outlined */
+  if (!m || !m.rows) return '<div class="empty">No road grid from road_perception yet.</div>';
+  const COL = ['rgb(24,33,48)', 'rgb(40,110,160)', 'rgb(249,240,202)', 'rgb(69,80,95)'];
+  const R = m.rows, C = m.cols, k = m.kinds || '';
+  let rects = '';
+  for (let r = 0; r < R; r++) {
+    const y = R - 1 - r;
+    let c = 0;
+    while (c < C) {
+      const v = k[r * C + c]; let e = c + 1;
+      while (e < C && k[r * C + e] === v) e++;
+      rects += `<rect x="${C - e}" y="${y}" width="${e - c}" height="1" fill="${COL[+v] || COL[0]}"/>`;
+      c = e;
+    }
+  }
+  const BOX = { road: ['#2ecc71', 'open road box'], tunnel: ['#f1c40f', 'tunnel box'] };
+  let boxes = '';
+  Object.entries(m.boxes || {}).forEach(([p, b]) => {
+    if (!b) return;
+    const [r0, r1, c0, c1] = b;
+    boxes += `<rect x="${C - 1 - c1}" y="${R - 1 - r1}" width="${c1 - c0 + 1}" height="${r1 - r0 + 1}" fill="none" stroke="${(BOX[p] || ['#fff'])[0]}" stroke-width="0.6"${p === 'tunnel' ? ' stroke-dasharray="1.5 1"' : ''}/>`;
+  });
+  const legend = Object.keys(m.boxes || {}).map(p => `<span style="color:${(BOX[p] || ['#fff'])[0]}">▭ ${Cal.esc((BOX[p] || ['', p])[1])}</span>`).join(' · ');
+  return `<svg viewBox="0 0 ${C} ${R}" style="width:100%;max-height:260px;background:rgb(24,33,48);border-radius:8px" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges">${rects}${boxes}</svg>` +
+    `<p class="muted" style="font-size:12px;margin:4px 0 0">Forward is up, the car is just below the picture. Blue = road, cream = tape, grey = other. ${legend}</p>`;
+}
+
+STEP_PAGES.venue_thresholds = (st) => {
+  const lv = st.live || {};
+  if (lv.error && !lv.phases) return { live: Cal.alertBad('Step 9 cannot run', lv.error, 'Fix calibration_steps.yaml / cameras.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, 'Run') };
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  const run = lv.run || (st.run ? { phase: st.run.phase, state: st.run.state } : null);
+  const samples = lv.samples || {};
+  const phases = lv.phases || ['road'];
+  const pct = v => v == null ? '—' : `${D.f(v * 100, 1)} %`;
+  const lim = lv.limits || {};
+  const sampled = phases.every(p => samples[p]);
+  let stage = 0;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  else if (sampled) stage = lv.applied_ok ? ins.length - 1 : 3;
+  else if (samples.road) stage = 2;
+  else if (running && run && run.phase === 'road') stage = 1;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  /* controls (every button is a RUN with the phase as argument; Cancel is in the actions row) */
+  const btn = (arg, label, small, primary, off) => `<button class="btn ${primary ? 'primary' : ''}" data-act="RUN" data-arg="${arg}" ${running || off ? 'disabled' : ''}>${Cal.esc(label)}<small>${Cal.esc(small)}</small></button>`;
+  let ctl = lv.error ? Cal.alertBad('Last action failed', lv.error) : '';
+  ctl += btn('road', samples.road ? 'Sample open road again' : 'Sample open road', 'Car in the middle of a straight lane, green box on bare road', lv.next === 'road');
+  if (lv.tunnel_check) ctl += btn('tunnel', samples.tunnel ? 'Sample tunnel again' : 'Sample tunnel', 'Car in the tunnel, yellow box on the tunnel floor', lv.next === 'tunnel');
+  ctl += btn('apply', 'Apply live', 'Sets the proposed values on road_perception now (Save keeps them)', sampled && !lv.applied_ok, !lv.proposal);
+  if (lv.original && lv.current && JSON.stringify(lv.original) !== JSON.stringify(lv.current)) {
+    ctl += btn('revert', 'Put back the old values', 'What road_perception had before this step changed it', false, false);
+  }
+  const P = ['road_max_luma', 'road_max_chroma', 'paint_min_luma'];
+  const cur = lv.current || {}, org = lv.original || {}, prop = lv.proposal || {};
+  const val = v => Cal.esc(v == null ? '—' : v);
+  ctl += `<table class="calcheck" style="margin-top:10px"><tr><th>road_perception classify.</th><th class="r">Before</th><th class="r">Live now</th><th class="r">Proposed</th></tr>` +
+    P.map(k => `<tr><td>${k}</td><td class="r">${val(org[k])}</td><td class="r">${val(cur[k])}</td><td class="r"><b>${val(prop[k])}</b></td></tr>`).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:6px 0 0">${lv.applied_ok ? 'The proposed values are running on road_perception.' : 'Live now = what road_perception uses at this moment.'} ` +
+    'Rule (V4): road if luma &lt; road_max_luma and colour &lt; road_max_chroma, else tape if luma &gt; paint_min_luma.</p>' +
+    (lv.bpu_note ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${Cal.esc(lv.bpu_note)}</p>` : '');
+
+  /* live: road_perception's grid now, and the samples (before / after) */
+  const now = lv.now || {};
+  const LAB = { road: 'Open road', tunnel: 'Tunnel' };
+  let liveHtml = `<div class="panel"><h3>Road grid (road_perception) <small>${lv.grid_age_s != null ? `${D.f(lv.grid_age_s, 1)} s old` : 'waiting'} · cameras: ${Cal.esc((lv.cameras || []).join(', '))}</small></h3>` +
+    calVenueMap(lv.map) +
+    `<table class="calcheck" style="margin-top:8px"><tr><th>Box, right now</th><th class="r">Cells</th><th class="r">Road</th><th class="r">Tape</th></tr>` +
+    phases.map(p => {
+      const n = now[p] || {};
+      return `<tr><td>${LAB[p] || p}</td><td class="r">${n.cells == null ? '—' : n.cells}</td>` +
+        `<td class="r ${n.road != null && n.road < (lim.min_road_coverage || 0) ? 'bad-t' : ''}">${pct(n.road)}</td>` +
+        `<td class="r ${n.paint != null && n.paint > (lim.max_false_paint_ratio == null ? 1 : lim.max_false_paint_ratio) ? 'bad-t' : ''}">${pct(n.paint)}</td></tr>`;
+    }).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:6px 0 0">Only the box the car is placed for means anything. Limits: road ≥ ${pct(lim.min_road_coverage)}, tape ≤ ${pct(lim.max_false_paint_ratio)} of the box.</p></div>`;
+  const rows = phases.filter(p => samples[p]).map(p => samples[p]);
+  if (rows.length) {
+    liveHtml += `<div class="panel"><h3>Samples <small>before = thresholds live while sampling · after = proposed</small></h3>` +
+      `<table class="metric"><tr><th>Sample</th><th class="r">Road before → after</th><th class="r">Tape in box before → after</th><th class="r">Road luma mean / bright end</th><th class="r">Tape luma dark end</th></tr>` +
+      rows.map(s => `<tr><td>${Cal.esc(s.label)}<br><span class="muted" style="font-size:11.5px">${s.frames} frames · ${s.box_cells} cells · decode ${pct(s.decode_agreement)}</span></td>` +
+        `<td class="r">${pct(s.before.road)} → <b>${pct(s.after.road)}</b></td><td class="r">${pct(s.before.paint)} → <b>${pct(s.after.paint)}</b></td>` +
+        `<td class="r">${D.f(s.road_luma_mean, 0)} / ${D.f(s.road_luma_hi, 0)}</td>` +
+        `<td class="r">${s.tape_luma_lo != null ? D.f(s.tape_luma_lo, 0) : '—'} <span class="muted">(${s.tape_cells} cells)</span></td></tr>`).join('') + '</table>' +
+      (lv.notes || []).map(n => Cal.alert('info', 'Note', n)).join('') + '</div>';
+  }
+
+  let result;
+  if (running && run) {
+    const r = st.run || {};
+    const what = run.phase === 'apply' ? 'Applying the values on road_perception…' : run.phase === 'revert' ? 'Putting back the old values…'
+      : run.state === 'reading' ? 'Reading road_perception\'s current values…' : `Sampling ${LAB[run.phase] || run.phase}… ${D.f(r.remaining_s, 0)} s left`;
+    result = `<div class="alert info"><b class="t">${Cal.esc(what)}</b>${run.frames || r.samples || 0} stitched frames. Keep everyone out of the camera picture.</div>` +
+      `<div class="bar"><i style="width:${Math.round((r.fraction || 0) * 100)}%"></i></div>`;
+  } else result = calResult(st);
+  return { todo, ctl, live: liveHtml, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + result,
+    actions: calActions(st, null) };
+};
+
+/* ---- step 12: mission planner. Map (Global map renderer: gridLines + drawTrack) with the poses
+ *      P0..Pn placed by click (drag = heading), planned routes and their roundabout exits.
+ *      Poses are drafts in the browser until Run sends them: {"poses": [[x, y, yaw_deg], ...]}. */
+const MP_COL = ['#1D63E0', '#B04FD6', '#0FA3A3', '#4C9F38', '#C0392B'];
+function mpWrap(a) { return Math.atan2(Math.sin(a), Math.cos(a)); }
+function mpInPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [ax, ay] = poly[i], [bx, by] = poly[j];
+    if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) inside = !inside;
+  }
+  return inside;
+}
+/* = mission_planner.py Guide.place with snap on: inside a bay -> centred in it (Road.bay_pose),
+ *   else the nearest lane-centre point, heading along the lane closest to the car's (Road.lane_snap) */
+function mpSnap(p, t, car) {
+  const [x, y, yd] = p, a = yd * Math.PI / 180;
+  for (const ar of Object.values(t.areas || {})) {
+    if (ar.kind !== 'bay' || ar.heading == null || !mpInPoly(x, y, ar.poly)) continue;
+    const cx = ar.poly.reduce((s, q) => s + q[0], 0) / ar.poly.length, cy = ar.poly.reduce((s, q) => s + q[1], 0) / ar.poly.length;
+    let h = ar.heading;
+    if (Math.abs(mpWrap(a - h)) > Math.PI / 2) h = mpWrap(h + Math.PI);
+    const sh = (car.front - car.rear) / 2;
+    return [cx - sh * Math.cos(h), cy - sh * Math.sin(h), h * 180 / Math.PI];
+  }
+  let best = null;
+  for (const pts of Object.values(t.sections || {})) {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[i + 1], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      if (L2 < 1e-12) continue;
+      const u = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)), qx = ax + u * dx, qy = ay + u * dy;
+      const d = Math.hypot(x - qx, y - qy);
+      if (!best || d < best.d) best = { d, x: qx, y: qy, h: Math.atan2(dy, dx) };
+    }
+  }
+  if (!best) return p;
+  let h = best.h;
+  if (Math.abs(mpWrap(h - a)) > Math.PI / 2) h = mpWrap(h + Math.PI);
+  return [best.x, best.y, h * 180 / Math.PI];
+}
+function mpBody(p, car) {
+  const [x, y, yd] = p, a = yd * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return [[-car.rear, -car.half_w], [car.front, -car.half_w], [car.front, car.half_w], [-car.rear, car.half_w]]
+    .map(([u, v]) => [x + u * c - v * s, y + u * s + v * c]);
+}
+const mpSame = (a, b) => a && b && a.length === b.length && a.every((p, i) => p.every((v, k) => Math.abs(v - b[i][k]) < 1e-3));
+
+function MissionMap(box, ctx) {
+  box.innerHTML = `<div class="panel"><h3>Mission map <small data-k="mpsrc"></small></h3>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px"><div class="seg" data-k="mpsel"></div>
+      <button class="btn" data-mp="rot:5" title="Turn left 5°">⟲ 5°</button><button class="btn" data-mp="rot:-5" title="Turn right 5°">⟳ 5°</button>
+      <button class="btn" data-mp="flip" title="Turn the car round on the spot">Flip</button>
+      <label style="font-size:12.5px"><input type="checkbox" data-k="mpsnap"> Snap to lane / bay</label>
+      <button class="btn" data-mp="reset" title="Back to the saved / mission.yaml poses">Reset poses</button></div>
+    <div data-k="mpcv" style="touch-action:none;cursor:crosshair"></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 8px">Pick a pose above (P0 start … finish), then click on the map to place it; press and drag to set its heading (the drag direction).
+      Click a placed car to select it, drag to move it. Poses are rear-axle centre + heading, like mission.yaml.</p>
+    <div data-k="mptab"></div>
+    <div class="actions" style="margin-top:8px"><button class="btn primary" data-k="mprun" data-act="RUN">Plan routes</button><span class="hint" data-k="mphint"></span></div></div>`;
+  const q = k => box.querySelector(`[data-k="${k}"]`);
+  let poses = null, touched = false, sel = 0, data = null, drag = null, snap = null, o = null, v = null;
+
+  function send() {
+    const b = q('mprun');
+    b.dataset.arg = poses ? JSON.stringify({ poses: poses.map(p => p.map(x => Math.round(x * 10000) / 10000)) }) : '';
+  }
+  function fromServer(lv, st) {
+    const res = st.result || {};
+    if (lv.running && lv.running.poses) return lv.running.poses;
+    if (res.poses && res.poses.length) return res.poses.map(p => [p.x, p.y, p.yaw_deg]);
+    if (lv.plan && lv.plan.poses && lv.plan.poses.length) return lv.plan.poses;
+    return lv.default_poses || [];
+  }
+  function world(e) {
+    const r = o.cv.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  }
+  function draw() {
+    if (!o) return;
+    const { ctx: g, w, h } = o; g.clearRect(0, 0, w, h); g.fillStyle = D.css('--raised'); g.fillRect(0, 0, w, h);
+    const lv = data && data.lv, t = lv && lv.track;
+    if (!t) return;
+    v = D.fitView(t.bounds, w, h, 16);
+    gridLines(g, v, t.bounds, 0.5); drawTrack(g, v, t);
+    Object.entries(t.exits || {}).forEach(([k, p]) => D.label(g, v.X(p[0]), v.Y(p[1]), k, D.css('--panel'), D.css('--muted')));
+    const plan = lv.plan, stale = !plan || plan.stale || (touched && !mpSame(poses, plan.poses));
+    if (plan) (plan.routes || []).forEach((r, i) => (r.pieces || []).forEach(pc => {
+      let run = [], dir = null;
+      const flush = () => { if (run.length > 1) { g.globalAlpha = stale ? .35 : 1;
+        D.line(g, run, p => v.X(p[0]), p => v.Y(p[1]), dir < 0 ? '#E8871E' : MP_COL[i % MP_COL.length], stale ? 2 : 3.5); g.globalAlpha = 1; } };
+      pc.pts.forEach(p => { if (dir !== null && p[2] !== dir) { flush(); run = [run[run.length - 1]]; } dir = p[2]; run.push(p); });
+      flush();
+    }));
+    const res = (data.st.result || {}).poses || [];
+    (poses || []).forEach((p, i) => {
+      const r = res[i], checked = r && Math.abs(r.x - p[0]) < 1e-3 && Math.abs(r.y - p[1]) < 1e-3 && Math.abs(r.yaw_deg - p[2]) < .05;
+      const col = checked ? (r.fits ? D.css('--ok') : D.css('--bad')) : D.css('--muted');
+      const body = mpBody(p, lv.car);
+      D.path(g, body, q2 => v.X(q2[0]), q2 => v.Y(q2[1])); g.closePath();
+      g.globalAlpha = .18; g.fillStyle = col; g.fill(); g.globalAlpha = 1;
+      g.lineWidth = i === sel ? 3 : 1.5; g.strokeStyle = i === sel ? D.css('--lane') : col; g.stroke();
+      D.arrow(g, v.X(p[0]), v.Y(p[1]), p[2] * Math.PI / 180, i === sel ? 10 : 8, i === sel ? D.css('--lane') : col);
+      D.label(g, v.X(p[0]) + 18, v.Y(p[1]) - 16, 'P' + i, i === sel ? D.css('--lane') : D.css('--ink'), '#fff');
+    });
+  }
+  function table() {
+    const lv = data.lv, st = data.st, res = st.result || {}, rp = res.poses || [];
+    const n = lv.legs || 0;
+    q('mpsel').innerHTML = (poses || []).map((p, i) => `<button data-mp="sel:${i}" aria-pressed="${i === sel}">P${i}${i === 0 ? ' start' : i === n ? ' finish' : ''}</button>`).join('');
+    q('mptab').innerHTML = poses && poses.length ? `<table class="calcheck"><tr><th>Pose</th><th class="r">x m</th><th class="r">y m</th><th class="r">heading</th><th>On the road</th></tr>` +
+      poses.map((p, i) => {
+        const r = rp[i], checked = r && Math.abs(r.x - p[0]) < 1e-3 && Math.abs(r.y - p[1]) < 1e-3 && Math.abs(r.yaw_deg - p[2]) < .05;
+        return `<tr class="${i === sel ? 'cur' : ''}"><td><b>P${i}</b>${i === 0 ? ' start' : i === n ? ' finish' : ''}</td><td class="r">${D.f(p[0], 3)}</td><td class="r">${D.f(p[1], 3)}</td><td class="r">${D.f(p[2], 1)}°</td>` +
+          `<td class="${checked ? (r.fits ? 'ok-t' : 'bad-t') : 'muted'}">${checked ? (r.fits ? 'fits' : 'OFF ROAD') + ` (${D.f(r.margin_m * 100, 1)} cm)${r.bay ? ' · ' + Cal.esc(r.bay) : ''}` : 'checked on Run'}</td></tr>`;
+      }).join('') + '</table>' : '<div class="empty">No poses yet</div>';
+  }
+  function changed() { touched = true; send(); table(); draw(); }
+  box.addEventListener('click', e => {
+    const b = e.target.closest('[data-mp]'); if (!b || !poses) return;
+    const [k, a] = b.dataset.mp.split(':');
+    const car = data.lv.car;
+    if (k === 'sel') { sel = Number(a); table(); draw(); return; }
+    if (k === 'reset') { touched = false; poses = fromServer(data.lv, data.st).map(p => p.slice()); send(); table(); draw(); return; }
+    const p = poses[sel]; if (!p) return;
+    if (k === 'rot') p[2] = mpWrap((p[2] + Number(a)) * Math.PI / 180) * 180 / Math.PI;
+    if (k === 'flip') { const d = car.front - car.rear, r = p[2] * Math.PI / 180;
+      poses[sel] = [p[0] + d * Math.cos(r), p[1] + d * Math.sin(r), mpWrap(r + Math.PI) * 180 / Math.PI]; }
+    changed();
+  });
+  q('mpsnap').addEventListener('change', e => { snap = e.target.checked; });
+
+  return {
+    update(dd) {
+      data = dd;
+      const lv = dd.lv, st = dd.st;
+      if (snap === null) { snap = !!lv.snap; q('mpsnap').checked = snap; }
+      if (!o && lv.track) {
+        const b = lv.track.bounds;
+        o = D.canvas(q('mpcv'), Math.max(1.2, Math.min(2.4, (b[2] - b[0]) / Math.max(b[3] - b[1], 1e-3))), () => draw());
+        const cv = o.cv;
+        cv.addEventListener('pointerdown', e => {
+          if (!v || !poses || data.st.status === 'RUNNING') return;
+          const [px, py] = world(e);
+          let near = -1, dmin = 16;
+          poses.forEach((p, i) => { const d = Math.hypot(v.X(p[0]) - px, v.Y(p[1]) - py); if (d < dmin) { dmin = d; near = i; } });
+          const w0 = v.inv(px, py);
+          if (near >= 0) { sel = near; const p = poses[near]; drag = { mode: 'move', dx: w0[0] - p[0], dy: w0[1] - p[1], px, py }; }
+          else { poses[sel] = [w0[0], w0[1], poses[sel] ? poses[sel][2] : 0]; drag = { mode: 'rotate', px, py }; }
+          cv.setPointerCapture(e.pointerId); changed();
+        });
+        cv.addEventListener('pointermove', e => {
+          if (!drag || !v) return;
+          const [px, py] = world(e), wq = v.inv(px, py), p = poses[sel];
+          if (drag.mode === 'move') { if (Math.hypot(px - drag.px, py - drag.py) < 3) return; p[0] = wq[0] - drag.dx; p[1] = wq[1] - drag.dy; }
+          else if (Math.hypot(px - drag.px, py - drag.py) > 10) p[2] = Math.atan2(wq[1] - p[1], wq[0] - p[0]) * 180 / Math.PI;
+          else return;
+          drag.moved = true; draw(); table();
+        });
+        const up = () => {
+          if (!drag) return;
+          if (snap && (drag.mode === 'rotate' || drag.moved)) poses[sel] = mpSnap(poses[sel], data.lv.track, data.lv.car);
+          drag = null; changed();
+        };
+        cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+      }
+      const srv = fromServer(lv, st);
+      if (!touched || !poses || poses.length !== srv.length) { poses = srv.map(p => p.slice()); if (!srv.length) poses = null; touched = false; }
+      if (sel >= (poses || []).length) sel = 0;
+      const running = st.status === 'RUNNING';
+      const hasRun = !!(st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status;
+      const b = q('mprun');
+      b.dataset.act = hasRun ? 'REDO' : 'RUN';
+      b.textContent = running ? 'Planning…' : hasRun ? 'Plan again with these poses' : 'Plan routes';
+      b.disabled = running || !poses || !!lv.error;
+      q('mphint').textContent = running ? 'Cancel is below the result.' : touched && lv.plan && !mpSame(poses, lv.plan.poses)
+        ? 'Poses moved since the last plan: the routes drawn are old (faded). Press Plan again.' : '';
+      q('mpsrc').textContent = lv.map ? `${lv.map.source === 'session' ? 'this session\'s' : 'repo'} track_map.yaml · sha1 ${String(lv.map.sha1).slice(0, 10)}` : '';
+      send(); table(); draw();
+    },
+    destroy() { o = null; },
+  };
+}
+
+STEP_PAGES.mission_planner = st => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 12 cannot run', lv.error, 'Fix calibration_steps.yaml (mission_planner.procedure) or the map file, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, null) };
+  const ins = Cal.list(st.meta.instructions);
+  const running = st.status === 'RUNNING';
+  let stage = 1;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  else if (running) stage = ins.length - 1;
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+  const map = lv.map || {};
+  const ctl = `<div class="kv"><span>Map</span><b>${Cal.esc(map.source === 'session' ? 'this session (step 11)' : 'repo default')}</b>` +
+    `<span>File</span><b style="word-break:break-all">${Cal.esc(map.path || '—')}</b><span>sha1</span><b>${Cal.esc(String(map.sha1 || '').slice(0, 12))}</b>` +
+    `<span>Start poses from</span><b>${Cal.esc(lv.default_from || 'planner defaults')}</b></div>` +
+    '<p class="muted" style="font-size:12px;margin:8px 0 0">The routes and roundabout exits are chosen by the planner from these poses and saved in mission.yaml. ' +
+    'Race mode checks them against mission_rules.yaml roundabout_visits; the boom gate never changes them.</p>';
+
+  // routes + exits (from the run in progress, the last plan, or the saved mission.yaml)
+  const plan = lv.plan, legs = (st.result && st.result.legs) || [];
+  const run = lv.running;
+  let liveHtml = '';
+  if (running && run) {
+    const done = (run.done || []).filter(x => x !== null).length;
+    liveHtml = `<div class="panel"><h3>Planning <small>${Cal.esc(run.stage)}</small></h3>` +
+      Cal.alert('info', `Planning leg ${Math.max(1, (run.leg || 0) + 1)} of ${lv.legs}`, 'About a minute per leg on the car (a leg whose poses did not move is reused). Keep this page open or come back later.') +
+      `<div class="bar" style="margin-top:8px"><i style="width:${Math.round(100 * done / Math.max(1, lv.legs))}%"></i></div></div>`;
+  } else if (plan) {
+    liveHtml = `<div class="panel"><h3>Routes <small>${Cal.esc(plan.from)}${plan.stale ? ' · planned on a different map: press Plan again' : ''}</small></h3>` +
+      `<table class="calcheck"><tr><th>Leg</th><th>From → to</th><th class="r">Length</th><th>Roundabout exits</th><th>State</th></tr>` +
+      (plan.routes || []).map((r, i) => {
+        const L = legs[i] || {};
+        return `<tr${r.ok ? '' : ' class="badrow"'}><td><b style="color:${MP_COL[i % MP_COL.length]}">leg${i + 1}</b></td><td>P${i} → P${i + 1}${r.pieces && r.pieces.some(p => p.kind === 'manoeuvre') ? ' · parking' : ''}</td>` +
+          `<td class="r">${r.ok ? D.f(r.length_m, 2) + ' m' : '—'}</td><td>${r.ok ? Cal.esc((r.exits || []).join(', ') || 'none') : '—'}</td>` +
+          `<td class="${r.ok ? 'ok-t' : 'bad-t'}">${r.ok ? 'route' + (L.seconds ? ` (${D.f(L.seconds, 0)} s)` : '') : Cal.esc(r.reason || L.reason || 'no route')}</td></tr>`;
+      }).join('') + '</table><p class="muted" style="font-size:12px;margin:8px 0 0">Orange = reversing (parking manoeuvre preview; block 11 replans it from the observed bay).</p></div>';
+  }
+  const b07 = st.result && st.result.block07;
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + calResult(st);
+  if (!running && b07 && b07.visits && b07.visits.length) result += `<table class="metric" style="margin-top:8px"><tr><th>Roundabout visit</th><th>Leg</th><th>Exit</th></tr>` +
+    b07.visits.map(x => `<tr><td>${x.visit}</td><td>${Cal.esc(x.leg)}</td><td>${Cal.esc(x.exit)}</td></tr>`).join('') + '</table>';
+  if (running) result = Cal.alert('info', 'Planning…', 'The result appears here when every leg is planned and checked.');
+  return { todo, ctl, live: liveHtml, result, actions: calActions(st, null),
+    widget: { id: 'mission_map', create: MissionMap, data: { st, lv } } };
+};
+
+/* ---- step 13: per-challenge practice runs (optional). The page never drives: it records attempts
+ *      from /carbot/mission/state + events; the user grades them. RUN argument JSON {op: start|grade|done}. */
+STEP_PAGES.practice_runs = st => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 13 cannot run', lv.error, 'Fix calibration_steps.yaml / challenges.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, null) };
+  const running = st.status === 'RUNNING';
+  const cur = lv.current;
+  const rows = lv.challenges || [];
+  const atts = lv.attempts || [];
+  const levels = lv.levels || [];
+  const blocked = !!st.blocked_by;
+  const ins = Cal.list(st.meta.instructions);
+  const act = (st.result && st.unsaved) || st.status === 'FAIL' || st.saved_status ? 'REDO' : 'RUN';
+  const arg = o => Cal.esc(JSON.stringify(o));
+  const t = v => v == null ? '—' : D.f(v, 1) + ' s';
+  const LV = { EXCELLENT: 'ok-t', COMPLETED: 'ok-t', PARTIAL: 'warn-t', FAIL: 'bad-t' };
+  const lvl = v => v ? `<span class="${LV[v] || ''}">${Cal.esc(v.toLowerCase())}</span>` : '<span class="muted">not graded</span>';
+
+  let stage = 0;
+  if (st.saved_status === 'PASS' && !st.unsaved) stage = ins.length;
+  else if (st.status === 'PASS') stage = ins.length - 1;
+  else if (running) stage = 2;
+  else if ((lv.ungraded || []).length) stage = 3;
+  else if (lv.n_attempts) stage = ins.length - 1;
+  const todo = Cal.todo(ins.map((x, i) => [x, i < stage ? 'done' : i === stage ? 'now' : 'todo', false]));
+
+  /* controls: current attempt (Stop) or one Start button per challenge, then Practice done */
+  let ctl = '';
+  if (running && cur) {
+    ctl = `<div class="alert info"><b class="t">Recording attempt ${cur.n}: ${cur.challenge} · ${Cal.esc(cur.name)}</b>` +
+      `${D.f(cur.elapsed_s, 0)} s${cur.entered_s != null ? ` · in the challenge since ${D.f(cur.entered_s, 0)} s` : ' · mission has not entered it yet'}` +
+      `${cur.left_s != null ? ` · left at ${D.f(cur.left_s, 0)} s` : ''}</div>` +
+      `<button class="btn" data-act="CANCEL">Stop attempt<small>Ends and keeps the attempt (outcome: stopped). STOP MOTORS also ends it.</small></button>`;
+  } else if (running) {
+    ctl = '<div class="muted">Working…</div>';
+  } else {
+    ctl = `<table class="calcheck"><tr><th>#</th><th>Challenge</th><th class="r"></th></tr>` + rows.map(r =>
+      `<tr><td>${r.id}</td><td>${Cal.esc(r.name)}${r.mandatory ? '' : ' <span class="muted">(bonus)</span>'}</td>` +
+      `<td class="r"><button class="btn ${r.attempts ? '' : 'primary'}" data-act="${act}" data-arg="${arg({ op: 'start', challenge: r.id })}" ${blocked ? 'disabled' : ''}>Start attempt</button></td></tr>`).join('') + '</table>' +
+      `<button class="btn good" style="margin-top:10px" data-act="${act}" data-arg="${arg({ op: 'done' })}" ${lv.n_attempts && !blocked ? '' : 'disabled'}>Practice done` +
+      `<small>${lv.n_attempts ? `${lv.n_attempts} attempt(s) recorded; failed ones are kept` : 'Record at least one attempt first'}</small></button>`;
+  }
+
+  /* live: warnings, mission line, per-challenge table, current attempt timeline */
+  let liveHtml = (lv.warnings || []).map(w => Cal.alert('info', 'Note', w)).join('');
+  const m = lv.mission;
+  liveHtml += `<div class="panel"><h3>Mission <small>${m ? `state ${D.f(m.age_s, 1)} s old` : 'no /carbot/mission/state'}</small></h3>` +
+    (m ? `<div class="kv"><span>Mode</span><b>${Cal.esc(m.mode || '—')}</b><span>Challenge</span><b>${m.challenge_id ? `${m.challenge_id} ${Cal.esc(m.challenge_name)}` : 'between challenges'}</b>` +
+      `<span>Hold</span><b>${Cal.esc(m.hold_reason || '—')}</b><span>Armed</span><b>${lv.armed === true ? 'yes' : lv.armed === false ? 'no' : 'unknown'}</b>` +
+      `<span>Manual control</span><b class="${lv.manual ? 'bad-t' : ''}">${lv.manual ? 'ON' : 'off'}</b></div>` : '<div class="muted">mission_logic is not publishing.</div>') + '</div>';
+  const practised = rows.filter(r => r.attempts);
+  liveHtml += `<div class="panel"><h3>Practice so far <small>${lv.n_attempts || 0} attempts</small></h3>` +
+    (practised.length ? `<table class="calcheck"><tr><th>Challenge</th><th class="r">Attempts</th><th>Last result</th><th class="r">Last time</th><th class="r">Best time</th><th class="r">Best marks</th></tr>` +
+      practised.map(r => `<tr${r.last_level === 'FAIL' ? ' class="badrow"' : ''}><td><b>${r.id}</b> ${Cal.esc(r.name)}</td><td class="r">${r.attempts}${r.failed ? ` <span class="muted">(${r.failed} failed)</span>` : ''}</td>` +
+        `<td>${lvl(r.last_level)}</td><td class="r">${t(r.last_time_s)}</td><td class="r">${t(r.best_time_s)}</td><td class="r">${r.best_marks == null ? '—' : `${r.best_marks} / ${r.max_marks}`}</td></tr>`).join('') + '</table>'
+      : '<div class="empty">No attempt yet. Press Start attempt next to a challenge.</div>') + '</div>';
+  if (cur) {
+    const tl = (cur.transitions || []).map(x => `<tr><td class="r">${D.f(x.t_s, 1)} s</td><td>mode ${Cal.esc(x.mode)}${x.challenge_id ? ` · challenge ${x.challenge_id}` : ''}${x.hold_reason ? ` · ${Cal.esc(x.hold_reason)}` : ''}</td></tr>`)
+      .concat((cur.events || []).map(e => `<tr><td class="r">${D.f(e.t_s, 1)} s</td><td><b>${Cal.esc(e.name)}</b> ${Cal.esc(e.detail)}</td></tr>`));
+    liveHtml += `<div class="panel"><h3>This attempt</h3>${tl.length ? `<table class="metric">${tl.join('')}</table>` : '<div class="muted">No mission change yet.</div>'}</div>`;
+  }
+
+  /* result: recent attempts with grade buttons */
+  let result = st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '';
+  if (st.status === 'PASS') result += Cal.alert('ok', st.unsaved ? 'Practice done: press Save' : 'Practice saved', (st.result || {}).summary || '');
+  else if (st.status === 'KEPT_PREVIOUS') result += Cal.alert('info', 'Using the previous practice record', `Kept from ${st.from_session || st.previous}.`);
+  result += atts.length ? `<table class="metric"><tr><th>#</th><th>Challenge</th><th>Ended</th><th class="r">Time</th><th>Grade</th></tr>` + atts.map(a =>
+    `<tr><td>${a.n}</td><td>${a.challenge} ${Cal.esc(a.name)}</td><td class="muted">${Cal.esc(a.outcome_text)}</td>` +
+    `<td class="r">${t(a.challenge_time_s != null ? a.challenge_time_s : a.duration_s)}</td><td>${lvl(a.level)}${a.marks != null ? ` · ${a.marks} marks` : ''}` +
+    (running ? '' : `<div style="margin-top:4px">${levels.map(L => `<button class="btn" style="padding:2px 8px;font-size:11.5px" data-act="${act}" data-arg="${arg({ op: 'grade', attempt: a.n, level: L })}">${Cal.esc(L.toLowerCase())}</button>`).join(' ')}</div>`) +
+    '</td></tr>').join('') + '</table>' : '<div class="muted">Attempts appear here; grade each one.</div>';
+  result += `<p class="muted" style="font-size:12px;margin:8px 0 0">The scoreboard node is not running, so grades are yours; only a manual intervention is graded FAIL automatically (rulebook: 0 marks).</p>`;
+
+  const save = `<button class="btn good" data-act="SAVE" ${st.status === 'PASS' && st.unsaved ? '' : 'disabled'}>Save</button>`;
+  const keep = st.can_keep && !running ? `<button class="btn" data-act="KEEP_PREVIOUS">Keep previous practice<small>${Cal.esc(st.previous)}</small></button>` : '';
+  const actions = save + keep + '<span class="hint">Optional step: it never blocks race mode. Save writes practice/&lt;challenge&gt;.yaml + practice/summary.yaml into the session.</span>';
+  return { todo, ctl, live: liveHtml, result, actions };
 };
 
 /* ---- a built step without a custom page (fallback) */

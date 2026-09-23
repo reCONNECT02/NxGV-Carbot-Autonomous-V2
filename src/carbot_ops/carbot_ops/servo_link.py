@@ -1,4 +1,7 @@
-"""Non-blocking parameter link to the base servo_controller (calibration wizard, phase 8).
+"""Non-blocking parameter link to another node (calibration wizard, phase 8).
+
+Default target servo_controller (steps 6-7); also command_owner (step 7) and
+road_perception classify.* (step 9).
 
 The wizard runs a single-threaded executor, so it can never wait for a service
 reply inside a callback (calib_tools.RemoteParams spins its own node and would
