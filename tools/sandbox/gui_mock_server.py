@@ -12,6 +12,9 @@ Step 6 (IMU + wheel odometry) runs against MockCar: a car whose encoder really h
 and the first spin get corrected and the second ones verify. The "hand" pushes / turns
 it by itself while a test is in progress. --skip-to 6 records MOCK passes for steps
 1-5 in a new session so step 6 can be run straight away.
+Step 5 (LiDAR-camera alignment) gets a synthetic front image (cam_front) and /scan
+of one upright target that moves between 3 spots every 12 s, with the LiDAR really
+rotated by MOCK_LIDAR_DELTA_DEG; --skip-to 5 lets its Run be tried.
 Sessions are written to --data-root (default: a temp folder).
 
 Open http://localhost:8081/ . Use it to learn the tabs on a laptop, or to test
@@ -36,8 +39,11 @@ sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_common'))
 sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_ops'))
 from carbot_gui import gui_core as G  # noqa: E402
 
+sys.path.insert(0, os.path.join(REPO, 'src', 'carbot_perception'))
 WEB = os.path.join(REPO, 'src', 'carbot_gui', 'web')
 T0 = time.time()
+MOCK_LIDAR_DELTA_DEG = 3.0                      # step 5: how far the mock LiDAR is really rotated
+MOCK_TARGETS = ((0.80, 0.26), (0.95, 0.0), (0.75, -0.24))
 
 
 def t():
@@ -327,7 +333,7 @@ class MockCar:
 
 
 class MockWizard:
-    """Real wizard_core + steps 1, 2, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
+    """Real wizard_core + steps 1, 2, 5, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
 
     def __init__(self, sensors, root, skip_to=0):
         import yaml
@@ -335,6 +341,7 @@ class MockWizard:
         from carbot_ops import wizard_core as wc
         from carbot_ops.step_camera_identity import CameraIdentityStep
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
+        from carbot_ops.step_lidar_camera import LidarCameraStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
@@ -345,11 +352,17 @@ class MockWizard:
         self.motion, self.servo = MotionRecorder(), MockServo()
         self.car = MockCar(self.motion, self.servo)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
+        drv = yaml.safe_load(open(os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'params', 'drivers.yaml')))
+        self.laser = [float(x) for x in drv['carbot_tf']['ros__parameters']['base_to_laser']]
+        step5 = next(x for x in self.steps['steps'] if x['id'] == 'lidar_camera')
+        self.lidar_step = LidarCameraStep(step5, self.cams, lambda: self.cams, lambda: list(self.laser),
+                                          clock=time.time)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
-                              'imu_odometry': self.step6})
+                              'imu_odometry': self.step6,
+                              'lidar_camera': self.lidar_step})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
             for x in self.wiz.slots:
@@ -380,7 +393,58 @@ class MockWizard:
                 'uwb': {'link': True, 'hz': 9.7, 'unknown': '',
                         'anchors': {a['id']: {'seen': True, 'age': 0.1} for a in self.uwb['anchors']}},
                 'env': {'domain_id': '1', 'localhost_only': '0', 'ok': True, 'problems': []}}
-        return {'snap': snap, 'health_seq': self.seq}
+        return {'snap': snap, 'health_seq': self.seq, 'scans': self.scans(now), 'now': now}
+
+    def target(self, now):
+        return MOCK_TARGETS[int((now - T0) // 12) % len(MOCK_TARGETS)]
+
+    def true_laser(self):
+        m = list(self.laser)
+        m[3] += math.radians(MOCK_LIDAR_DELTA_DEG)
+        return m
+
+    def scans(self, now, n=450, radius=0.03):
+        """5 ray-cast 360 deg scans (10 Hz) of the current target, a little range noise."""
+        import random
+        L, (tx, ty) = self.true_laser(), self.target(now)
+        inc = 2 * math.pi / n
+        out = []
+        for k in range(5):
+            rng = random.Random(int(now * 10) - k)
+            ranges = []
+            for i in range(n):
+                a = L[3] - math.pi + i * inc
+                dx, dy = math.cos(a), math.sin(a)
+                ox, oy = L[0] - tx, L[1] - ty
+                b = ox * dx + oy * dy
+                disc = b * b - (ox * ox + oy * oy - radius ** 2)
+                r = -b - math.sqrt(disc) if disc >= 0 else 0.0
+                ranges.append(r + rng.gauss(0, 0.004) if r > 0 else 0.0)
+            out.append({'t': now - 0.1 * (4 - k), 'ranges': ranges, 'angle_min': -math.pi, 'angle_increment': inc,
+                        'range_min': 0.02, 'range_max': 16.0})
+        return out
+
+    def front_jpeg(self):
+        """Synthetic front camera: floor grid and the target as an upright bar (camera_model projection)."""
+        import cv2
+        import numpy as np
+        g = self.lidar_step.geometry()
+        w, h = g['w'], g['h']
+        img = np.full((h, w, 3), (70, 70, 72), np.uint8)
+        for x in np.arange(0.25, 2.01, 0.25):
+            pts = np.array([[x, y, 0.0] for y in np.linspace(-1.2, 1.2, 25)])
+            uv, ok, _ = g['cm'].project_ground(g['intr'], g['cam'], pts)
+            pv = [tuple(int(v) for v in p) for p, o in zip(uv, ok) if o]
+            for a, b in zip(pv, pv[1:]):
+                cv2.line(img, a, b, (95, 95, 98), 1)
+        tx, ty = self.target(time.time())
+        fu, fv = g['cm'].project_ground(g['intr'], g['cam'], np.array([[tx, ty, 0.0]]))[0][0]
+        tu, tv = g['cm'].project_ground(g['intr'], g['cam'], np.array([[tx, ty, 0.30]]))[0][0]
+        half = max(3, int(abs(0.03 * g['intr'].K[0, 0] / max(0.2, tx - g['cam'].x))))
+        cv2.rectangle(img, (int(fu) - half, int(tv)), (int(fu) + half, int(fv)), (30, 30, 200), -1)
+        cv2.putText(img, 'mock front camera', (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 230), 1)
+        ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return buf.tobytes() if ok else b''
 
     def tick(self):
         self.car.update(self.step6)
@@ -448,6 +512,8 @@ def main():
             if p.startswith('/api/tab/'):
                 return self._send(200, mock.tab(p[9:], q))
             if p.startswith('/api/img/'):
+                if p == '/api/img/cam_front' and mock.mode == 'calibrate':
+                    return self._send(200, mock.wiz.front_jpeg(), 'image/jpeg')
                 return self._send(204, b'', 'image/jpeg')
             if p == '/api/params':
                 return self._send(200, {'session': '/data/calibration/20260924_141208',

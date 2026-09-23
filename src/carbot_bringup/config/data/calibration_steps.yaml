@@ -103,9 +103,37 @@ steps:
                 {name: left,  roles: [left_rear],  inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, 0.47],  yaw_deg: 0.0},
                 {name: right, roles: [right_rear], inner_corners: [6, 4], square_m: 0.050, centre_m: [0.10, -0.47], yaw_deg: 0.0}]},
      pass: {max_ground_error_m: 0.02, max_seam_error_m: 0.03}}
-  - {index: 5,  id: lidar_camera,      title: LiDAR-camera alignment,        required: true,  tab: memory_lidar,
-     writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset],
-     pass: {max_bearing_error_deg: 2.0}}
+  - index: 5
+    id: lidar_camera
+    title: LiDAR-camera alignment
+    required: true
+    tab: memory_lidar
+    # phase 8: + carbot_tf.base_to_laser (the static TF must carry the same yaw as
+    # lidar_angle_offset; the launch reads it from the session overlay on the next start)
+    writes: [cameras.yaml lidar_to_camera, params_overlay tunnel_wall_follower.lidar_angle_offset,
+             params_overlay carbot_tf.base_to_laser]
+    # Wizard page (phase 8). A target is clicked in the front image; the LiDAR cluster
+    # nearest to where that ray hits the floor is compared by bearing from the LiDAR
+    # (carbot_ops/lidar_align.py). Uses the front camera from steps 3/4 only.
+    need: "One thin upright target taller than the LiDAR (a bottle, can or pole, 3-12 cm wide, > 25 cm tall),
+           a clear floor about 1.5 m in front of the car, and a tape measure for the LiDAR position (optional)."
+    instructions:
+      - Car on the floor, still, nothing but the target within 1.5 m in front of it.
+      - Stand the target 0.4-1.2 m ahead, inside the front camera view. It shows as a ringed LiDAR target.
+      - Click exactly where the target touches the floor in the camera image, then press Capture.
+      - Move the target (left side, middle, right side of the view) and capture again. At least 3 positions.
+      - Optionally type the measured LiDAR x / height, press Compute, then Save. Relaunch to apply.
+    procedure: {roi_min_m: 0.25, roi_max_m: 1.6,       # target search area: distance from the LiDAR
+                cluster_gap_m: 0.05, min_cluster_points: 3, max_cluster_width_m: 0.15,
+                match_max_m: 0.25,                     # clicked floor point -> LiDAR cluster (~17 deg at 0.8 m)
+                scan_max_age_s: 0.5, capture_scans: 5,  # a capture averages the last 5 scans
+                min_captures: 3, min_spread_deg: 20.0, # bearing spread (base_link) of the captures
+                overlay_max_points: 400,               # scan points drawn into the live image
+                mount_x_range_m: [-0.10, 0.40], mount_z_range_m: [0.02, 0.40],   # sanity for typed values
+                reload_period_s: 2.0}                  # re-read cameras.yaml / TF from the session
+    pass: {max_bearing_error_deg: 2.0,                 # largest per-capture residual after the correction
+           max_correction_deg: 10.0,                   # larger = wrong mount/reversion, not a calibration
+           warn_range_diff_m: 0.08}                    # LiDAR vs camera distance: warning only
   # Step 6 (wizard page, phase 8): the car is pushed / turned BY HAND, the motors are never
   # driven. Distance + spin are page operations, Run = the drift test, which finishes the step.
   # Corrections are set LIVE on servo_controller (a corrected run never passes: the next run

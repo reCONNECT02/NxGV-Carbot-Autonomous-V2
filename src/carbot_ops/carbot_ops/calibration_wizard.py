@@ -9,10 +9,11 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
                               CANCEL | ROLLBACK | RESTART_CAMERAS | STEP (page operation, JSON {"op"})
   /odom, /imu/rpy (in)        fed to step 6 (IMU + wheel odometry); its corrections go to
                               servo_controller's parameter services (servo_link, non-blocking)
+  /scan (in)                  LaserScan, buffered for step 5 (LiDAR-camera alignment)
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
-step 3: step_camera_intrinsics,
+step 3: step_camera_intrinsics, step 5: step_lidar_camera,
 step 6: step_imu_odometry).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
@@ -21,6 +22,7 @@ Never crashes on user input or broken YAML: a configuration problem is reported
 as NodeStatus CONFIG_ERROR, in every service reply and in the live JSON, so the
 GUI can show the exact message. STOP MOTORS (/e_stop) cancels a running step.
 """
+import collections
 import json
 import math
 import os
@@ -28,6 +30,7 @@ import time
 import traceback
 
 import rclpy
+from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
 from carbot_common import topics as T
 from carbot_common.data import load_data
@@ -37,6 +40,7 @@ from carbot_interfaces.msg import CalibrationState, CalibrationStepState, NodeSt
 from carbot_interfaces.srv import CalibrationAction
 from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
 from . import monitor_core as mc
@@ -47,6 +51,7 @@ from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
+from .step_lidar_camera import LidarCameraStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -84,6 +89,7 @@ class CalibrationWizard(CarbotNode):
         self.wiz = None
         self.restart = None
         self.health = self.uwb_status = self.battery = None
+        self.scans = collections.deque(maxlen=1)      # step 5 resizes it in _setup
         self.health_seq = 0
         self.tap = None
         self.motion = MotionRecorder()                # step 6, fed from /odom and /imu/rpy
@@ -114,6 +120,7 @@ class CalibrationWizard(CarbotNode):
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
+            'lidar_camera': lambda s: LidarCameraStep(s, cameras, self._session_cameras, self._laser_mount),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -127,6 +134,9 @@ class CalibrationWizard(CarbotNode):
                 impls[s['id']] = BrokenStep(s, why)
                 self.get_logger().error(why)
         self.tap = FrameTap(self, {n: x['image_topic'] for n, x in cameras['sensors'].items() if 'image_topic' in x})
+        self.cameras = cameras
+        lc = impls.get('lidar_camera')
+        self.scans = collections.deque(maxlen=getattr(lc, 'scan_buffer_n', 1))
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
                                                                    'resume_max_age_h', 'page_watch_s')}, impls)
@@ -142,6 +152,8 @@ class CalibrationWizard(CarbotNode):
         if isinstance(impls.get('imu_odometry'), ImuOdometryStep):
             self.create_subscription(Odometry, T.ODOM, self._on_odom, qos_profile_sensor_data)
             self.create_subscription(String, T.IMU_RPY, self._on_imu, qos_profile_sensor_data)
+        if isinstance(lc, LidarCameraStep):
+            self.create_subscription(LaserScan, T.SCAN, self._on_scan, qos_profile_sensor_data)
         self.create_timer(1.0 / max(float(self.p('tick_hz')), 1.0), self._tick)
         self.create_timer(1.0 / max(float(self.p('live_rate_hz')), 0.2), self._publish_live)
         self.create_timer(1.0 / max(float(self.p('state_rate_hz')), 0.2), self._publish_state)
@@ -178,6 +190,31 @@ class CalibrationWizard(CarbotNode):
             return
         self.motion.on_imu(time.monotonic(), yaw)
 
+    def _on_scan(self, m):
+        self.scans.append({'t': time.monotonic(), 'ranges': list(m.ranges), 'angle_min': float(m.angle_min),
+                           'angle_increment': float(m.angle_increment), 'range_min': float(m.range_min),
+                           'range_max': float(m.range_max)})
+
+    def _session_cameras(self):
+        """cameras.yaml as this wizard session has it now (steps 2-4 may have saved a copy),
+        else the file the launch loaded."""
+        own = os.path.join(self.wiz.session, 'data', 'cameras.yaml') if self.wiz and self.wiz.session else ''
+        return ct.load_yaml(own) if own and os.path.isfile(own) else self.cameras
+
+    def _laser_mount(self):
+        """carbot_tf.base_to_laser: this wizard session's overlay, else the launched session's,
+        else drivers.yaml (what stack.launch_cfg gave the static TF)."""
+        for sess in (self.wiz.session if self.wiz else None,
+                     str(self.p('session')) if self.has_parameter('session') else ''):
+            v = ct.overlay_value(sess, 'carbot_tf', 'base_to_laser') if sess else None
+            if v is not None:
+                return v
+        path = os.path.join(ct.bringup_config_dir(), 'params', 'drivers.yaml')
+        v = ((ct.load_yaml(path).get('carbot_tf') or {}).get('ros__parameters') or {}).get('base_to_laser')
+        if v is None:
+            raise KeyError(f'carbot_tf.base_to_laser missing in {path}')
+        return v
+
     def _on_estop(self, m):
         if m.data and self.wiz is not None:
             r = self.wiz.cancel_running('STOP MOTORS pressed')
@@ -207,7 +244,8 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None,
+                'scans': list(self.scans), 'now': now}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):
