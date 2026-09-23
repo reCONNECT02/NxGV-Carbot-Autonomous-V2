@@ -23,6 +23,7 @@ import time
 import traceback
 
 import rclpy
+from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
 from carbot_common import topics as T
 from carbot_common.data import load_data
@@ -38,6 +39,7 @@ from .camera_restart import CameraRestart
 from .frame_tap import FrameTap
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
+from .step_mission_planner import MissionPlannerStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -102,6 +104,8 @@ class CalibrationWizard(CarbotNode):
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
+            'mission_planner': lambda s: MissionPlannerStep(s, ct.bringup_config_dir(),
+                                                            lambda: self.wiz.session if self.wiz else None),
         }
         impls = {}
         for s in steps_doc.get('steps', []):

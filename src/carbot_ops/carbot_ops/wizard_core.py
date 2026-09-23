@@ -234,6 +234,8 @@ class Wizard:
     def summary_text(self, s: Slot) -> str:
         if s is self.running:
             p = self.impls[s.id].progress(self.now()) if s.id in self.impls else {}
+            if p.get('summary'):                       # a step's own running text (step 12: planning)
+                return str(p['summary'])
             return f'measuring, {p.get("remaining_s", 0):.0f} s left' if p else 'running'
         if s.status == 'KEPT_PREVIOUS':
             return f'kept from {s.from_session or s.previous}'

@@ -206,12 +206,11 @@ steps:
                 min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2}
     pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
   # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
-  # on the saved map. required: false UNTIL its wizard page exists, otherwise race mode could
-  # never arm (no page = no way to pass it). Set true when the page is built.
+  # on the saved map. Page 12 built: required (BACKLOG #20).
   - index: 12
     id: mission_planner
     title: Mission planner (route + roundabout exits)
-    required: false
+    required: true
     tab: map
     tool: python3 tools/map/mission_planner.py
     writes: [mission.yaml]
@@ -219,7 +218,19 @@ steps:
       - Needs step 11 saved. Routes and roundabout exits are planned on that exact map.
       - Place P0 (start), P1, P2 (parking) and P3 (finish); every car pose must be fully on the road.
       - Check all routes and their roundabout exits, then save the mission.
-    pass: {}
+    # Wizard page (phase 8 page 12): runs tools/map/mission_planner.py (imported, not copied) on
+    # <session>/data/track_map.yaml, else the repo track_map.yaml, and writes
+    # <session>/data/mission.yaml (records map.file + map.sha1 it was planned on).
+    need: "Step 11 saved (the map this session races on). Planning takes about a minute per leg on the car."
+    procedure:
+      planner_dir: tools/map        # mission_planner.py + map_builder.py; relative = in the repo checkout ($CARBOT_REPO)
+      legs: 3                       # P0 -> P1 -> P2 -> P3 (= mission_planner.py LEGS)
+      track_step_m: 0.05            # map drawing: centreline sample spacing (GUI only)
+      route_step_m: 0.03            # route drawing: point spacing (GUI only; mission.yaml keeps the planner's)
+      snap: true                    # page default: clicks snap to the lane centre / centre of a bay
+    pass:
+      min_pose_margin_m: 0.0        # car body must stay this far inside the road at every pose (= mission_planner.py FIT_PAD_M)
+      block07_check: true           # also run the race-time global planner check (exits vs mission_rules.yaml roundabout_visits)
   - {index: 13, id: practice_runs,     title: Per-challenge practice runs (optional), required: false, tab: scoreboard,
      writes: [practice/<challenge>.yaml],
      pass: {}}
