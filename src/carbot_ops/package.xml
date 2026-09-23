@@ -13,6 +13,7 @@
   <depend>geometry_msgs</depend>
   <depend>carbot_interfaces</depend>
   <depend>carbot_common</depend>
+  <exec_depend>carbot_perception</exec_depend>  <!-- step 5: camera_model -->
   <depend>rosbag2</depend>
   <exec_depend>carbot_perception</exec_depend>   <!-- calib_core, ros_image (step 3) -->
   <exec_depend>python3-yaml</exec_depend>

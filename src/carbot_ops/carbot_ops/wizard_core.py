@@ -22,6 +22,7 @@ Every public method returns or records a human-readable message; nothing here
 raises on user actions (ConfigError only at construction, for broken YAML).
 """
 import datetime
+import json
 import os
 import shutil
 import time
@@ -34,7 +35,7 @@ from carbot_common import calibration_store as cs
 
 PASSING = cs.PASSING
 STATUSES = ('PENDING', 'RUNNING', 'PASS', 'FAIL', 'KEPT_PREVIOUS', 'SKIPPED_OPTIONAL')
-ACTIONS = ('SELECT', 'RUN', 'REDO', 'SAVE', 'KEEP_PREVIOUS', 'CANCEL', 'ROLLBACK', 'RESTART_CAMERAS')
+ACTIONS = ('SELECT', 'RUN', 'REDO', 'SAVE', 'KEEP_PREVIOUS', 'CANCEL', 'ROLLBACK', 'RESTART_CAMERAS', 'STEP')
 CFG_KEYS = ('session_format', 'allow_keep_previous', 'resume_max_age_h')
 
 
@@ -72,6 +73,11 @@ class StepImpl:
         """On KEEP_PREVIOUS, before anything is recorded: copy this step's data from
         src_session. Raise StepRefused (e.g. the old value no longer fits) / OSError to abort."""
         return []
+
+    def handle(self, op: str, args: Dict, inputs: Dict) -> Dict:
+        """Page operation (action STEP, argument JSON {"op": ...}), e.g. step 5 CAPTURE.
+        Returns {'ok', 'message'}. Not allowed while the step is RUNNING."""
+        return {'ok': False, 'message': 'This step has no page operations'}
 
     def tick(self, now: float, inputs: Dict) -> Optional[Dict]:
         """While RUNNING. Return the finished result dict ({'passed': bool, ...}) or None."""
@@ -398,6 +404,25 @@ class Wizard:
         return result(True, f'Step {s.index} running')
 
     _a_redo = _a_run
+
+    def _a_step(self, s: Slot, arg, inputs) -> Dict:
+        impl = self.impls.get(s.id)
+        if impl is None:
+            return result(False, f'Step {s.index} has no wizard page yet')
+        if self.running is s:
+            return result(False, 'Wait for the running measurement (or Cancel it) first')
+        try:
+            a = json.loads(arg or '{}')
+        except ValueError:
+            return result(False, f'STEP argument is not JSON: {arg!r}')
+        if not isinstance(a, dict) or not a.get('op'):
+            return result(False, 'STEP argument needs {"op": ...}')
+        try:
+            r = impl.handle(str(a['op']), a, inputs)
+        except Exception as e:  # noqa: BLE001  a page operation must not stop the wizard
+            return result(False, f'{a["op"]} failed: {e!r}')
+        self.current = s.index
+        return result(bool(r.get('ok')), str(r.get('message', '')))
 
     def _a_cancel(self, s: Slot, arg, inputs) -> Dict:
         if self.running is not s:
