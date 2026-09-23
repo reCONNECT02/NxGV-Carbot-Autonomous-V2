@@ -276,3 +276,7 @@ table.metric td,.alert dd{white-space:normal;overflow-wrap:anywhere}
 .alert .failitem{margin:8px 0 0;padding:8px 0 0;border-top:1px solid var(--line);white-space:normal;overflow-wrap:anywhere}
 .alert .failitem > b{display:block;margin-bottom:2px}
 table.calcheck td:not(:first-child),table.calcheck th{overflow-wrap:normal}
+/* step 10 survey form: 4 narrow inputs per row */
+.ctl table.uwbform{table-layout:fixed;width:100%}
+.ctl table.uwbform td{padding:3px 2px}
+.ctl table.uwbform input{width:100%!important;min-width:0;min-height:30px;box-sizing:border-box;padding:4px 6px;text-align:right}
