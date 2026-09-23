@@ -1,6 +1,6 @@
 """Astra colour camera ONLY (BACKLOG #48): no depth, IR, D2C alignment, point clouds or camera TF.
 
-    ros2 launch carbot_bringup astra_rgb.launch.py width:=320 height:=240 fps:=15
+    ros2 launch carbot_bringup astra_rgb.launch.py width:=640 height:=480 fps:=15
 
 The base astra_mini.launch.py also runs the depth + IR streams, hardware depth-to-colour alignment,
 PointCloudXyz + PointCloudXyzrgb and a 10 Hz camera TF, none of which Carbot reads (only

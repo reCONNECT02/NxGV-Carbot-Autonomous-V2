@@ -245,7 +245,7 @@ def test_cameras_yaml_astra_launch_is_consistent():
     astra = yaml.safe_load(open(os.path.join(DATA, 'cameras.yaml'), encoding='utf-8'))['sensors']['astra']
     pkg, f, args = astra_launch(astra)
     assert (pkg, f) == ('carbot_bringup', 'astra_rgb.launch.py')
-    assert args == ['width:=320', 'height:=240', 'fps:=15']
+    assert args == ['width:=640', 'height:=480', 'fps:=15']
     assert os.path.isfile(os.path.join(PKG, 'launch', f))
     assert astra['expected_hz'] == astra['fps'] == 15.0 or astra['expected_hz'] == float(astra['fps'])
     ops = yaml.safe_load(open(os.path.join(PARAMS, 'ops.yaml'), encoding='utf-8'))['system_monitor']['ros__parameters']

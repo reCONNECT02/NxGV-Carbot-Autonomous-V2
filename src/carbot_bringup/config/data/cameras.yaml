@@ -30,8 +30,8 @@ sensors:
     launch_file: astra_rgb.launch.py
     launch_args: [width, height, fps]
     image_topic: /camera/color/image_raw
-    width: 320                             # what the driver really published (was 640 here, 320 in the driver)
-    height: 240                            # calibration step 3 intrinsics are for this size
+    width: 640                             # 2026-09-24: 640x480 (was 320x240): step 4 board detection needs it (BACKLOG #54).
+    height: 480                            # Intrinsics/extrinsics belong to THIS size: redo steps 3 and 4 after a change.
     fps: 15                                # was 30
     encoding: rgb8
     expected_hz: 15.0
