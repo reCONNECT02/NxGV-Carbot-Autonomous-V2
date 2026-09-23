@@ -224,13 +224,20 @@ steps:
     instructions:
       - Needs steps 4, 6 and 10 done (block 05 must hold the lane; UWB offsets applied).
       - "LAP (best): put the car on the map start pose (bottom-right lane, facing west), press
-         Enter, then push or drive it SLOWLY once around the whole track and press Enter."
+         Start lap (terminal: Enter), then push or drive it SLOWLY once around the whole track and
+         press Stop lap (Enter)."
       - "POINTS (quick, competition day): park the car on 2 or more known map poses far apart
          (start, traffic-light stop, ...) for 10 s each."
       - The fit uses every range directly; check the RMS and that the planned route overlays the
         track on the Global map tab.
     procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [lap, points], lap_min_s: 40,
-                min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2}
+                min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2,
+                # wizard page (phase 8 page 11); the terminal tool ignores these
+                points_min_extent_m: 1.5,     # points mode: poses must span this (was hard-coded in calib_map_uwb)
+                lap_max_s: 300,               # lap recording ends by itself after this
+                max_input_age_s: 1.0,         # /odom and /imu/rpy older than this = lap refused / failed
+                live_fit_period_s: 2.0,       # running fit shown while the lap is recorded
+                overlay_max_points: 400}      # fixes / path points sent to the GUI map overlay
     pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
   # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
   # on the saved map. required: false UNTIL its wizard page exists, otherwise race mode could
