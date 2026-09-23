@@ -20,6 +20,7 @@ kept (calib_core.calibrate_intrinsics).
 import os
 import shutil
 import threading
+import time
 from typing import Callable, Dict, List, Optional
 
 from carbot_common import calib_tools as ct
@@ -161,7 +162,14 @@ class CameraIntrinsicsStep(StepImpl):
         r['prev'] = c
         added = bool(still and r['col'].offer(c, self.cols, self.rows))
         r['corners'] = c
-        r['state'] = ('new view captured' if added else 'hold the board still' if c is not None and not still
+        now = time.monotonic()
+        if added:
+            r['added_t'] = now
+        # hold "new view captured" (green) ~1 s: one green frame is too short to see on the page
+        if c is not None and now - r.get('added_t', -1e9) < 1.0:
+            r['state'] = 'new view captured'
+            return
+        r['state'] = ('hold the board still' if c is not None and not still
                       else 'board seen' if c is not None else 'no board in view')
 
     def _fit(self, r: Dict) -> None:

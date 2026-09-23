@@ -46,12 +46,14 @@ def detect_chessboard(img: np.ndarray, cols: int, rows: int, fast: bool = False)
     pattern = (int(cols), int(rows))
     crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 40, 1e-3)
     if fast:
-        half = cv2.resize(gray, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+        # halve only large frames: a 320x240 Astra frame halved leaves ~10 px squares and FAST_CHECK misses the board
+        k = 2.0 if gray.shape[1] >= 640 else 1.0
+        small = cv2.resize(gray, None, fx=1.0 / k, fy=1.0 / k, interpolation=cv2.INTER_AREA) if k > 1.0 else gray
         flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_FAST_CHECK
-        ok, c = cv2.findChessboardCorners(half, pattern, flags=flags)
+        ok, c = cv2.findChessboardCorners(small, pattern, flags=flags)
         if not ok:
             return None
-        c = cv2.cornerSubPix(gray, (c * 2.0 + 0.5).astype(np.float32), (5, 5), (-1, -1), crit)
+        c = cv2.cornerSubPix(gray, (c * k + (k - 1.0) / 2.0).astype(np.float32), (5, 5), (-1, -1), crit)
         return c.reshape(-1, 2).astype(np.float32)
     if hasattr(cv2, 'findChessboardCornersSB'):
         flags = cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY

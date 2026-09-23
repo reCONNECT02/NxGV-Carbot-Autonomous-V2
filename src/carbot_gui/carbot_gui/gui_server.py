@@ -57,7 +57,7 @@ REQUIRED = ['host', 'port', 'mode', 'lazy_subscriptions', 'idle_unsubscribe_s', 
             'rosout_min_level', 'stale_after_s', 'trail_points', 'scan_max_points', 'path_max_points',
             'drive.obstacle_max_m', 'drive.obstacle_half_width_m', 'race.diagnostics_read_only',
             'race.tuning_enabled', 'race.diagnostic_rate_scale', 'race.estop_label',
-            'race.manual_confirm', 'race.split_view', 'calibrate.tuning_enabled']
+            'race.manual_confirm', 'race.split_view', 'calibrate.tuning_enabled', 'legs_refresh_s']
 WEB_DIR_DEFAULT = os.path.join(os.path.dirname(__file__), 'web')
 
 
@@ -98,7 +98,10 @@ class GuiServer(CarbotNode):
         self.uwb = self._load_yaml(str(self.p('data.uwb', '')))
         self._last_hist = 0.0
         self._subs = {}
+        self._legs_cache = None
+        self._route_xy = None
         self._build_groups()
+        self._live = {s[0] for s in self.groups['core']}
         for spec in self.groups['core']:
             self._subscribe(spec)
         self.pub_estop = self.create_publisher(Bool, T.E_STOP, 10)
@@ -201,9 +204,11 @@ class GuiServer(CarbotNode):
         for g in add:
             for spec in self.groups[g]:
                 self._subscribe(spec)
+        # Never destroy_subscription() while the MultiThreadedExecutor spins: rclpy raises
+        # InvalidHandle in the wait set and gui_server dies. Idle groups stay subscribed but are dropped in _on.
+        self._live = {kt[0] for kt in keep}
         for kt in list(self._subs):
             if kt not in keep:
-                self.destroy_subscription(self._subs.pop(kt))
                 with self.lock:
                     self.raw.pop(kt[0], None)
                     if kt[0].startswith('img:'):
@@ -213,6 +218,8 @@ class GuiServer(CarbotNode):
 
     # ------------------------------------------------------------------ callbacks
     def _on(self, key, m):
+        if key not in self._live:
+            return
         t = time.monotonic()
         if key.startswith('img:'):
             with self.lock:
@@ -307,10 +314,24 @@ class GuiServer(CarbotNode):
             return None
 
     def legs(self):
+        # /api/core is polled by every open tab at state_rate_hz; leg progress walks the whole route in Python
+        # (30 % of gui_server's time on risabot1). The result only moves with the car: refresh it every
+        # legs_refresh_s and rebuild the route point list only when a new route message arrives.
+        now = time.monotonic()
+        cached = self._legs_cache
+        if cached is not None and now - cached[0] < float(self.p('legs_refresh_s')):
+            return cached[1]
         info, route, pose = self._route_info(), self.get('route'), self.pose()
         mission = self.get('mission')
-        xy = [(p.pose.position.x, p.pose.position.y) for p in route.poses] if route else None
-        return G.leg_progress(info, xy, pose[:2] if pose else None, mission.route_leg if mission else 0)
+        if route is None:
+            xy = None
+        else:
+            if self._route_xy is None or self._route_xy[0] is not route:
+                self._route_xy = (route, [(p.pose.position.x, p.pose.position.y) for p in route.poses])
+            xy = self._route_xy[1]
+        out = G.leg_progress(info, xy, pose[:2] if pose else None, mission.route_leg if mission else 0)
+        self._legs_cache = (now, out)
+        return out
 
     # ------------------------------------------------------------------ /api/core
     def core(self):

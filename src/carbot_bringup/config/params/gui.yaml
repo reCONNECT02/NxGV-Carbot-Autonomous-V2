@@ -21,6 +21,7 @@ gui_server:
     # phase 7
     web_root: ""                    # empty = installed share/carbot_gui/web
     grid_rate_hz: 2.0               # road / memory grid refresh in the browser
+    legs_refresh_s: 0.5             # /api/core leg progress is recomputed at most this often (was every poll)
     grid_stride: 2                  # memory grid decimation (cells) before sending
     control_history_s: 12.0         # Control + safety plots
     control_history_hz: 10.0
