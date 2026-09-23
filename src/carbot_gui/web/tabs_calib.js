@@ -3,7 +3,8 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7), uwb_survey (step 10). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7), uwb_survey (step 10), map_uwb_alignment (step 11).
+ * Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -101,6 +102,7 @@ TABS.calstep = {
       <div class="side"><div data-k="cams"></div><div class="panel" data-k="cambox" hidden><h3 data-k="camlbl"></h3>
           <div class="cam" data-k="cam"><img alt="camera"><span class="none">No image yet: is the camera preview running?</span>
           <svg data-k="camsvg" viewBox="0 0 1 1" preserveAspectRatio="none" style="position:absolute;inset:0;pointer-events:none"></svg></div></div>
+        <div class="panel" data-k="mapbox" hidden><h3 data-k="maplbl"></h3><div class="cv" data-k="mapcv"></div><div class="legend" data-k="maplegend"></div></div>
         <div data-k="live"></div>
         <div class="panel"><h3>Result</h3><div data-k="result"></div><div class="actions" data-k="actions"></div></div>
         <details class="panel" data-k="embedbox" hidden><summary data-k="embedsum" style="cursor:pointer;font-weight:650"></summary><div data-k="embed" style="margin-top:12px"></div></details>
@@ -150,6 +152,45 @@ TABS.calstep = {
       const col = cam.color || 'var(--ok)';
       q('camsvg').innerHTML = pts.map(([u, v]) => `<circle cx="${u}" cy="${v}" r="0.008" fill="${col}" />`).join('') +
         (pts.length > 1 ? `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="0.003" />` : '');
+    }
+
+    /* ---- track map box (step 11; a page returns map: {label, legend, path, fixes, anchors, poses, points,
+     *      car, fix}, all in the TRACK frame): drawn with the Global map tab's renderer (drawTrack) on a
+     *      canvas that survives re-renders. The track comes from /api/tab/map once (Track cache). */
+    let mapData = null, mapFetchAt = 0;
+    const mo = D.canvas(q('mapcv'), 900 / 560, () => drawMap());
+    async function loadTrack() {
+      if (Track.track || Date.now() - mapFetchAt < 5000) return;
+      mapFetchAt = Date.now();
+      try { const dd = await ctx.api('/api/tab/map?' + Track.query()); if (dd) { Track.take(dd); drawMap(); } } catch (err) { /* retried */ }
+    }
+    function drawMap() {
+      const m = mapData; if (!m) return;
+      const { ctx: g, w, h } = mo; g.clearRect(0, 0, w, h); g.fillStyle = D.css('--raised'); g.fillRect(0, 0, w, h);
+      const t = Track.track;
+      let b = t && t.bounds ? t.bounds.slice() : null;
+      const ext = p => { if (!p) return; b = b ? [Math.min(b[0], p[0]), Math.min(b[1], p[1]), Math.max(b[2], p[0]), Math.max(b[3], p[1])] : [p[0], p[1], p[0], p[1]]; };
+      Object.values(m.anchors || {}).forEach(ext);
+      if (!t) { (m.path || []).forEach(ext); Object.values(m.poses || {}).forEach(ext); }
+      if (!b) { g.fillStyle = D.css('--muted'); g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText('Waiting for the track map', w / 2, h / 2); return; }
+      const v = D.fitView(b, w, h, 24);
+      if (t) { gridLines(g, v, t.bounds, 0.5); drawTrack(g, v, t); }
+      Object.entries(m.poses || {}).forEach(([k, p]) => { D.arrow(g, v.X(p[0]), v.Y(p[1]), p[2], 7, D.css('--muted')); });
+      if (m.path && m.path.length > 1) D.line(g, m.path, p => v.X(p[0]), p => v.Y(p[1]), D.css('--lane'), 2);
+      (m.fixes || []).forEach(p => D.dot(g, v.X(p[0]), v.Y(p[1]), 2.5, D.css('--ok')));
+      (m.points || []).forEach(p => { D.dot(g, v.X(p.xy[0]), v.Y(p.xy[1]), 6, null, D.css('--lane')); D.label(g, v.X(p.xy[0]), v.Y(p.xy[1]) - 16, p.pose, D.css('--ink'), D.css('--panel')); });
+      Object.entries(m.anchors || {}).forEach(([k, p]) => { D.dot(g, v.X(p[0]), v.Y(p[1]), 6, D.css('--warn') || '#E8871E'); D.label(g, v.X(p[0]), v.Y(p[1]) - 16, k, D.css('--ink'), D.css('--panel')); });
+      if (m.car) D.arrow(g, v.X(m.car[0]), v.Y(m.car[1]), m.car[2], 12, D.css('--lane'));
+      if (m.fix) D.dot(g, v.X(m.fix[0]), v.Y(m.fix[1]), 6, D.css('--ok'), '#fff');
+    }
+    function setMap(m) {
+      q('mapbox').hidden = !m;
+      mapData = m || null;
+      if (!m) return;
+      q('maplbl').textContent = m.label || 'Track map';
+      if (q('maplegend').dataset.h !== (m.legend || '')) { q('maplegend').innerHTML = m.legend || ''; q('maplegend').dataset.h = m.legend || ''; }
+      loadTrack();
+      drawMap();
     }
 
     /* ---- selecting this step on the wizard (its live view follows the open page) */
@@ -250,6 +291,7 @@ TABS.calstep = {
       q('result').innerHTML = out.result || '';
       q('actions').innerHTML = out.actions || '';
       drawCam(out.cam);
+      setMap(out.map);
       const tab = Cal.TAB[(st.meta && st.meta.tab) || ''];
       const box = q('embedbox');
       if (tab && TABS[tab]) {
@@ -771,6 +813,97 @@ STEP_PAGES.uwb_survey = (st, live) => {
     u.anchors.map(a => `<tr><td>${Cal.esc(a.id)}</td><td class="r">${a.xyz_m.map(q => D.f(q, 2)).join(', ')}</td><td class="r">${D.f(a.range_offset_m, 3)}</td></tr>`).join('') + '</table>' +
     `<p class="muted" style="font-size:12px;margin:6px 0 0">Save writes these, tag z ${D.f(u.tag.z_m, 2)} m and mount ${u.tag.mount_xy_m.map(q => D.f(q, 2)).join(', ')} m into the session's data/uwb.yaml (track alignment is step 11).</p>`;
   return { todo, ctl, live: h, result, actions: calActions(st, null) };
+};
+
+/* ---- step 11: map-to-UWB alignment. Lap (Start lap / Stop lap) or points (one named map pose per
+ *      Record point). The fit, fixes and anchors are drawn on the track map (out.map). */
+STEP_ARGS.map_uwb_alignment = (el, b) => {
+  if (b.dataset.mode === 'lap') return { arg: { mode: 'lap' } };
+  const s = el.querySelector('[data-uwb11="pose"]');
+  const pose = s ? String(s.value || '') : '';
+  if (!pose) return { error: 'Points: choose the map pose the car is parked on' };
+  return { arg: { mode: 'points', pose } };
+};
+
+STEP_PAGES.map_uwb_alignment = st => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 11 cannot run', lv.error, 'Fix calibration_steps.yaml (map_uwb_alignment) / the map files, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, null) };
+  const running = st.status === 'RUNNING';
+  const run = lv.run;
+  const lim = lv.limits || {};
+  const modes = lv.modes || ['lap', 'points'];
+  const ins = Cal.list(st.meta.instructions);
+  const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
+  /* instructions: 0 needs, 1 lap, 2 points, 3 check */
+  let stage = saved ? ins.length : st.status === 'PASS' ? 3 : !lv.ready ? 0 : (run && run.mode === 'points') || (lv.points || []).length ? 2 : 1;
+  stage = Math.min(stage, ins.length);
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  /* controls */
+  const act = st.saved_status || st.result ? 'REDO' : 'RUN';
+  const off = !lv.ready || running ? 'disabled' : '';
+  let ctl = '';
+  if (!lv.ready) ctl += `<div class="alert bad"><b class="t">Step 10 is not saved in this session</b>${Cal.esc(lv.blocked)} <button class="btn" data-go="cal-10">Go to step 10</button></div>`;
+  if (modes.includes('lap')) {
+    ctl += '<h4 style="margin:6px 0">Lap (best)</h4>' + (running && run && run.mode === 'lap'
+      ? `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'stop' }))}">Stop lap<small>after one full slow lap (at least ${D.f(lim.lap_min_s, 0)} s)</small></button>`
+      : `<button class="btn primary" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="lap" ${off}>Start lap<small>car EXACTLY on the start pose, facing west</small></button>`);
+  }
+  if (modes.includes('points')) {
+    const poses = Object.keys(lv.poses || {}).sort();
+    const rec = lv.points || [];
+    ctl += '<h4 style="margin:12px 0 6px">Points (quick)</h4>' +
+      `<div class="row"><label>Car parked on <select data-keep data-uwb11="pose">${poses.map(p => `<option value="${Cal.esc(p)}">${Cal.esc(p)}</option>`).join('')}</select></label></div>` +
+      `<button class="btn" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="points" ${off}>Record point<small>${D.f(lim.points_seconds, 0)} s still; ${lim.min_points || 2}+ poses at least ${D.f(lim.points_min_extent_m, 1)} m apart</small></button>` +
+      (rec.length ? `<p class="muted" style="font-size:12px;margin:6px 0">Recorded: ${rec.map(p => `${Cal.esc(p.pose)} (${p.ranges} ranges)`).join(', ')}</p>` +
+        `<button class="btn" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'clear_points' }))}" ${running ? 'disabled' : ''}>Clear points</button>` : '');
+  }
+
+  /* live */
+  const feed = lv.feed;
+  const ages = lv.inputs || {};
+  const age = a => (a == null ? 'never' : D.f(a, 1) + ' s');
+  const stale = a => a == null || a > (lim.max_input_age_s || 1);
+  let h = '';
+  if (!feed || !feed.reports) h += Cal.alert('bad', 'No UWB tag reports yet', 'Tag powered and on WiFi? micro-ROS agent running (step 1)?');
+  h += `<div class="panel"><h3>Inputs</h3><div class="kv"><span>UWB tag</span><b>${feed ? `${D.f(feed.hz, 1)} Hz, last ${age(feed.age_s)}` : 'no feed'}</b>` +
+    `<span>/odom</span><b class="${stale(ages.odom) ? 'bad-t' : ''}">${age(ages.odom)}</b><span>/imu/rpy</span><b class="${stale(ages.imu) ? 'bad-t' : ''}">${age(ages.imu)}</b>` +
+    `<span>Step 10 data</span><b class="${lv.ready ? 'ok-t' : 'bad-t'}">${lv.ready ? `${lv.step10.anchors} anchors, offsets calibrated` : 'missing'}</b></div></div>`;
+  const fit = run ? run.fit : lv.last && lv.last.fit;
+  if (run) {
+    const secs = run.mode === 'lap' ? lim.lap_min_s : lim.points_seconds;
+    h += `<div class="alert info"><b class="t">${run.mode === 'lap' ? 'Recording the lap' : `Recording ${Cal.esc(run.pose)}`}… ${D.f(run.elapsed_s, 0)} s</b>` +
+      (run.mode === 'lap' ? 'Push / drive SLOWLY around the whole track, then press Stop lap.' : 'Keep the car still on the pose.') + '</div>' +
+      `<div class="bar"><i style="width:${Math.min(100, Math.round(100 * run.elapsed_s / Math.max(secs || 1, 1)))}%"></i></div>`;
+    if (run.mode === 'lap') {
+      h += `<div class="panel"><h3>Lap so far</h3><div class="kv"><span>Tag reports</span><b>${run.reports}${run.lost ? ` <span class="bad-t">(${run.lost} lost)</span>` : ''}</b>` +
+        `<span>Ranges matched</span><b>${run.samples}</b>` +
+        `<span>Area covered</span><b class="${run.extent_m >= lim.min_extent_m ? 'ok-t' : ''}">${D.f(run.extent_m, 1)} m <span class="muted">(need ${D.f(lim.min_extent_m, 1)})</span></b>` +
+        `<span>Map pose (tag)</span><b>${run.tag_xy ? run.tag_xy.map(v => D.f(v, 2)).join(', ') : '—'}</b>` +
+        `<span>UWB fix (track)</span><b>${run.fix_xy ? run.fix_xy.map(v => D.f(v, 2)).join(', ') : '—'}</b>` +
+        `<span>Fix vs map pose</span><b class="${run.fix_error_m != null && run.fix_error_m > lim.inlier_m ? 'warn-t' : ''}">${run.fix_error_m == null ? '—' : D.f(run.fix_error_m * 100, 0) + ' cm'} <span class="muted">${Cal.esc(run.fix_frame || '')}</span></b></div></div>`;
+    }
+  }
+  if (fit) {
+    h += `<div class="panel"><h3>${run ? 'Fit so far' : 'Last fit'}</h3><div class="kv"><span>track → venue</span><b>x ${D.f(fit.x_m, 3)} m, y ${D.f(fit.y_m, 3)} m, yaw ${D.f(fit.yaw_deg, 2)}°</b>` +
+      `<span>Range RMS</span><b class="${fit.rms_m <= lim.max_rms_m ? 'ok-t' : 'bad-t'}">${D.f(fit.rms_m * 100, 1)} cm <span class="muted">(limit ${D.f(lim.max_rms_m * 100, 0)})</span></b>` +
+      `<span>Inliers</span><b class="${fit.inlier_frac >= lim.min_inlier_frac ? 'ok-t' : 'bad-t'}">${D.f(fit.inlier_frac * 100, 0)} % of ${fit.ranges} <span class="muted">(min ${D.f(lim.min_inlier_frac * 100, 0)})</span></b></div></div>`;
+  }
+
+  /* map overlay (track frame) */
+  const ov = (run && run.overlay) || (lv.last && lv.last.overlay) || { poses: lv.poses };
+  const map = { label: run ? 'Track map · live' : 'Track map · UWB fixes moved with the fitted transform',
+    path: ov.path, fixes: ov.fixes, anchors: ov.anchors, poses: ov.poses || lv.poses, points: ov.points,
+    car: run && run.pose, fix: run && run.fix_xy,
+    legend: '<span><i style="background:var(--lane)"></i>Car path (odometry)</span><span><i style="background:var(--ok)"></i>UWB fixes</span>' +
+      '<span><i style="background:var(--warn)"></i>Anchors</span><span><i style="background:var(--muted)"></i>Named poses</span>' };
+
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');
+  result += running ? Cal.alert('info', 'Recording…', 'The result appears here when the lap / point is done.') : calResult(st);
+  const t = st.result && st.result.track_to_venue;
+  if (t) result += `<p class="muted" style="font-size:12px;margin:6px 0 0">Save writes ONLY track_to_venue (x ${D.f(t.x_m, 3)}, y ${D.f(t.y_m, 3)}, yaw ${D.f(t.yaw_deg, 2)}°, aligned) into the session's data/uwb.yaml; step 10's anchors and offsets stay. Check that the green fixes lie on the road before saving.</p>`;
+  return { todo, ctl, live: h, map, result, actions: calActions(st, null) };
 };
 
 /* ---- a built step without a custom page (fallback) */
