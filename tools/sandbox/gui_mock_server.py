@@ -526,6 +526,7 @@ class MockWizard:
         from carbot_ops.step_mission_planner import MissionPlannerStep
         from carbot_ops.step_practice_runs import PracticeRunsStep
         from carbot_ops.step_lidar_camera import LidarCameraStep
+        from carbot_ops.step_extrinsics_ipm import ExtrinsicsIpmStep
         from carbot_ops.step_sensor_health import SensorHealthStep
         from carbot_ops.step_speed_pid import SpeedPidStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
@@ -533,6 +534,9 @@ class MockWizard:
         from carbot_ops.step_map_uwb_alignment import MapUwbAlignmentStep
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
+        self.step4_frames = {}
+        if skip_to == 4:
+            self._make_step4_frames(root)
         step1 = next(x for x in self.steps['steps'] if x['id'] == 'sensor_health')
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
@@ -557,9 +561,13 @@ class MockWizard:
         step5 = next(x for x in self.steps['steps'] if x['id'] == 'lidar_camera')
         self.lidar_step = LidarCameraStep(step5, self.cams, lambda: self.cams, lambda: list(self.laser),
                                           clock=time.time)
+        step4 = next(x for x in self.steps['steps'] if x['id'] == 'extrinsics_ipm')
+        self.step4 = ExtrinsicsIpmStep(step4, self.cams, lambda: self.cams,
+                                       os.path.join(REPO, 'src', 'carbot_bringup', 'config'), work_root=root)
         step10 = next(x for x in self.steps['steps'] if x['id'] == 'uwb_survey')
         impls = {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                  'camera_identity': CameraIdentityStep(step2, self.cams),
+                 'extrinsics_ipm': self.step4,
                  'lidar_camera': self.lidar_step,
                  'imu_odometry': self.step6, 'servo_steering': self.step7,
                  'speed_pid': SpeedPidStep(step8, self.motion, owner, self.drive),
@@ -608,6 +616,32 @@ class MockWizard:
         self.task = {'name': 'restart_cameras', 'state': 'idle', 'message': '', 'log': []}
         self.fixed_at = None
 
+    def _make_step4_frames(self, root):
+        """Render the real printed floor boards through synthetic calibrated cameras."""
+        import cv2
+        from carbot_perception.calib_core import FloorBoard
+        from carbot_perception.camera_model import camera_setup, save_intrinsics
+        from run_calib_extrinsics import FloorWorld
+        import sandbox_common as sb
+
+        boards = [FloorBoard.from_yaml(b) for b in next(
+            s for s in self.steps['steps'] if s['id'] == 'extrinsics_ipm')['target']['boards']]
+        world = FloorWorld(boards)
+        for role, sensor in self.cams['roles'].items():
+            if not self.cams['sensors'][sensor].get('enabled', True):
+                continue
+            _, s, mount, hfov = camera_setup(self.cams, role)
+            w = int(s.get('image_width', s.get('width')))
+            h = int(s.get('image_height', s.get('height')))
+            intr = sb.synth_lens('pinhole', w, h, hfov)
+            intr.source = 'calibrated'
+            path = os.path.abspath(os.path.join(root, 'mock_intrinsics', sensor + '.yaml'))
+            save_intrinsics(path, intr, sensor)
+            self.cams['sensors'][sensor]['intrinsics_file'] = path
+            camera = sb.VirtualCamera.build(role, intr.scaled(w * 2, h * 2), mount)
+            image = cv2.resize(camera.render(world, (0.0, 0.0, 0.0)), (w, h), interpolation=cv2.INTER_AREA)
+            self.step4_frames[sensor] = (1, image)
+
     def inputs(self):
         now = time.time()
         if now - self.t_last >= 1.0:
@@ -632,7 +666,8 @@ class MockWizard:
             self._tag_to_car(self.uwb_t)
             self.uwb_feed.add(self.uwb_tag.report(), self.uwb_t)
         return dict({'snap': snap, 'health_seq': self.seq, self.wu.INPUT_KEY: self.uwb_feed,
-                     'scans': self.scans(now), 'now': now},
+                     'scans': self.scans(now), 'now': now,
+                     'frame': lambda sensor: self.step4_frames.get(sensor)},
                     **self.venue.inputs(), **self.mission())
 
     def mission(self):

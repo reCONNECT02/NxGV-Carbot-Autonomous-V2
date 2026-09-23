@@ -1,5 +1,9 @@
 # Phase 8 — wizard pages 7 to 13: handoff (2026-09-23)
 
+Update: pages 8-13, page 5, and the new page 4 backend are integrated locally on
+`phase8/complete-calibration`. The branch table and merge plan below record the
+earlier handoff state. No integrated page has been validated on the robot.
+
 Written at the end of a session that used one agent per wizard page, working in
 parallel. **The code for pages 8-13 is NOT on `main` yet** (only this document is) and
 **nothing has run on the car.** `docs/PHASES.md` has a "Phase 8 progress map" pointing here and

@@ -3,11 +3,11 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7), speed_pid (step 8),
+ * extrinsics_ipm (step 4), lidar_camera (step 5), imu_odometry (step 6),
+ * servo_steering (step 7), speed_pid (step 8),
  * venue_thresholds (step 9), uwb_survey (step 10), map_uwb_alignment (step 11),
  * mission_planner (step 12), practice_runs (step 13).
- * Every other step is a placeholder that shows its
- * instructions and terminal tool until its page is built.
+ * Unknown future steps use a placeholder with instructions and a terminal tool.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
 'use strict';
@@ -349,6 +349,7 @@ function calResult(st) {
   else {
     h += `<div class="alert bad"><b class="t">${Cal.esc(res.summary || 'Failed')}</b>` +
       (failed.length ? failed.map(c => `<div class="failitem"><b>${Cal.esc(c.label)}</b><div><b>Why:</b> ${Cal.esc(c.why)}</div>${c.fix ? `<div><b>Fix:</b> ${Cal.esc(c.fix)}</div>` : ''}</div>`).join('') : '') +
+      ((res.problems || []).length ? `<ul>${res.problems.map(p => `<li>${Cal.esc(p)}</li>`).join('')}</ul>` : '') +
       '<p style="margin:8px 0 0">Fix the problems above, then press Redo.</p></div>';
   }
   if (checks.length) h += `<table class="metric"><tr><th>Check</th><th class="r">Measured</th><th class="r">Limit</th><th>Result</th></tr>` +
@@ -515,6 +516,23 @@ STEP_PAGES.camera_intrinsics = (st, live) => {
   }
   return { todo, ctl, live: liveHtml, cam, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + result,
     actions: calActions(st, 'Run next camera') };
+};
+
+/* ---- step 4: camera mounts from the printed floor boards (existing calib_extrinsics solver) */
+STEP_PAGES.extrinsics_ipm = (st) => {
+  const lv = st.live || {};
+  const roles = lv.roles || [];
+  const running = st.status === 'RUNNING';
+  const todo = Cal.todo(Cal.list(st.meta.instructions).map((instruction, i) =>
+    [instruction, running && i === 2 ? 'now' : 'todo']));
+  const cams = roles.map(r => ({ key: r.preview, label: r.role,
+    note: r.captured ? 'Picture captured for this run' : 'Keep the floor board fully visible' }));
+  const ctl = `<p class="muted">${Cal.esc(st.meta.need || '')}</p>` +
+    (running ? `<div class="alert info"><b class="t">${Cal.esc(lv.state || 'Capturing pictures…')}</b>` +
+      'The result appears here when the camera mounts are solved.</div>' :
+      '<p>Check the live camera pictures, then run the measurement.</p>');
+  const result = running ? '<div class="muted">Waiting for pictures and mount calculation…</div>' : calResult(st);
+  return { todo, ctl, cams, result, actions: calActions(st, 'Run'), live: '' };
 };
 
 /* ---- step 6: IMU + wheel odometry. The car is moved BY HAND. Distance + spin are page operations

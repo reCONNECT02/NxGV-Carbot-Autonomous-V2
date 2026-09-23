@@ -5,17 +5,31 @@
 const App = (() => {
   const $ = id => document.getElementById(id);
   let cfg = null, core = null, split = false, focus = 0, fails = 0;
+  let pending = 0, loadingTimer = null;
   const cur = [null, null];
   const panes = [...document.querySelectorAll('.pane')].map(el => ({ el, body: el.querySelector('.panebody'),
     sel: el.querySelector('select'), inst: null, timer: null, tab: null }));
 
-  async function api(path, body) {
+  function loading(on) {
+    pending += on ? 1 : -1;
+    if (pending < 0) pending = 0;
+    clearTimeout(loadingTimer);
+    if (!pending) { $('loading').hidden = true; return; }
+    loadingTimer = setTimeout(() => { if (pending) $('loading').hidden = false; }, 180);
+  }
+  async function api(path, body, showLoading = false) {
+    const tracked = showLoading || path === '/api/config' ||
+      (body !== undefined && body.action !== 'SELECT');
     const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) };
-    const r = await fetch(path, opt);
-    if (r.status === 204) return null;
-    const ct = r.headers.get('Content-Type') || '';
-    return ct.includes('json') ? r.json() : r.blob();
+    if (tracked) loading(true);
+    try {
+      const r = await fetch(path, opt);
+      if (!r.ok) throw new Error(`HTTP ${r.status} from ${path}`);
+      if (r.status === 204) return null;
+      const ct = r.headers.get('Content-Type') || '';
+      return ct.includes('json') ? await r.json() : await r.blob();
+    } finally { if (tracked) loading(false); }
   }
   function toast(msg, ms = 3500) {
     const t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -70,20 +84,31 @@ const App = (() => {
     unmount(pi);
     p.tab = id; cur[pi] = id; p.sel.value = id;
     const sec = document.createElement('section');
-    p.body.innerHTML = ''; p.body.appendChild(sec);
+    p.body.innerHTML = '';
+    const err = document.createElement('div');
+    err.className = 'alert bad'; err.hidden = true;
+    p.body.appendChild(err); p.body.appendChild(sec);
+    p.error = err;
     const T = TABS[id] || (isStep(id) ? TABS.calstep : null);
     if (!T) { sec.innerHTML = `<div class="empty">Unknown tab ${D.esc(id)}</div>`; return; }
     try { p.inst = T.create(sec, ctx, id); } catch (e) { sec.innerHTML = `<div class="empty">This page failed to open: ${D.esc(String(e))}</div>`; p.inst = null; return; }
     const apiId = T.api ? T.api(id) : id;
+    let firstLoad = true;
     const tick = async () => {
       if (!document.hidden && p.inst) {
         try {
           if (T.poll !== false) {
             const q = p.inst.query ? p.inst.query() : '';
-            const d = await api(`/api/tab/${apiId}${q ? '?' + q : ''}`);
-            if (p.inst && p.tab === id) p.inst.update(d || {}, core);
+            const d = await api(`/api/tab/${apiId}${q ? '?' + q : ''}`, undefined, firstLoad);
+            if (p.inst && p.tab === id) { p.error.hidden = true; p.inst.update(d || {}, core); }
+            firstLoad = false;
           } else if (p.inst.update) p.inst.update(null, core);
-        } catch (e) { /* the header shows the connection state */ }
+        } catch (e) {
+          if (p.tab === id && p.error) {
+            p.error.textContent = `Could not load this page: ${e.message || e}. Retrying…`;
+            p.error.hidden = false;
+          }
+        }
       }
       if (p.tab === id) p.timer = setTimeout(tick, 1000 / rateOf(id));
     };
@@ -94,7 +119,7 @@ const App = (() => {
     const p = panes[pi];
     clearTimeout(p.timer); p.timer = null;
     if (p.inst && p.inst.destroy) p.inst.destroy();
-    p.inst = null; p.tab = null;
+    p.inst = null; p.tab = null; p.error = null;
   }
   function setSplit(on) {
     split = on;
@@ -167,8 +192,10 @@ const App = (() => {
 
   /* ------------------------------------------------------------ actions */
   async function setManual(on, confirm) {
-    const r = await api('/api/manual', { on, confirm: !!confirm });
-    if (r && !r.ok) toast(r.message); else if (r) toast(r.message);
+    try {
+      const r = await api('/api/manual', { on, confirm: !!confirm });
+      if (r) toast(r.message);
+    } catch (e) { toast(`Manual control failed: ${e.message || e}`, 7000); }
   }
   function onManual() {
     if (core && core.manual) return setManual(false);
@@ -190,7 +217,8 @@ const App = (() => {
     $('tkGo').addEventListener('click', () => { $('takeover').close(); setManual(true, true); });
     $('estopBtn').addEventListener('click', () => {
       if (cfg.mode !== 'race' && core && core.estopped) {
-        return api('/api/estop_release', {}).then(r => toast(r.message));
+        return api('/api/estop_release', {}).then(r => toast(r.message))
+          .catch(e => toast(`Could not release E-STOP: ${e.message || e}`, 7000));
       }
       $('estopText').textContent = cfg.mode === 'race'
         ? 'The car stops immediately. This counts as manual intervention: the run scores 0 marks.'
@@ -198,7 +226,8 @@ const App = (() => {
       $('estopDlg').showModal();
     });
     $('esCancel').addEventListener('click', () => $('estopDlg').close());
-    $('esGo').addEventListener('click', () => { $('estopDlg').close(); api('/api/estop', {}).then(() => toast('E-STOP sent')); });
+    $('esGo').addEventListener('click', () => { $('estopDlg').close(); api('/api/estop', {})
+      .then(() => toast('E-STOP sent')).catch(e => toast(`E-STOP request failed: ${e.message || e}`, 7000)); });
   }
 
   const ctx = { api, toast, go, get cfg() { return cfg; }, get core() { return core; } };

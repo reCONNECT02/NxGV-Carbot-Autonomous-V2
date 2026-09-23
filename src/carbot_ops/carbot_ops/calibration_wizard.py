@@ -15,15 +15,14 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
 
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
-step 3: step_camera_intrinsics, step 5: step_lidar_camera,
+step 3: step_camera_intrinsics, step 4: step_extrinsics_ipm, step 5: step_lidar_camera,
 step 6: step_imu_odometry, step 7: step_servo_steering,
 step 8: step_speed_pid, step 9: step_venue_thresholds, step 12: step_mission_planner,
 step 10: step_uwb_survey, step 11: step_map_uwb_alignment,
 step 13: step_practice_runs). Raw UWB tag reports reach
 the steps as inputs['uwb_raw'] (wizard_uwb.UwbFeed, steps 10-11); step 11's lap pose
 is dead-reckoned from the same MotionRecorder as steps 6-7.
-Steps without a page yet are
-placeholders: they show their instructions and terminal tool.
+Unknown future steps use placeholders with instructions and a terminal tool.
 
 Never crashes on user input or broken YAML: a configuration problem is reported
 as NodeStatus CONFIG_ERROR, in every service reply and in the live JSON, so the
@@ -60,6 +59,7 @@ from .road_tap import RoadTap
 from .servo_link import ServoLink
 from .step_camera_identity import CameraIdentityStep
 from .step_camera_intrinsics import CameraIntrinsicsStep
+from .step_extrinsics_ipm import ExtrinsicsIpmStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
 from .step_map_uwb_alignment import MapUwbAlignmentStep
 from .step_servo_steering import ServoSteeringStep
@@ -175,6 +175,8 @@ class CalibrationWizard(CarbotNode):
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
             'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
+            'extrinsics_ipm': lambda s: ExtrinsicsIpmStep(s, cameras, self._session_cameras,
+                                                          ct.bringup_config_dir()),
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
@@ -349,10 +351,13 @@ class CalibrationWizard(CarbotNode):
     # ------------------------------------------------------------------ loop
     def _tick(self):
         try:
-            # camera images only while step 3 is capturing (raw frames cost CPU)
-            impl = self.wiz.impls.get('camera_intrinsics')
-            self.tap.want([impl.running_sensor()] if isinstance(impl, CameraIntrinsicsStep) and impl.running_sensor()
-                          else [])
+            # Raw camera images cost CPU: subscribe only during steps 3 and 4.
+            intr = self.wiz.impls.get('camera_intrinsics')
+            ext = self.wiz.impls.get('extrinsics_ipm')
+            wanted = [intr.running_sensor()] if isinstance(intr, CameraIntrinsicsStep) and intr.running_sensor() else []
+            if isinstance(ext, ExtrinsicsIpmStep):
+                wanted += ext.running_sensors()
+            self.tap.want(wanted)
             # step 9: road grid while its page is open, stitched colours only while it samples
             vt = self.wiz.impls.get('venue_thresholds')
             if isinstance(vt, VenueThresholdsStep):
