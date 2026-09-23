@@ -13,6 +13,9 @@ and the first spin get corrected and the second ones verify. The "hand" pushes /
 it by itself while a test is in progress. Step 7 (servo + steering) drives the same car
 from the wizard's CALIBRATION_RAW requests (MockDrive): full-lock radii 0.42 / 0.44 m, and
 it drives straight at servo_center 93 (repo YAML 90), so the first straight run corrects.
+Step 8 (speed PID) drives it too: its motor needs duty 0.045 to start and 0.8 duty per m/s
+(repo YAML 0.08 / 1.0) with a 0.2 s lag; CALIBRATION requests go through command_owner's
+real SpeedController (owner_core) with the mock owner's live parameters.
 --skip-to N records MOCK passes for steps 1..N-1 in a new session so step N can be run
 straight away.
 Sessions are written to --data-root (default: a temp folder).
@@ -283,7 +286,7 @@ class Mock:
 
 
 class MockServo:
-    """servo_controller (steps 6-7) / command_owner (step 7) parameter services: immediate replies."""
+    """servo_controller (steps 6-7) / command_owner (steps 7-8) parameter services: immediate replies."""
 
     def __init__(self, values=None):
         self.values = values or {'ticks_per_meter': 1050.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0,
@@ -298,7 +301,7 @@ class MockServo:
 
 
 class MockDrive:
-    """/carbot/calibration/request stream (step 7)."""
+    """/carbot/calibration/request stream (steps 7-8)."""
 
     def __init__(self):
         self.cmd = None
@@ -312,13 +315,17 @@ class MockDrive:
 
 class MockCar:
     """Pushed / turned by a mock hand while step 6 has a test in progress, driven by the step 7
-    requests; publishes like servo_controller (/odom integrated per increment,
-    /imu/rpy = normalise(raw * scale))."""
+    and step 8 requests; publishes like servo_controller (/odom integrated per increment,
+    /imu/rpy = normalise(raw * scale)). Motor: steady speed = (|duty| - STATIC_DUTY) / PER_MPS,
+    first-order lag TAU; CALIBRATION (m/s) goes through owner_core.SpeedController."""
     TPM, IMU_GAIN, DRIFT_DEG_MIN = 1120.0, 0.95, 0.4
-    RL, RR, TRUE_CENTRE, MPS_PER_DUTY = 0.42, 0.44, 93, 1.25
+    RL, RR, TRUE_CENTRE = 0.42, 0.44, 93
+    STATIC_DUTY, PER_MPS, TAU = 0.045, 0.8, 0.2
 
-    def __init__(self, rec, servo, drive):
-        self.rec, self.servo, self.drive = rec, servo, drive
+    def __init__(self, rec, servo, drive, owner):
+        from carbot_control import owner_core
+        self.rec, self.servo, self.drive, self.owner, self.oc = rec, servo, drive, owner, owner_core
+        self.ctrl, self.v = owner_core.SpeedController(owner_core.SpeedCfg()), 0.0
         self.x, self.y, self.th, self.raw_yaw, self.t = 0.0, 0.0, 0.0, 37.0, time.monotonic()
         self.test, self.done_m, self.done_deg = None, 0.0, 0.0
 
@@ -329,6 +336,19 @@ class MockCar:
             return -1.0 / self.RR
         v = self.servo.values
         return (self.TRUE_CENTRE - v['servo_center']) * (1.0 / self.RR) / v['servo_range_right']
+
+    def _duty(self, c, dt):
+        if c is None:
+            self.ctrl.reset()
+            return 0.0
+        if c[0] == 'CALIBRATION_RAW':
+            return c[1]
+        o = self.owner.values
+        self.ctrl.cfg = self.oc.SpeedCfg(kp=o['speed_pid.kp'], ki=o['speed_pid.ki'], kd=o['speed_pid.kd'],
+                                         integral_limit=o['speed_pid.integral_limit'],
+                                         duty_per_mps=o['feedforward.duty_per_mps'],
+                                         static_duty=o['feedforward.static_duty'])
+        return self.ctrl.update(c[1], self.v, dt)
 
     def update(self, step):
         from carbot_ops.step_imu_odometry import wrap_deg
@@ -348,21 +368,24 @@ class MockCar:
             self.done_m += dm
             self.done_deg += dd
             c = self.drive.cmd
-            if c is not None:                                   # step 7: the car drives itself
-                dm = c[1] * self.MPS_PER_DUTY * dt
-                dd = math.degrees(dm * self._curvature(c[2]))
+            if c is not None or abs(self.v) > 1e-4:             # steps 7-8: the car drives itself
+                duty = self._duty(c, dt)
+                v_ss = math.copysign(max(0.0, abs(duty) - self.STATIC_DUTY) / self.PER_MPS, duty)
+                self.v += (v_ss - self.v) * min(1.0, dt / self.TAU)
+                dm = self.v * dt
+                dd = math.degrees(dm * self._curvature(c[2] if c else 0.0))
             v = self.servo.values
             ds = (-1.0 if v['odom_reverse_polarity'] else 1.0) * dm * self.TPM / v['ticks_per_meter']
             self.th += math.radians(dd)
             self.x += ds * math.cos(self.th)
             self.y += ds * math.sin(self.th)
             self.raw_yaw += self.IMU_GAIN * dd + self.DRIFT_DEG_MIN * dt / 60.0
-            self.rec.on_odom(self.t, self.x, self.y, self.th)
+            self.rec.on_odom(self.t, self.x, self.y, self.th, self.v)
             self.rec.on_imu(self.t, wrap_deg(wrap_deg(self.raw_yaw) * v['imu_yaw_scale']))
 
 
 class MockWizard:
-    """Real wizard_core + steps 1, 2, 6 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
+    """Real wizard_core + steps 1, 2, 6, 7, 8 against synthetic SystemHealth/UwbStatus snapshots and MockCar."""
 
     def __init__(self, sensors, root, skip_to=0):
         import yaml
@@ -372,6 +395,7 @@ class MockWizard:
         from carbot_ops.step_imu_odometry import ImuOdometryStep, MotionRecorder
         from carbot_ops.step_servo_steering import ServoSteeringStep
         from carbot_ops.step_sensor_health import SensorHealthStep
+        from carbot_ops.step_speed_pid import SpeedPidStep
         data = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
         ld = lambda n: yaml.safe_load(open(os.path.join(data, n)))  # noqa: E731
         self.steps, self.cams, self.uwb = ld('calibration_steps.yaml'), ld('cameras.yaml'), ld('uwb.yaml')
@@ -379,16 +403,20 @@ class MockWizard:
         step2 = next(x for x in self.steps['steps'] if x['id'] == 'camera_identity')
         step6 = next(x for x in self.steps['steps'] if x['id'] == 'imu_odometry')
         step7 = next(x for x in self.steps['steps'] if x['id'] == 'servo_steering')
+        step8 = next(x for x in self.steps['steps'] if x['id'] == 'speed_pid')
         self.motion, self.servo, self.drive = MotionRecorder(), MockServo(), MockDrive()
-        owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0})
-        self.car = MockCar(self.motion, self.servo, self.drive)
+        owner = MockServo({'mode': 'calibrate', 'steering.steer_sign': -1.0,       # = control.yaml
+                           'speed_pid.kp': 0.8, 'speed_pid.ki': 0.4, 'speed_pid.kd': 0.0, 'speed_pid.integral_limit': 0.15,
+                           'feedforward.duty_per_mps': 1.0, 'feedforward.static_duty': 0.08})
+        self.car = MockCar(self.motion, self.servo, self.drive, owner)
         self.step6 = ImuOdometryStep(step6, self.motion, self.servo)
         self.step7 = ServoSteeringStep(step7, self.motion, self.servo, owner, self.drive, 0.216)
         self.wiz = wc.Wizard(self.steps, root, {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                                 'resume_max_age_h': 12.0, 'page_watch_s': 8.0},
                              {'sensor_health': SensorHealthStep(step1, self.cams, self.uwb),
                               'camera_identity': CameraIdentityStep(step2, self.cams),
-                              'imu_odometry': self.step6, 'servo_steering': self.step7})
+                              'imu_odometry': self.step6, 'servo_steering': self.step7,
+                              'speed_pid': SpeedPidStep(step8, self.motion, owner, self.drive)})
         if skip_to > 1:
             sess = self.wiz._ensure_session()
             for x in self.wiz.slots:
