@@ -143,3 +143,30 @@ def test_missing_enabled_key_is_loud():
                                   for n, s in CAMERAS['sensors'].items()})
     with pytest.raises(KeyError):
         sc.build_checks(cams, UWB, STEP1['pass'])
+
+
+def test_live_smoothing_ignores_one_late_report():
+    from carbot_ops.step_sensor_health import SensorHealthStep
+    step = SensorHealthStep(STEP1, CAMERAS, UWB)
+    late = good()
+    for t in late['topics'].values():
+        t['age'] = 2.5                                   # one delayed system_monitor report
+    states = []
+    for seq, snap in enumerate([good(), good(), late, good(), late, late]):
+        live = step.live({'snap': snap, 'health_seq': seq})
+        states.append({r['key']: r['state'] for r in live['rows']}['lidar'])
+    # one late report -> still ok; two late in the last three -> red
+    assert states == ['ok', 'ok', 'ok', 'ok', 'bad', 'bad']
+
+
+def test_live_smoothing_repeated_seq_does_not_count_twice():
+    from carbot_ops.step_sensor_health import SensorHealthStep
+    step = SensorHealthStep(STEP1, CAMERAS, UWB)
+    bad = good()
+    bad['topics']['/scan'] = {'hz': 0.0, 'age': -1.0, 'latency': -1}
+    step.live({'snap': good(), 'health_seq': 1})
+    for _ in range(5):                                   # wizard publishes live faster than health arrives
+        live = step.live({'snap': bad, 'health_seq': 2})
+    assert {r['key']: r['state'] for r in live['rows']}['lidar'] == 'ok'   # 1 of 2 reports bad
+    live = step.live({'snap': bad, 'health_seq': 3})
+    assert {r['key']: r['state'] for r in live['rows']}['lidar'] == 'bad'

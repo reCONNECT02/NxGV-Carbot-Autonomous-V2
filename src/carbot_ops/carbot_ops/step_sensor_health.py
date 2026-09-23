@@ -7,12 +7,33 @@ when each check was ok in >= procedure.min_ok_fraction of them.
 Writes only its result file + summary (no calibration data), so keeping a
 previous value is allowed.
 """
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from . import sensor_checks as sc
 from .wizard_core import StepImpl
 
-PROC_KEYS = ('measure_s', 'min_samples', 'min_ok_fraction')
+PROC_KEYS = ('measure_s', 'min_samples', 'min_ok_fraction', 'live_smooth_n')
+
+
+def smooth(history: List[List[Dict]]) -> List[Dict]:
+    """Newest rows, but a row is only shown failing when it failed in the majority
+    of the reports in history (one late system_monitor report must not flip the
+    whole table). While mostly ok, the newest ok row is shown; while mostly
+    failing, the newest failing row (so Why / Fix describe the problem)."""
+    if not history:
+        return []
+    out = []
+    for row in history[-1]:
+        series = [r for rows in history for r in rows if r['key'] == row['key']]
+        bad = [r for r in series if r['state'] == 'bad']
+        if row['state'] == 'bad' and 2 * len(bad) <= len(series):
+            ok = [r for r in series if r['state'] == 'ok']
+            out.append(ok[-1] if ok else row)
+        elif row['state'] == 'ok' and 2 * len(bad) > len(series):
+            out.append(bad[-1])
+        else:
+            out.append(row)
+    return out
 
 
 class SensorHealthStep(StepImpl):
@@ -30,12 +51,22 @@ class SensorHealthStep(StepImpl):
         self.measure_s = float(proc['measure_s'])
         self.min_samples = int(proc['min_samples'])
         self.min_ok = float(proc['min_ok_fraction'])
+        self.smooth_n = max(1, int(proc['live_smooth_n']))
+        self.recent: List[List[Dict]] = []     # rows of the last smooth_n distinct health reports
+        self.recent_seq = None
         self.t0: Optional[float] = None
         self.samples = []
         self.last_seq = None
 
     def live(self, inputs: Dict) -> Dict:
         rows = sc.evaluate(self.checks, inputs.get('snap') or {}, self.max_age)
+        seq = inputs.get('health_seq')
+        if seq is None or seq != self.recent_seq:
+            self.recent_seq = seq
+            self.recent = (self.recent + [rows])[-self.smooth_n:]
+        else:
+            self.recent[-1] = rows
+        rows = smooth(self.recent)
         return {'rows': rows, 'n_ok': sum(1 for r in rows if r['state'] == 'ok'), 'n': len(rows),
                 'health_age_s': (inputs.get('snap') or {}).get('health_age_s')}
 

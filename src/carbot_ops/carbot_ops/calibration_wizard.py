@@ -150,7 +150,9 @@ class CalibrationWizard(CarbotNode):
             t0, h = self.health
             dt = now - t0
             snap['health_age_s'] = dt
-            snap['topics'] = {t.topic: {'hz': t.rate_hz, 'age': (t.age_s + dt) if t.age_s >= 0 else -1.0,
+            # age as measured by system_monitor at report time; a silent monitor is caught by
+            # input_timeout_s (health_age_s None -> 'wait'), not by adding dt to every sensor
+            snap['topics'] = {t.topic: {'hz': t.rate_hz, 'age': t.age_s if t.age_s >= 0 else -1.0,
                                         'latency': t.latency_ms} for t in h.topics}
             snap['procs'] = list(zip(h.camera_process_names, h.camera_process_pids))
             snap['agent'] = bool(h.uwb_agent_running)

@@ -29,7 +29,9 @@ steps:
       - "If a row stays red, read its Why / Fix. For a camera or duplicate-process row, press
          Restart camera drivers."
       - Press Run check (it measures for a few seconds), then Save.
-    procedure: {measure_s: 5.0, min_samples: 3, min_ok_fraction: 0.8}
+    # live_smooth_n: the live table shows a row red only when it failed in the majority of the
+    # last N system_monitor reports (1 = no smoothing). Run uses min_ok_fraction instead.
+    procedure: {measure_s: 5.0, min_samples: 3, min_ok_fraction: 0.8, live_smooth_n: 3}
     pass: {camera_rate_min_ratio: 0.8, lidar_min_hz: 6.0, odom_min_hz: 15.0, imu_min_hz: 15.0, uwb_min_hz: 7.0,
            battery_min_v: 10.8,
            # phase 8 additions
