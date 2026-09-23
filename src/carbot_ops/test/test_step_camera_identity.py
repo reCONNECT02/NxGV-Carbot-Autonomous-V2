@@ -158,6 +158,16 @@ def test_order_step1_first(tmp_path):
     assert not r['ok'] and 'Finish step 1' in r['message']
 
 
+def test_unsaved_step1_pass_says_press_save(tmp_path):
+    w, clock = make(tmp_path, front_only())
+    run(w, clock, Feed(), 'sensor_health')                    # PASS, but Save not pressed
+    r = w.action('camera_identity', 'RUN', CONFIRM, Feed().next())
+    assert not r['ok'] and 'not saved yet' in r['message'] and 'press Save' in r['message']
+    w.action('camera_identity', 'SELECT', '', {})
+    blk = w.live({})['step']['blocked_by']
+    assert blk['unsaved_pass'] is True and 'press Save' in blk['text']
+
+
 def test_frozen_front_picture_fails(tmp_path):
     w, clock = make(tmp_path, front_only())
     pass_step1(w, clock)

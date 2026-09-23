@@ -217,6 +217,14 @@ class Wizard:
     def blocker(self, s: Slot) -> Optional[Slot]:
         return next((x for x in self.slots if x.index < s.index and x.required and not self.can_advance(x)), None)
 
+    @staticmethod
+    def blocked_text(blk: Slot) -> str:
+        """Why an earlier step still blocks: a PASS that was never saved is the common case."""
+        if blk.status == 'PASS' and blk.unsaved:
+            return f'Step {blk.index} ({blk.title}) passed but is not saved yet: open it and press Save.'
+        return (f'Finish step {blk.index} ({blk.title}) first: it has to pass and be saved, '
+                'or be set to keep its previous value.')
+
     def all_required_passed(self) -> bool:
         return all(self.can_advance(s) for s in self.slots if s.required)
 
@@ -272,7 +280,8 @@ class Wizard:
             'current': s.index, 'n_steps': len(self.slots),
             'step': {'index': s.index, 'id': s.id, 'title': s.title, 'required': s.required,
                      'status': s.status, 'built': impl is not None, 'can_advance': self.can_advance(s),
-                     'blocked_by': {'index': blk.index, 'title': blk.title} if blk else None,
+                     'blocked_by': {'index': blk.index, 'title': blk.title, 'unsaved_pass': blk.status == 'PASS' and blk.unsaved,
+                                    'text': self.blocked_text(blk)} if blk else None,
                      'previous': s.previous, 'from_session': s.from_session,
                      'can_keep': bool(s.previous and impl is not None and impl.can_keep_previous
                                       and self.cfg['allow_keep_previous']),
@@ -384,8 +393,7 @@ class Wizard:
             return result(False, 'Already running')
         blk = self.blocker(s)
         if blk is not None:
-            return result(False, f'Finish step {blk.index} ({blk.title}) first: it has to pass, '
-                                 'or be set to keep its previous value.')
+            return result(False, self.blocked_text(blk))
         try:
             err = impl.start(self.now(), dict(inputs or {}, argument=arg or ''))
         except Exception as e:  # noqa: BLE001
@@ -481,7 +489,7 @@ class Wizard:
             return result(False, 'Cancel the running measurement first')
         blk = self.blocker(s)
         if blk is not None:
-            return result(False, f'Finish step {blk.index} ({blk.title}) first.')
+            return result(False, self.blocked_text(blk))
         try:
             session = self._ensure_session()
             src_dir = os.path.join(cs.calibration_dir(self.root), s.previous)

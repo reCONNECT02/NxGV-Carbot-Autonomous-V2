@@ -187,7 +187,7 @@ TABS.calstep = {
     function head(d, s, st) {
       const n = (d.steps || []).length || (ctx.cfg.calib_steps || []).length;
       const canNext = s && (s.can_advance || !s.required);
-      const why = !s ? '' : st && st.blocked_by ? `Finish step ${st.blocked_by.index} first` : (canNext ? '' : 'Pass this step or keep the previous value to continue');
+      const why = !s ? '' : st && st.blocked_by ? (st.blocked_by.unsaved_pass ? `Save step ${st.blocked_by.index} first` : `Finish step ${st.blocked_by.index} first`) : (canNext ? '' : 'Pass this step or keep the previous value to continue');
       return `<div class="stephead"><span class="num">Step ${index} of ${n}</span><h1>${Cal.esc(s ? s.title : 'Step ' + index)}</h1>${s ? Cal.chip(s.status) : ''}` +
         `<div class="nav"><button class="btn" data-go="${index > 1 ? 'cal-' + (index - 1) : 'calibration'}">Previous</button>` +
         (index < n ? `<button class="btn ${canNext ? 'primary' : ''}" ${canNext ? '' : 'disabled'} data-go="cal-${index + 1}">Next step</button>` : '') +
@@ -207,7 +207,9 @@ TABS.calstep = {
         al += Cal.alert('info', 'Opening this step…', 'Waiting for calibration_wizard to switch its live view here.');
         if (Date.now() - selectedAt > 3000) select();
       }
-      if (st && st.blocked_by && st.status !== 'RUNNING') al += Cal.alert('info', `Step ${st.blocked_by.index} (${st.blocked_by.title}) is not passed yet`, 'You can read this page, but Run stays refused until the earlier steps pass or keep their previous value.');
+      if (st && st.blocked_by && st.status !== 'RUNNING') al += st.blocked_by.unsaved_pass
+        ? `<div class="alert bad"><b class="t">Step ${st.blocked_by.index} (${Cal.esc(st.blocked_by.title)}) passed but is not saved</b>Open it and press Save; until then this step stays locked. <button class="btn" data-go="cal-${st.blocked_by.index}">Go to step ${st.blocked_by.index}</button></div>`
+        : Cal.alert('info', `Step ${st.blocked_by.index} (${st.blocked_by.title}) is not passed yet`, 'You can read this page, but Run stays refused until the earlier steps pass and are saved, or keep their previous value.');
       q('alerts').innerHTML = al;
       if (!st) return;
       const page = st.built ? (STEP_PAGES[st.id] || STEP_PAGES._generic) : STEP_PAGES._placeholder;
