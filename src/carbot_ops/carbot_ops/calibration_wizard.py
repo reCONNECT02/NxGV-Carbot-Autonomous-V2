@@ -194,7 +194,11 @@ class CalibrationWizard(CarbotNode):
             return
         if done is not None:
             txt = f'step {done.index} {done.title}: {done.status} - {(done.result or {}).get("summary", "")}'
-            (self.get_logger().info if done.status == 'PASS' else self.get_logger().warn)(txt)
+            # separate call sites: rclpy refuses one call site logging at two severities
+            if done.status == 'PASS':
+                self.get_logger().info(txt)
+            else:
+                self.get_logger().warn(txt)
             self._publish_all()
 
     def _refresh(self):
@@ -266,8 +270,11 @@ class CalibrationWizard(CarbotNode):
                 r = self.wiz.action(req.step_id, action, req.argument, self.inputs())
                 resp.ok, resp.message, resp.passed, resp.result_yaml = r['ok'], r['message'], r['passed'], r['result_yaml']
                 if action != 'SELECT':
-                    (self.get_logger().info if r['ok'] else self.get_logger().warn)(
-                        f'{action} {req.step_id}: {r["message"]}')
+                    txt = f'{action} {req.step_id}: {r["message"]}'
+                    if r['ok']:                    # separate call sites (see _tick)
+                        self.get_logger().info(txt)
+                    else:
+                        self.get_logger().warn(txt)
             self._publish_all()
         except Exception as e:  # noqa: BLE001  never let one request kill the node
             self.get_logger().error(f'action {req.action} {req.step_id} failed: {e!r}\n{traceback.format_exc()}')
