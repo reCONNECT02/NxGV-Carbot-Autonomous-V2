@@ -146,7 +146,7 @@ class RoadPerception(CarbotNode):
                 stamps.append((st.sec, st.nanosec))
         self._update_rates(now)
         if not images:
-            self.set_status(NodeStatus.ERROR, 'NO_CAMERAS', self._detail(None))
+            self.set_status(NodeStatus.ERROR, 'NO_CAMERAS', self._detail_text(None))
             return
         t0 = time.perf_counter()
         res = self.mask.process(images, self._classify())
@@ -175,7 +175,7 @@ class RoadPerception(CarbotNode):
         assumed = [r for r, m in self.mask.maps.items() if m.intr.source != 'calibrated']
         uncal = not bool(self.cameras.get('extrinsics_calibrated', False))
         level = NodeStatus.WARN if (stale or assumed or uncal or self.map_error) else NodeStatus.OK
-        self.set_status(level, 'RUNNING', self._detail(res, stale, assumed, uncal))
+        self.set_status(level, 'RUNNING', self._detail_text(res, stale, assumed, uncal))
 
     def _update_rates(self, now: float) -> None:
         dt = now - self._rate_t0
@@ -185,7 +185,7 @@ class RoadPerception(CarbotNode):
                 self.rx_count[r] = 0
             self._rate_t0 = now
 
-    def _detail(self, res, stale=(), assumed=(), uncal=False) -> str:
+    def _detail_text(self, res, stale=(), assumed=(), uncal=False) -> str:
         cams = ' '.join(f'{r}:{self._rates[r]:.0f}Hz' + ('(STALE)' if r in stale else '')
                         for r in self.topics)
         parts = [cams]

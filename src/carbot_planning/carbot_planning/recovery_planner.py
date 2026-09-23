@@ -103,7 +103,7 @@ class RecoveryPlanner(CarbotNode):
     def _on_cands(self, m: CandidateArray):
         self.cands_sel, self.cands_t = int(m.selected_id), self.now()
 
-    def _inputs(self, now: float, pose) -> RecInputs:
+    def _make_inputs(self, now: float, pose) -> RecInputs:
         ms = self.mission
         mode = ms.mode if ms else ''
         hold = ms.hold_reason if ms else ''
@@ -142,7 +142,7 @@ class RecoveryPlanner(CarbotNode):
             if self.rec.active:
                 self._publish_req({'speed': 0.0, 'steer': 0.0, 'arrived': False, 'reason': 'local pose stale'})
             return
-        out = self.rec.update(self._inputs(now, pose))
+        out = self.rec.update(self._make_inputs(now, pose))
         stamp = self.get_clock().now().to_msg()
         if out.request is not None:
             self._publish_req(out.request)
