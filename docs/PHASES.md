@@ -511,8 +511,8 @@ diagnostics. Recording + Scoreboard tabs and nodes REMOVED (team decision, CPU).
 
 ## Phase 8 — calibration wizard, page by page
 
-Built one wizard page per chat. Status: **step 1 (sensor health) and step 2 (camera identity)
-done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) not started.
+Built one wizard page per chat. Status: **step 1 (sensor health), step 2 (camera identity), step 3 (camera intrinsics) and
+step 5 (LiDAR-camera alignment) done**; the other steps are placeholder pages; race mode (preflight / READY / START) not started.
 
 ### Page 1 — sensor health check (done, untested on the car)
 | Piece | Where | Notes |
@@ -575,3 +575,43 @@ done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) 
 * Same recipe (`step_<id>.py`, one `factories` line, `STEP_PAGES.<id>`); `FrameTap` gives frames.
 * Front-only: only the `front` board counts; left/right boards must be skipped when their sensor is
   disabled (BACKLOG #24). Read intrinsics from this session's `data/cameras.yaml` (step 3 wrote it).
+### For the next page (step 3, camera intrinsics)
+* Being built in parallel by another session (front only, disabled sensors shown as off). It uses the
+  hooks above: `merge_data(session, 'cameras.yaml', cameras, {'sensors': {s: {'intrinsics_file': p}}})`.
+* Same recipe: `StepImpl` in `carbot_ops/step_<id>.py`, one line in `_setup` `factories`,
+  `STEP_PAGES.<id>`. Honour `sensors.<name>.enabled` (BACKLOG #24).
+* Saved roles apply only from the next launch of that session (`calibrate.launch.py session:=NAME`),
+  since camera_preview / road_perception read cameras.yaml at start. Front-only: nothing changes.
+
+### Page 5 — LiDAR-camera alignment (done, untested on the car)
+Built in parallel with steps 2/3 (step order is still enforced: Run needs steps 1-4 passed).
+Procedure (designed here; the brief had only `pass.max_bearing_error_deg`): a thin upright target
+stands 0.4-1.2 m ahead; the user clicks its FOOT in the front image and presses Capture; repeat at
+3+ positions spread >= 20 deg; Compute; Save; relaunch to apply.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Maths | `carbot_ops/lidar_align.py` | Scan -> laser points, clusters (gap / min points / max width; the 360 deg seam is merged: with the reversed mount, straight ahead IS the seam), ROI = front camera hfov/2 + `max_correction_deg`. Capture = nearest cluster to the clicked floor point, averaged over the last 5 scans, kept in LASER coordinates. Bearings compared from the LiDAR origin: error = camera - LiDAR; correction = circular mean; pass metric = worst residual after correction. Distance difference only warns |
+| Step | `carbot_ops/step_lidar_camera.py` | Page ops via action `STEP` `{"op": CAPTURE\|UNDO\|CLEAR}`. RUN argument (optional) `{"lidar_x_m", "lidar_z_m"}` = tape-measured mount (range-checked). Live: scan points + LiDAR targets projected into the front image (normalised uv), captures, running estimate. Front camera from the session's current cameras.yaml (steps 3/4 copies) + LiDAR TF from session overlay -> launched session overlay -> drivers.yaml, re-read every `reload_period_s` |
+| Save / keep | `save_data` / `keep_data` | `<session>/data/cameras.yaml lidar_to_camera {calibrated, yaw_offset_deg, base_to_laser, max_residual_deg, n_captures}` (merge_data) + overlay `tunnel_wall_follower.lidar_angle_offset` AND `carbot_tf.base_to_laser` with the SAME corrected yaw (not wrapped: 3.1416 + delta). Keep copies them; refused if the old session lacks any |
+| Wizard (shared) | `wizard_core.py`, `calibration_wizard.py` | NEW action `STEP` -> `StepImpl.handle(op, args, inputs) -> {ok, message}` (refused while that step is RUNNING). Node buffers `/scan` (sensor QoS, `capture_scans` deep) only when step 5 is configured; `inputs` gain `scans`, `now` |
+| GUI | `web/calib_lidar.js` (own file, `STEP_PAGES.lidar_camera`) | Front image + SVG overlay (range-coloured points, yellow rings = LiDAR targets, click cross, captures with LiDAR point + link) and the Capture / Undo / Clear / x / height controls are persistent nodes re-inserted after each 2 Hz redraw (no image reload, typing keeps focus). Compute button carries the x / height argument |
+| Mock + tests | `gui_mock_server.py --mode calibrate --unlock-to 5`, `test_lidar_align.py` (9), `test_step_lidar_camera.py` (7) | Mock: synthetic cam_front JPEG + ray-cast scans of a target moving between 3 spots every 12 s, LiDAR rotated +3.0 deg. Headless Chrome: 3 clicks + Captures -> Compute -> PASS +3.02 deg, residual 0.21 deg -> Save wrote data/cameras.yaml + params_overlay.yaml; typing survived redraws; 0 JS errors |
+
+### Contract changes (page 5; additions only)
+* `CalibrationAction.action`: `STEP` (comment only in the .srv; argument = JSON with `op`).
+* `calibration_steps.yaml` step 5: block form; NEW `need`, `instructions`, `procedure {roi_min_m,
+  roi_max_m, cluster_gap_m, min_cluster_points, max_cluster_width_m, match_max_m, scan_max_age_s,
+  capture_scans, min_captures, min_spread_deg, overlay_max_points, mount_x_range_m, mount_z_range_m,
+  reload_period_s}`, `pass.max_correction_deg`, `pass.warn_range_diff_m`; `writes` + `carbot_tf.base_to_laser`.
+  `pass.max_bearing_error_deg: 2.0` unchanged. Id/index unchanged.
+* `cameras.yaml lidar_to_camera`: comment only in the repo file (session copy adds `base_to_laser`,
+  `max_residual_deg`, `n_captures`). `yaw_offset_deg` is a RECORD of the correction already inside the TF.
+* `carbot_ops` package.xml: exec_depend `carbot_perception` (camera_model).
+
+### For step 5 on the car
+* The saved yaw only takes effect on the next launch of that session (static TF + tunnel follower read it
+  at start). After Save: `ros2 launch carbot_bringup calibrate.launch.py session:=<NAME>` and check
+  `ros2 run tf2_ros tf2_echo base_link laser_frame` shows the new yaw.
+* The result is only as good as step 4's front mount (camera yaw error lands in the LiDAR yaw). Until
+  steps 3/4 pass on the car, step 5's Run is refused anyway.
