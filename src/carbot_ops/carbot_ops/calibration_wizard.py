@@ -35,7 +35,9 @@ from std_msgs.msg import Bool, Float32, String
 from . import monitor_core as mc
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
+from .frame_tap import FrameTap
 from .step_camera_identity import CameraIdentityStep
+from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_sensor_health import SensorHealthStep
 from .wizard_core import StepImpl, Wizard
 
@@ -74,6 +76,7 @@ class CalibrationWizard(CarbotNode):
         self.restart = None
         self.health = self.uwb_status = self.battery = None
         self.health_seq = 0
+        self.tap = None
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -98,6 +101,7 @@ class CalibrationWizard(CarbotNode):
         factories = {
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
             'camera_identity': lambda s: CameraIdentityStep(s, cameras),
+            'camera_intrinsics': lambda s: CameraIntrinsicsStep(s, cameras),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -110,6 +114,7 @@ class CalibrationWizard(CarbotNode):
                 why = f'step {s.get("index")} configuration: {e}'
                 impls[s['id']] = BrokenStep(s, why)
                 self.get_logger().error(why)
+        self.tap = FrameTap(self, {n: x['image_topic'] for n, x in cameras['sensors'].items() if 'image_topic' in x})
         root = cs.data_root(str(self.p('data_root')))
         self.wiz = Wizard(steps_doc, root, {k: self.p(k) for k in ('session_format', 'allow_keep_previous',
                                                                    'resume_max_age_h')}, impls)
@@ -174,11 +179,15 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):
         try:
+            # camera images only while step 3 is capturing (raw frames cost CPU)
+            impl = self.wiz.impls.get('camera_intrinsics')
+            self.tap.want([impl.running_sensor()] if isinstance(impl, CameraIntrinsicsStep) and impl.running_sensor()
+                          else [])
             done = self.wiz.tick(self.inputs())
         except Exception as e:  # noqa: BLE001
             self.get_logger().error(f'wizard tick failed: {e!r}\n{traceback.format_exc()}')

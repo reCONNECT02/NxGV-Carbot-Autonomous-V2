@@ -62,12 +62,29 @@ steps:
       - Press Save. It writes the roles into this session (they apply from the next launch of this session).
     procedure: {measure_s: 3.0, min_samples: 2, min_ok_fraction: 0.8}
     pass: {user_confirmed: true, max_image_age_s: 1.0}
-  - {index: 3,  id: camera_intrinsics, title: Camera intrinsics (per camera), required: true, tab: perception,
-     writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file],
-     per_sensor: [astra, ov5647, imx219],
-     tool: ros2 run carbot_perception calib_intrinsics --sensor <sensor>,
-     target: {type: chessboard, inner_corners: [9, 6], square_m: 0.025},
-     pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}}
+  - index: 3
+    id: camera_intrinsics
+    title: Camera intrinsics (per camera)
+    required: true
+    tab: perception
+    # Wizard page (phase 8): one camera per Run, cameras with cameras.yaml enabled: false are
+    # shown as not detected and do not count. Same math as the terminal tool below.
+    writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file]
+    per_sensor: [astra, ov5647, imx219]
+    tool: ros2 run carbot_perception calib_intrinsics --sensor <sensor>
+    instructions:
+      - "Print docs/calibration/intrinsics_board_A4.pdf at 100 % (9 x 6 inner corners, 25 mm squares) and tape it flat to a stiff board."
+      - Choose the camera below and press Run.
+      - "Hold the whole board in view and keep it still for a moment: a view is captured automatically. Then move it somewhere new."
+      - "Cover every part of the image (the 3 x 3 grid turns green), near the edges and corners too, at different distances and tilts."
+      - "It calibrates by itself once enough views are collected, then press Save."
+    target: {type: chessboard, inner_corners: [9, 6], square_m: 0.025}
+    procedure: {extra_views: 10,          # capture min_views + this before fitting
+                capture_timeout_s: 300.0, # fit whatever was collected by then
+                novelty: 0.12,            # how different a new view must be (calib_core.ViewCollector)
+                still_px: 1.5,            # max corner motion between frames to count as still
+                max_live_corners: 54}     # corners sent to the page overlay
+    pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}
   - {index: 4,  id: extrinsics_ipm,    title: 3-camera extrinsics + IPM,     required: true,  tab: perception,
      writes: [cameras.yaml mounts, cameras.yaml extrinsics_calibrated],
      tool: ros2 run carbot_perception calib_extrinsics,

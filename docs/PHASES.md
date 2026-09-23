@@ -13,7 +13,7 @@ never rename silently.
 | 5 | Parking, recovery, command owner + safety | **done** |
 | 6 | Detectors (traffic light, boom gate, bump sign) | **done** |
 | 7 | GUI main tab + diagnostic tabs | **done** |
-| 8 | Calibration wizard + race mode | **in progress** (page by page: steps 1-2 done) |
+| 8 | Calibration wizard + race mode | **in progress** (page by page: steps 1-3 done) |
 | 9 | Docs | |
 
 ## Phase 1 — what exists
@@ -557,10 +557,21 @@ done**; steps 3-13 are placeholder pages; race mode (preflight / READY / START) 
 * `calibration_steps.yaml` step 2: `need`, `instructions`, `procedure {measure_s, min_samples,
   min_ok_fraction}`, `pass.max_image_age_s` (+ `writes` lists `roles_confirmed_for`). Id/index unchanged.
 
-### For the next page (step 3, camera intrinsics)
-* Being built in parallel by another session (front only, disabled sensors shown as off). It uses the
-  hooks above: `merge_data(session, 'cameras.yaml', cameras, {'sensors': {s: {'intrinsics_file': p}}})`.
-* Same recipe: `StepImpl` in `carbot_ops/step_<id>.py`, one line in `_setup` `factories`,
-  `STEP_PAGES.<id>`. Honour `sensors.<name>.enabled` (BACKLOG #24).
-* Saved roles apply only from the next launch of that session (`calibrate.launch.py session:=NAME`),
-  since camera_preview / road_perception read cameras.yaml at start. Front-only: nothing changes.
+### Page 3 — camera intrinsics (done, untested on the car)
+| Piece | Where | Notes |
+|---|---|---|
+| Step | `carbot_ops/step_camera_intrinsics.py` | One camera per Run: RUN argument = sensor name (none = first enabled sensor not passed yet). Sensors with `enabled: false` are listed as "Not detected" and refused. Auto-capture with `calib_core.ViewCollector` (board still for 2 frames, new pose), stops at `pass.min_views + procedure.extra_views` views with `pass.min_coverage_cells` areas, or at `procedure.capture_timeout_s`; the fit (`calib_core.calibrate_intrinsics`, pinhole vs fisheye) runs in a thread. Step PASSES when every ENABLED sensor in `per_sensor` passed (front-only: the Astra alone) |
+| Frames | `carbot_ops/frame_tap.py` | The wizard subscribes to a sensor's raw image topic ONLY while step 3 captures it; newest message kept, decoded on demand (`ros_image.image_to_bgr`). `carbot_ops` now exec-depends on `carbot_perception` |
+| Save / keep | `save_data` / `keep_data` | `<session>/intrinsics/<sensor>.yaml` (ROS camera_info) + `cameras.yaml sensors.<sensor>.intrinsics_file` via `calib_tools.merge_data` (step 2's roles survive). Keep copies the older session's intrinsics files and repoints `intrinsics_file` |
+| GUI | `tabs_calib.js` `STEP_PAGES.camera_intrinsics`, `calstep` `cam` box | Controls: one Run/Redo per enabled camera, "Not detected" rows for switched-off ones. Live: state (no board / hold still / new view captured), views bar, 3x3 coverage grid. `out.cam = {key, label, size, points, color}`: ONE persistent camera box with an SVG overlay of the detected corners (normalised 0..1), next to step 2's `cams` tiles |
+| Terminal tool | `carbot_perception/calib_intrinsics.py` | Now refuses a disabled `--sensor` and leaves disabled sensors out of the step's completion (was waiting for all three) |
+| Tests | `carbot_ops/test/test_step_camera_intrinsics.py` (9, fake calib_core) | Front-only pass, refused disabled camera, fail reasons (reprojection, no frames), 3-camera ordering, loud missing key, save + keep files. JS syntax-checked (V8); NOT run in a browser or on the car |
+
+### Contract changes (page 3; additions only)
+* `calibration_steps.yaml` step 3: block style now, plus `instructions` and `procedure {extra_views,
+  capture_timeout_s, novelty, still_px, max_live_corners}` (all required). Id/index/`per_sensor`/`target`/`pass` unchanged.
+
+### For the next page (step 4, extrinsics + IPM)
+* Same recipe (`step_<id>.py`, one `factories` line, `STEP_PAGES.<id>`); `FrameTap` gives frames.
+* Front-only: only the `front` board counts; left/right boards must be skipped when their sensor is
+  disabled (BACKLOG #24). Read intrinsics from this session's `data/cameras.yaml` (step 3 wrote it).

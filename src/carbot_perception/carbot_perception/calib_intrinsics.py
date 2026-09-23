@@ -25,6 +25,7 @@ import time
 import cv2
 import numpy as np
 from carbot_common import calibration_store as cs
+from carbot_common.data import sensor_enabled
 
 from .calib_core import ViewCollector, calibrate_intrinsics, detect_chessboard
 from .calib_io import (FrameGrabber, bringup_config_dir, common_args, draw_corners,
@@ -122,6 +123,8 @@ def main(argv=None):
     cameras = effective_cameras(session, cfg_dir, root)
     if a.sensor not in cameras['sensors']:
         sys.exit(f'unknown sensor {a.sensor}; cameras.yaml has {list(cameras["sensors"])}')
+    if not sensor_enabled(cameras, a.sensor):
+        sys.exit(f'{a.sensor} is switched off (cameras.yaml sensors.{a.sensor}.enabled: false)')
     sensor = cameras['sensors'][a.sensor]
     out_dir = os.path.join(session, 'captures', 'intrinsics', a.sensor)
     os.makedirs(out_dir, exist_ok=True)
@@ -163,7 +166,8 @@ def main(argv=None):
               'cx': round(float(intr.K[0, 2]), 2), 'cy': round(float(intr.K[1, 2]), 2),
               'file': os.path.abspath(ipath), 'captures': out_dir}
     doc = merge_result(session, RESULT, 'sensors', {a.sensor: result})
-    per = step.get('per_sensor', [a.sensor])
+    per = [x for x in step.get('per_sensor', [a.sensor])
+           if x not in cameras['sensors'] or sensor_enabled(cameras, x)]   # enabled: false does not count
     done = doc.get('sensors', {})
     all_pass = all((done.get(s) or {}).get('status') == 'PASS' for s in per)
     missing = [s for s in per if s not in done]

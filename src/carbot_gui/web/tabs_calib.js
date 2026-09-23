@@ -2,7 +2,7 @@
  *   TABS.calibration  Overview: every step, sessions + rollback.
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
- * Built pages: sensor_health (step 1), camera_identity (step 2). Every other step is a placeholder that shows its
+ * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -94,7 +94,10 @@ TABS.calstep = {
       <div class="calib"><div class="side"><div data-k="need"></div>
         <div class="panel"><h3>What to do</h3><ol class="steps" data-k="todo"></ol></div>
         <div class="panel"><h3>Controls</h3><div class="ctl" data-k="ctl"></div></div></div>
-      <div class="side"><div data-k="cams"></div><div data-k="live"></div>
+      <div class="side"><div data-k="cams"></div><div class="panel" data-k="cambox" hidden><h3 data-k="camlbl"></h3>
+          <div class="cam" data-k="cam"><img alt="camera"><span class="none">No image yet: is the camera preview running?</span>
+          <svg data-k="camsvg" viewBox="0 0 1 1" preserveAspectRatio="none" style="position:absolute;inset:0;pointer-events:none"></svg></div></div>
+        <div data-k="live"></div>
         <div class="panel"><h3>Result</h3><div data-k="result"></div><div class="actions" data-k="actions"></div></div>
         <details class="panel" data-k="embedbox" hidden><summary data-k="embedsum" style="cursor:pointer;font-weight:650"></summary><div data-k="embed" style="margin-top:12px"></div></details>
       </div></div>`;
@@ -125,6 +128,24 @@ TABS.calstep = {
         tile.querySelector('.lbl').textContent = c.label || '';
         const l2 = tile.querySelector('.lbl2'); l2.textContent = c.note || ''; l2.hidden = !c.note;
       });
+    }
+
+    /* ---- camera box: survives re-renders (a page returns cam: {key, label, size, points}) */
+    let camKey = '';
+    const camImg = q('cam').querySelector('img');
+    const camLoop = ImgLoop(camImg, () => camKey, 4, ok => { q('cam').querySelector('.none').style.display = ok ? 'none' : ''; });
+    camImg.style.objectFit = 'fill';
+    function drawCam(cam) {
+      const box = q('cambox');
+      camKey = cam && cam.key ? cam.key : '';
+      box.hidden = !camKey;
+      if (!camKey) return;
+      q('camlbl').textContent = cam.label || 'Camera';
+      if (cam.size && cam.size[0] && cam.size[1]) q('cam').style.aspectRatio = `${cam.size[0]}/${cam.size[1]}`;
+      const pts = cam.points || [];
+      const col = cam.color || 'var(--ok)';
+      q('camsvg').innerHTML = pts.map(([u, v]) => `<circle cx="${u}" cy="${v}" r="0.008" fill="${col}" />`).join('') +
+        (pts.length > 1 ? `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="0.003" />` : '');
     }
 
     /* ---- selecting this step on the wizard (its live view follows the open page) */
@@ -200,6 +221,7 @@ TABS.calstep = {
       q('live').innerHTML = out.live || '';
       q('result').innerHTML = out.result || '';
       q('actions').innerHTML = out.actions || '';
+      drawCam(out.cam);
       const tab = Cal.TAB[(st.meta && st.meta.tab) || ''];
       const box = q('embedbox');
       if (tab && TABS[tab]) {
@@ -208,7 +230,7 @@ TABS.calstep = {
         q('embedsum').textContent = `Live ${ctx.cfg.tabs.find(t => t.id === tab)?.title || tab} tab (opens its data only while expanded)`;
       } else box.hidden = true;
     }
-    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); stopCams(); } };
+    return { update(d) { render(d || {}); }, destroy() { stopEmbed(); stopCams(); camLoop.destroy(); } };
   },
 };
 
@@ -346,6 +368,69 @@ STEP_PAGES.camera_identity = st => {
       `<tr><td>${Cal.esc(k)}</td><td>${Cal.esc(r.roles[k])}</td><td class="muted">${(r.confirmed_roles || []).includes(k) ? 'confirmed' : 'skipped (switched off)'}</td></tr>`).join('') + '</table>';
   }
   return { todo, ctl, cams: tiles, live: liveHtml, result, actions: calActions(st, null) };
+};
+
+/* ---- step 3: camera intrinsics (one camera per Run; switched-off cameras shown as not detected) */
+STEP_PAGES.camera_intrinsics = (st, live) => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 3 cannot run', lv.error, 'Fix calibration_steps.yaml / cameras.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, 'Run') };
+  const sensors = lv.sensors || [];
+  const cap = lv.capture;
+  const running = st.status === 'RUNNING';
+  const ins = Cal.list(st.meta.instructions);
+  const board = lv.board || {};
+  let stage = 1;
+  if (st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status)) stage = ins.length;
+  else if (st.status === 'PASS' && st.unsaved) stage = ins.length - 1;
+  else if (running && cap) stage = cap.calibrating ? ins.length - 1 : (cap.views ? 3 : 2);
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  const SCHIP = { pass: ['Passed', 'ok'], fail: ['Failed', 'bad'], capturing: ['Capturing', 'blue'], todo: ['Not run', 'grey'], off: ['Not detected', 'grey'] };
+  const schip = k => { const [t, c] = SCHIP[k] || [k, 'grey']; return `<span class="chip ${c}">${Cal.esc(t)}</span>`; };
+  const ctl = `<table class="calcheck"><tr><th>Camera</th><th>State</th><th></th></tr>` + sensors.map(x => {
+    const r = x.result || {};
+    const detail = !x.enabled ? x.note : r.rms_px != null ? `${r.model} · ${D.f(r.rms_px, 3)} px · ${r.views} views · hfov ${D.f(r.hfov_deg, 1)}°` : x.topic;
+    const btn = !x.enabled ? '' : running ? (cap && cap.sensor === x.name ? `<button class="btn" data-act="CANCEL">Cancel</button>` : '')
+      : `<button class="btn ${r.status ? '' : 'primary'}" data-act="${r.status ? 'REDO' : 'RUN'}" data-arg="${Cal.esc(x.name)}">${r.status ? 'Redo' : 'Run'}</button>`;
+    return `<tr${x.enabled ? '' : ' class="muted"'}><td><b>${Cal.esc(x.label)}</b><br><span class="muted" style="font-size:11.5px">${Cal.esc(detail || '')}</span></td>` +
+      `<td>${schip(x.state)}</td><td class="r">${btn}</td></tr>`;
+  }).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:8px 0 0">Board: ${Cal.esc((board.inner_corners || []).join(' x '))} inner corners, ${Cal.esc(board.square_mm)} mm squares ` +
+    `(docs/calibration/intrinsics_board_A4.pdf, printed at 100 %).</p>`;
+
+  let liveHtml, cam = null;
+  if (cap) {
+    const pct = Math.round(100 * Math.min(1, cap.views / Math.max(1, cap.target_views)));
+    const grid = `<table class="covgrid" style="border-collapse:separate;border-spacing:3px;margin:6px 0">` + (cap.coverage || []).map(row =>
+      '<tr>' + row.map(n => `<td style="width:46px;height:26px;text-align:center;border-radius:5px;font-size:11.5px;` +
+        `background:var(${n ? '--ok-bg' : '--raised'});color:var(${n ? '--ok' : '--muted'});border:1px solid var(--line)">${n ? '✓' : ''}</td>`).join('') + '</tr>').join('') + '</table>';
+    const stateCls = cap.state === 'new view captured' ? 'ok-t' : cap.state === 'no board in view' ? 'bad-t' : 'warn-t';
+    liveHtml = `<div class="panel"><h3>Capturing ${Cal.esc(cap.label)} <small>${cap.frames} frames checked</small></h3>` +
+      (cap.calibrating ? Cal.alert('info', 'Calibrating…', `Fitting both lens models to ${cap.views} views. This takes a few seconds; keep the page open.`)
+        : `<p style="margin:0 0 6px;font-size:15px"><b class="${stateCls}">${Cal.esc(cap.state)}</b></p>`) +
+      `<div class="kv"><span>Views</span><b>${cap.views} of ${cap.target_views} <span class="muted">(pass needs ${cap.min_views})</span></b>` +
+      `<span>Image areas covered</span><b>${cap.coverage_cells} of 9</b></div><div class="bar" style="margin:8px 0"><i class="${pct >= 100 ? 'ok' : ''}" style="width:${pct}%"></i></div>` +
+      grid + `<p class="muted" style="font-size:12px;margin:0">Grey squares: move the board there. It calibrates by itself once enough views cover the whole image` +
+      `${st.run ? `, or after ${D.f(st.run.remaining_s, 0)} s` : ''}.</p></div>`;
+    if (cap.preview) cam = { key: 'cam_' + cap.preview, label: `${cap.label} · live`, size: cap.size,
+      points: cap.corners || [], color: cap.state === 'new view captured' ? '#2ecc71' : '#f1c40f' };
+  } else {
+    liveHtml = `<div class="panel"><h3>Live capture</h3>${Cal.alert('info', 'Not capturing', 'Press Run next to a camera. The camera feed and the detected board corners appear here.')}</div>`;
+    const first = sensors.find(x => x.enabled);
+    if (first) cam = { key: 'cam_front', label: 'Front camera · aim check' };
+  }
+  let result;
+  if (running) result = Cal.alert('info', cap && cap.calibrating ? 'Calibrating…' : 'Capturing views…', 'The result appears here when the fit is done.');
+  else {
+    result = calResult(st);
+    const rs = st.result && st.result.sensors ? Object.values(st.result.sensors).filter(r => r.rms_px != null) : [];
+    if (rs.length) result += `<table class="metric" style="margin-top:8px"><tr><th>Camera</th><th>Model</th><th class="r">fx / fy</th><th class="r">cx / cy</th><th class="r">hfov</th></tr>` +
+      rs.map(r => `<tr><td>${Cal.esc(r.label)}</td><td>${Cal.esc(r.model)}</td><td class="r">${D.f(r.fx, 1)} / ${D.f(r.fy, 1)}</td>` +
+        `<td class="r">${D.f(r.cx, 1)} / ${D.f(r.cy, 1)}</td><td class="r">${D.f(r.hfov_deg, 1)}°</td></tr>`).join('') + '</table>';
+  }
+  return { todo, ctl, live: liveHtml, cam, result: (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '') + result,
+    actions: calActions(st, 'Run next camera') };
 };
 
 /* ---- a built step without a custom page (fallback) */
