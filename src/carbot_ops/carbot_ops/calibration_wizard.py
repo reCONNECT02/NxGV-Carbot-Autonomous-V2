@@ -15,7 +15,9 @@ Replaces the phase-1 stub; same node name, topics, service and message types.
 Logic lives in wizard_core (order, sessions, save/keep/rollback) and one StepImpl
 per built step page (step 1: step_sensor_health, step 2: step_camera_identity,
 step 3: step_camera_intrinsics,
-step 6: step_imu_odometry, step 7: step_servo_steering).
+step 6: step_imu_odometry, step 7: step_servo_steering,
+step 10: step_uwb_survey). Raw UWB tag reports reach the steps as
+inputs['uwb_raw'] (wizard_uwb.UwbFeed; step 11 reuses it).
 Steps without a page yet are
 placeholders: they show their instructions and terminal tool.
 
@@ -30,6 +32,7 @@ import time
 import traceback
 
 import rclpy
+from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
 from carbot_common import topics as T
 from carbot_common.data import load_data
@@ -42,6 +45,7 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Float32, String
 
 from . import monitor_core as mc
+from . import wizard_uwb
 from .camera_restart import CFG_KEYS as RESTART_KEYS
 from .camera_restart import CameraRestart
 from .frame_tap import FrameTap
@@ -51,6 +55,7 @@ from .step_camera_intrinsics import CameraIntrinsicsStep
 from .step_imu_odometry import ImuOdometryStep, MotionRecorder
 from .step_servo_steering import ServoSteeringStep
 from .step_sensor_health import SensorHealthStep
+from .step_uwb_survey import UwbSurveyStep
 from .wizard_core import StepImpl, Wizard
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
@@ -58,6 +63,8 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             # phase 8
             'resume_max_age_h', 'page_watch_s', 'live_rate_hz', 'state_rate_hz', 'tick_hz', 'refresh_period_s',
             'input_timeout_s', 'servo_param_timeout_s', 'drive_request_hz', 'vehicle.wheelbase_m',
+            # phase 8 page 10: raw UWB tag feed (wizard_uwb)
+            'uwb_buffer_s', 'uwb_rate_window_s',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
             'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
@@ -118,6 +125,7 @@ class CalibrationWizard(CarbotNode):
         self.health_seq = 0
         self.tap = None
         self.motion = MotionRecorder()                # step 6, fed from /odom and /imu/rpy
+        self.uwb_feed = None
         self.pub_state = self.create_publisher(CalibrationState, T.CALIBRATION_STATE, LATCHED)
         self.pub_live = self.create_publisher(String, T.CALIBRATION_LIVE, LATCHED)
         self.create_service(CalibrationAction, T.CALIBRATION_ACTION_SRV, self._srv)
@@ -149,6 +157,7 @@ class CalibrationWizard(CarbotNode):
             'imu_odometry': lambda s: ImuOdometryStep(s, self.motion, self.servo),
             'servo_steering': lambda s: ServoSteeringStep(s, self.motion, self.servo, self.owner, self.drive,
                                                           float(self.p('vehicle.wheelbase_m'))),
+            'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir()),
         }
         impls = {}
         for s in steps_doc.get('steps', []):
@@ -171,6 +180,7 @@ class CalibrationWizard(CarbotNode):
         self.restart = CameraRestart(rc, cameras, self._scripts_dir())
         self.timeout = float(self.p('input_timeout_s'))
         self.sub(SystemHealth, T.SYSTEM_HEALTH, self._on_health, 5)
+        self.uwb_feed = wizard_uwb.attach(self, float(self.p('uwb_buffer_s')), float(self.p('uwb_rate_window_s')))
         self.sub(UwbStatus, T.UWB_STATUS, lambda m: setattr(self, 'uwb_status', (time.monotonic(), m)), 5)
         self.sub(Float32, T.VEHICLE_BATTERY, lambda m: setattr(self, 'battery', (time.monotonic(), m.data)), 5)
         self.create_subscription(Bool, T.E_STOP, self._on_estop, 10)
@@ -245,7 +255,8 @@ class CalibrationWizard(CarbotNode):
                            'anchors': {a: {'seen': bool(u.anchor_seen[i]) if i < len(u.anchor_seen) else False,
                                            'age': float(u.anchor_age_s[i]) if i < len(u.anchor_age_s) else -1.0}
                                        for i, a in enumerate(u.anchor_ids)}}
-        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None}
+        return {'snap': snap, 'health_seq': self.health_seq, 'frame': self.tap.frame if self.tap else None,
+                wizard_uwb.INPUT_KEY: self.uwb_feed}
 
     # ------------------------------------------------------------------ loop
     def _tick(self):

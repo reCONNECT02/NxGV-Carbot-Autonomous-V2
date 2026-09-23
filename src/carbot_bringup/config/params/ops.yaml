@@ -16,6 +16,9 @@ calibration_wizard:
     input_timeout_s: 3.0            # SystemHealth / UwbStatus / battery older than this = missing
     servo_param_timeout_s: 3.0      # steps 6-7: servo_controller get/set parameter reply time limit
     drive_request_hz: 20.0          # step 7: /carbot/calibration/request repeat rate (owner expiry is 200 ms)
+    # page 10 (UWB survey), reused by page 11: raw /uwb3/input_json feed (carbot_ops.wizard_uwb)
+    uwb_buffer_s: 30.0              # raw tag reports kept (steps copy what they need every tick)
+    uwb_rate_window_s: 3.0          # per-anchor rate / report rate window in the live view
     restart_cameras:                # step 1 "Restart camera drivers" button
       enabled: true
       kill_patterns: [mipi_cam, hobot_codec, websocket, astra_camera_container]   # camera ones only

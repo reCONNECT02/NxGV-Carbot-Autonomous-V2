@@ -3,7 +3,7 @@
  *   TABS.calstep      One page per step (tab id cal-N), data from /api/tab/calibration:
  *                     {steps (CalibrationState), live (the OPEN step, /carbot/calibration/live), wizard (heartbeat)}.
  * Built pages: sensor_health (step 1), camera_identity (step 2), camera_intrinsics (step 3),
- * imu_odometry (step 6), servo_steering (step 7). Every other step is a placeholder that shows its
+ * imu_odometry (step 6), servo_steering (step 7), uwb_survey (step 10). Every other step is a placeholder that shows its
  * instructions and terminal tool until its page is built.
  * The layout is created once; only its slots are refreshed, so clicks, open <details>
  * and the embedded diagnostic tab survive each poll. Buttons use one delegated handler. */
@@ -85,6 +85,9 @@ TABS.calibration = {
 
 /* ============================================================ STEP PAGES */
 const STEP_PAGES = {};
+/* Buttons with data-argfrom="<id>": the RUN/REDO argument is built at click time by
+ * STEP_ARGS[<id>](pageEl, button) -> {arg: object|string} | {error: text} (forms, step 10) */
+const STEP_ARGS = {};
 
 TABS.calstep = {
   rate: () => 2,
@@ -156,13 +159,33 @@ TABS.calstep = {
     /* ---- one delegated click handler for every button on the page */
     el.addEventListener('click', async e => {
       const b = e.target.closest('[data-act]'); if (!b || b.disabled || busy) return;
+      let arg = b.dataset.arg || '';
+      if (b.dataset.argfrom) {
+        const fn = STEP_ARGS[b.dataset.argfrom];
+        const a = fn ? fn(el, b) : { error: 'no form handler for ' + b.dataset.argfrom };
+        if (a.error) { lastErr = a.error; ctx.toast(a.error, 7000); if (last) render(last); return; }
+        arg = typeof a.arg === 'string' ? a.arg : JSON.stringify(a.arg);
+      }
       busy = true; b.disabled = true;
-      const r = await Cal.act(ctx, index, b.dataset.act, b.dataset.arg || '');
+      const r = await Cal.act(ctx, index, b.dataset.act, arg);
       busy = false;
       lastErr = r.ok ? '' : r.message;
       ctx.toast(r.message, r.ok ? 3500 : 7000);
       if (last) render(last);
     });
+
+    /* ---- form fields (data-keep): what the user typed survives the 2 Hz re-render; the slot is
+     *      only rewritten when its HTML changes, then edited fields get their typed value back */
+    el.addEventListener('input', e => { if (e.target.matches('[data-keep]')) e.target.dataset.dirty = '1'; });
+    function setKeep(box, html) {
+      if (box.dataset.h === html) return;
+      const typed = {};
+      const key = i => [...i.attributes].filter(a => a.name.startsWith('data-') && !['data-keep', 'data-dirty'].includes(a.name))
+        .map(a => `${a.name}=${a.value}`).join('|') + '@' + ((i.closest('[data-row]') || { dataset: {} }).dataset.row || '');
+      box.querySelectorAll('[data-keep][data-dirty]').forEach(i => { typed[key(i)] = i.value; });
+      box.innerHTML = html; box.dataset.h = html;
+      box.querySelectorAll('[data-keep]').forEach(i => { const k = key(i); if (k in typed) { i.value = typed[k]; i.dataset.dirty = '1'; } });
+    }
 
     /* ---- embedded diagnostic tab: created and polled only while opened */
     function stopEmbed() { if (embed) { clearTimeout(embed.h); if (embed.inst && embed.inst.destroy) embed.inst.destroy(); embed = null; } q('embed').innerHTML = ''; }
@@ -221,7 +244,7 @@ TABS.calstep = {
       const need = st.meta && st.meta.need;
       q('need').innerHTML = need ? `<div class="need"><b>Before you start</b><span>${Cal.esc(need)}</span></div>` : '';
       q('todo').innerHTML = out.todo || '';
-      q('ctl').innerHTML = out.ctl || '<span class="muted">Nothing to set for this step.</span>';
+      setKeep(q('ctl'), out.ctl || '<span class="muted">Nothing to set for this step.</span>');
       setCams(out.cams);
       q('live').innerHTML = out.live || '';
       q('result').innerHTML = out.result || '';
@@ -631,6 +654,123 @@ STEP_PAGES.servo_steering = st => {
       '<p class="muted" style="font-size:12px;margin:6px 0 0">servo_center is live now; the steering limits apply from the next launch of this session.</p>';
   }
   return { todo, ctl, live: liveHtml, result, actions: calActions(st, null) };
+};
+
+/* ---- step 10: UWB anchor survey + offsets. One stage per Run; the argument is built from the
+ *      form when the button is clicked (STEP_ARGS.uwb_survey), typed values survive the re-render */
+STEP_ARGS.uwb_survey = (el, b) => {
+  const stage = b.dataset.stage;
+  const num = (sel, what) => {
+    const i = el.querySelector(sel); const v = i ? String(i.value).trim().replace(',', '.') : '';
+    if (v === '' || !isFinite(Number(v))) throw new Error(`${what}: enter a number (metres)`);
+    return Number(v);
+  };
+  try {
+    if (stage === 'link') return { arg: { stage } };
+    if (stage === 'survey') {
+      const anchors = [];
+      el.querySelectorAll('[data-uwb-anchor]').forEach(tr => {
+        const k = tr.dataset.uwbAnchor;
+        const id = String(tr.querySelector('[data-f="id"]').value || '').trim().toUpperCase();
+        if (!id) { if (tr.dataset.extra) return; throw new Error('an anchor has no id'); }
+        anchors.push({ id, xyz_m: ['x', 'y', 'z'].map(f => num(`[data-uwb-anchor="${k}"] [data-f="${f}"]`, `anchor ${id} ${f === 'z' ? 'height' : f}`)) });
+      });
+      return { arg: { stage, anchors, tag: { z_m: num('[data-uwb-tag="z"]', 'tag antenna height'),
+        mount_xy_m: [num('[data-uwb-tag="fwd"]', 'tag position forward'), num('[data-uwb-tag="left"]', 'tag position left')] } } };
+    }
+    return { arg: { stage, spot: [num(`[data-uwb-spot="${stage}-x"]`, `${stage} spot x`), num(`[data-uwb-spot="${stage}-y"]`, `${stage} spot y`)] } };
+  } catch (err) { return { error: String(err.message || err) }; }
+};
+
+STEP_PAGES.uwb_survey = (st, live) => {
+  const lv = st.live || {};
+  if (lv.error) return { live: Cal.alertBad('Step 10 cannot run', lv.error, 'Fix calibration_steps.yaml / uwb.yaml, then relaunch calibrate.launch.py.'),
+    result: calResult(st), actions: calActions(st, null) };
+  const running = st.status === 'RUNNING';
+  const stages = lv.stages || [];
+  const S = Object.fromEntries(stages.map(s => [s.key, s]));
+  const lim = lv.limits || {};
+  const form = lv.form || { anchors: [], tag: {} };
+  const ins = Cal.list(st.meta.instructions);
+  const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
+  /* what to do: the YAML instructions, ticked off by the stage that covers them */
+  const done = k => S[k] && S[k].state === 'pass';
+  /* instructions 0-4 = layout / survey / tag (form), 5 = OFFSETS, 6 = VERIFY */
+  let stage = saved ? ins.length : done('verify') ? ins.length - 1 : done('offsets') ? 6 : done('survey') ? 5 : 0;
+  stage = Math.min(stage, ins.length);
+  const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
+
+  /* controls: 4 stage boxes. The HTML only changes when the form defaults or button states change */
+  const dis = running ? 'disabled' : '';
+  const act = st.saved_status || st.result ? 'REDO' : 'RUN';
+  const v = x => (x == null || x === '' ? '' : Cal.esc(x));
+  const inp = (attr, val, ro) => `<input type="text" inputmode="decimal" data-keep ${attr} value="${v(val)}" ${ro ? 'readonly' : ''} style="width:64px">`;
+  const conf = new Set(lv.configured || []);
+  const rows = (form.anchors || []).map((a, i) => `<tr data-uwb-anchor="${i}" data-row="a${i}"><td>${inp('data-f="id"', a.id, conf.has(a.id))}</td>` +
+    ['x', 'y', 'z'].map((f, j) => `<td>${inp(`data-f="${f}"`, a.xyz_m ? a.xyz_m[j] : '')}</td>`).join('') + '</tr>').join('') +
+    `<tr data-uwb-anchor="new" data-row="anew" data-extra="1"><td>${inp('data-f="id" placeholder="4th id"', '')}</td>` +
+    ['x', 'y', 'z'].map(f => `<td>${inp(`data-f="${f}"`, '')}</td>`).join('') + '</tr>';
+  const btn = (stg, label, sub, primary) => `<button class="btn ${primary ? 'primary' : ''}" data-act="${act}" data-argfrom="uwb_survey" data-stage="${stg}" ${dis}>${Cal.esc(label)}<small>${Cal.esc(sub)}</small></button>`;
+  const nxt = lv.next || '';
+  const tag = form.tag || {};
+  const mxy = tag.mount_xy_m || ['', ''];
+  const spot = (k, d) => `<div class="row"><label>x (m)${inp(`data-uwb-spot="${k}-x"`, d ? d[0] : '')}</label><label>y (m)${inp(`data-uwb-spot="${k}-y"`, d ? d[1] : '')}</label></div>`;
+  const box = (k, n, body) => `<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px"><b>${n}. ${Cal.esc(S[k] ? S[k].label : k)}</b> ` +
+    `${S[k] ? `<span class="chip ${S[k].state === 'pass' ? 'ok' : S[k].state === 'fail' ? 'bad' : S[k].state === 'running' ? 'blue' : 'grey'}">${Cal.esc(S[k].state)}</span>` : ''}<div class="ctl" style="margin-top:6px">${body}</div></div>`;
+  const ctl = box('link', 1, btn('link', 'Link check', `Listens ${lim.link_check_s || 5} s: every anchor must be heard`, nxt === 'link')) +
+    box('survey', 2, `<p class="muted" style="margin:0;font-size:12px">Tape-measured antenna positions in METRES from anchor 1782 (+x towards 1786, +y towards 1783); z = height above the floor. ` +
+      'Leave the last row empty unless you add a 4th anchor (its id must also be in RangeProtocol.h).</p>' +
+      `<table class="calcheck uwbform"><tr><th>Anchor</th><th>x</th><th>y</th><th>height</th></tr>${rows}</table>` +
+      `<div class="row"><label>Tag height (m)${inp('data-uwb-tag="z"', tag.z_m)}</label><label>Tag fwd of rear axle (m)${inp('data-uwb-tag="fwd"', mxy[0])}</label>` +
+      `<label>Tag left (m)${inp('data-uwb-tag="left"', mxy[1])}</label></div>` + btn('survey', 'Save survey', 'Checks spacing, angles and accuracy coverage (instant)', nxt === 'survey')) +
+    box('offsets', 3, spot('offsets', lv.offset_spot_m) + btn('offsets', 'Measure offsets', `Tag STILL at this spot, > ${lim.min_distance_from_anchor_m || 1} m from every anchor, ${lim.seconds || 20} s`, nxt === 'offsets')) +
+    box('verify', 4, spot('verify', lv.verify && lv.verify.spot_m) + btn('verify', 'Verify', `A different spot (>= ${lim.min_verify_separation_m || 0.5} m away), ${lim.seconds || 20} s, error <= ${D.f((lim.max_verify_error_m || 0.15) * 100, 0)} cm`, nxt === 'verify'));
+
+  /* live: feed, per-anchor table, geometry, stage why/fix */
+  const feed = lv.feed;
+  const g = lv.geometry || {};
+  let h = '';
+  if (!feed || !feed.reports) h += Cal.alert('bad', 'No UWB tag reports yet', 'Tag powered and on WiFi? micro-ROS agent running (step 1)? ROS_LOCALHOST_ONLY=0, ROS_DOMAIN_ID=1.');
+  else if (feed.age_s != null && feed.age_s > 2) h += Cal.alert('bad', `Last tag report ${D.f(feed.age_s, 1)} s ago`, 'The tag stopped reporting: check its power / WiFi.');
+  if (feed && feed.unknown_ids && feed.unknown_ids.length) h += Cal.alert('info', `Heard anchor ids not in the survey: ${feed.unknown_ids.join(', ')}`, 'Add them in the survey (and RangeProtocol.h), or switch them off.');
+  const run = lv.run;
+  if (running && run && st.run) {
+    h += `<div class="alert info"><b class="t">${Cal.esc(S[run.stage] ? S[run.stage].label : run.stage)}… ${D.f(st.run.remaining_s, 0)} s left</b>` +
+      `${run.reports} tag reports${run.spot_m ? ` · tag at (${D.f(run.spot_m[0], 2)}, ${D.f(run.spot_m[1], 2)})` : ''}. Keep the tag still and stay out of the line of sight.</div>` +
+      `<div class="bar"><i style="width:${Math.round((st.run.fraction || 0) * 100)}%"></i></div>`;
+  }
+  const f3 = x => (x == null ? '—' : D.f(x, 3));
+  const arows = (lv.anchors || []).map(a => {
+    const stale = a.age_s == null || a.age_s > 1.0;
+    return `<tr${stale ? ' class="badrow"' : ''}><td><b>${Cal.esc(a.id)}</b>${a.configured ? '' : ' <span class="muted">(new)</span>'}<br><span class="muted" style="font-size:11.5px">${a.xyz_m ? a.xyz_m.map(q => D.f(q, 2)).join(', ') : '—'}</span></td>` +
+      `<td class="r ${stale ? 'bad-t' : ''}">${a.age_s == null ? 'never' : D.f(a.age_s, 1) + ' s'}</td><td class="r">${a.rate_hz == null ? '—' : D.f(a.rate_hz, 1) + ' Hz'}</td>` +
+      `<td class="r">${f3(a.last_raw_m)}</td><td class="r">${a.samples == null ? '—' : a.samples}</td>` +
+      `<td class="r ${a.noisy ? 'warn-t' : ''}">${a.spread_m == null ? '—' : D.f(a.spread_m * 100, 1) + ' cm'}</td>` +
+      `<td class="r">${a.offset_m == null ? '—' : (a.offset_m >= 0 ? '+' : '') + D.f(a.offset_m, 3)}</td></tr>`;
+  }).join('');
+  h += `<div class="panel"><h3>UWB anchors <small>${feed ? `${D.f(feed.hz, 1)} Hz tag reports · boot ${Cal.esc(feed.boot_id || '—')}` : 'no feed'}</small></h3>` +
+    `<table class="calcheck"><tr><th>Anchor</th><th class="r">Age</th><th class="r">Rate</th><th class="r">Raw range (m)</th><th class="r">Samples</th><th class="r">Spread</th><th class="r">Offset (m)</th></tr>${arows}</table>` +
+    `<p class="muted" style="font-size:12px;margin:8px 0 0">Raw = uncorrected 3-D range. Spread above ${D.f((lim.max_spread_m || 0.08) * 100, 0)} cm = multipath: raise the anchor / clear the line of sight.` +
+    `${lv.saved_flags ? ` Loaded uwb.yaml: surveyed ${lv.saved_flags.anchors_surveyed ? 'yes' : 'no'}, offsets ${lv.saved_flags.offsets_calibrated ? 'yes' : 'no'}.` : ''}</p></div>`;
+  h += `<div class="panel"><h3>Layout ${lv.entered ? '(your survey)' : '(uwb.yaml as loaded)'} <small>HDOP ≤ ${Cal.esc(lim.hdop_limit)} over ${D.f((g.hdop_coverage || 0) * 100, 0)} % of the ${Cal.esc(g.hdop_area || '')} (need ${D.f((lim.min_hdop_coverage || 0) * 100, 0)} %)</small></h3>` +
+    ((g.errors || []).map(e => Cal.alert('bad', 'Layout problem', e)).join('') + (g.warnings || []).map(w => Cal.alert('info', 'Warning', w)).join('') || '<div class="muted">No layout problems.</div>') + '</div>';
+  const vf = lv.verify;
+  if (vf && vf.error_m != null) {
+    h += `<div class="panel"><h3>Verify</h3><div class="kv"><span>Tape spot</span><b>${D.f(vf.spot_m[0], 2)}, ${D.f(vf.spot_m[1], 2)}</b>` +
+      `<span>Median fix</span><b>${D.f(vf.median_fix_m[0], 2)}, ${D.f(vf.median_fix_m[1], 2)}</b>` +
+      `<span>Error</span><b class="${vf.status === 'PASS' ? 'ok-t' : 'bad-t'}">${D.f(vf.error_m * 100, 1)} cm (limit ${D.f((lim.max_verify_error_m || 0.15) * 100, 0)})</b>` +
+      `<span>Jitter</span><b>${D.f(vf.jitter_m * 100, 1)} cm</b><span>Flip-flop</span><b>${vf.flip_flop_m > 0 ? D.f(vf.flip_flop_m * 100, 0) + ' cm (multipath)' : 'none'}</b></div></div>`;
+  }
+  const bad = stages.filter(s => s.state === 'fail');
+  if (bad.length && !running) h += bad.map(s => Cal.alertBad(`${s.label} failed`, s.why, s.fix)).join('');
+
+  let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');
+  result += running ? Cal.alert('info', 'Measuring…', 'The result appears here when this stage is done.') : calResult(st);
+  const u = st.result && st.result.uwb;
+  if (u && u.anchors) result += `<table class="metric" style="margin-top:8px"><tr><th>Anchor</th><th class="r">x, y, z (m)</th><th class="r">Offset (m)</th></tr>` +
+    u.anchors.map(a => `<tr><td>${Cal.esc(a.id)}</td><td class="r">${a.xyz_m.map(q => D.f(q, 2)).join(', ')}</td><td class="r">${D.f(a.range_offset_m, 3)}</td></tr>`).join('') + '</table>' +
+    `<p class="muted" style="font-size:12px;margin:6px 0 0">Save writes these, tag z ${D.f(u.tag.z_m, 2)} m and mount ${u.tag.mount_xy_m.map(q => D.f(q, 2)).join(', ')} m into the session's data/uwb.yaml (track alignment is step 11).</p>`;
+  return { todo, ctl, live: h, result, actions: calActions(st, null) };
 };
 
 /* ---- a built step without a custom page (fallback) */

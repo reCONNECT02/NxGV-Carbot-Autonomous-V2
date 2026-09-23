@@ -189,6 +189,10 @@ steps:
     tool: ros2 run uwb_localization calib_uwb
     writes: [uwb.yaml anchors, uwb.yaml tag.z_m, uwb.yaml tag.mount_xy_m, uwb.yaml anchors_surveyed,
              uwb.yaml offsets_calibrated]
+    need: Step 1 passed (UWB tag and every anchor seen). Tape measure; the tag on the car or on a stand.
+    # Wizard page (phase 8, page 10): RUN argument JSON {"stage": "link" | "survey" | "offsets" |
+    # "verify", ...}; one stage per Run, the step passes once all four passed. Same math as
+    # calib_uwb (raw tag JSON, offset = median(raw 3-D range) - tape 3-D distance).
     instructions:
       - "LAYOUT: spread the anchors 2-7 m apart in a triangle around the track (current
          layout: 1782 (0, 0), 1786 (7.50, 0), 1783 (7.50, 4.83), metres). Never nearly in a line."
@@ -198,7 +202,7 @@ steps:
          ANCHOR_IDS and set ANCHOR_COUNT 4 in firmware/uwb_tag/TagMicroROS/RangeProtocol.h,
          re-flash the tag, then add it when the tool asks for anchors."
       - "SURVEY: tape-measure every anchor antenna (x, y, height) in METRES from anchor 1782,
-         +x towards 1786, +y from 1786 towards 1783. Enter them when asked."
+         +x towards 1786, +y from 1786 towards 1783. Enter them on this page (the terminal tool asks for them)."
       - "TAG: measure the tag antenna on the car: height above the floor, and its position from
          the rear-axle centre (forward +x, left +y)."
       - "OFFSETS: put the tag still at a tape-measured spot inside the triangle, more than 1 m from
@@ -206,7 +210,9 @@ steps:
       - "VERIFY: move it to a DIFFERENT measured spot (20 s). The corrected fix must be within 15 cm."
     procedure: {tool: tools/uwb/uwb_calib.py method (calib_uwb), seconds: 20, min_distance_from_anchor_m: 1.0,
                 verify_spot: true, link_check_s: 5, min_samples: 20, min_spacing_m: 2.0,
-                min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08}
+                min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08,
+                # wizard page only (phase 8)
+                min_verify_separation_m: 0.5, min_fixes: 10, max_extent_m: 30.0}
     pass: {max_verify_error_m: 0.15, all_anchors_seen: true, min_hdop_coverage: 0.9}
   - index: 11
     id: map_uwb_alignment

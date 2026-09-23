@@ -2,7 +2,8 @@
 import importlib
 
 MODULES = ['calibration_wizard', 'race_supervisor', 'run_recorder', 'system_monitor', 'scoreboard']
-PURE = ['monitor_core', 'sensor_checks', 'wizard_core', 'step_sensor_health', 'camera_restart']   # phase 8, no rclpy
+PURE = ['monitor_core', 'sensor_checks', 'wizard_core', 'step_sensor_health', 'camera_restart',
+        'wizard_uwb', 'step_uwb_survey']   # phase 8, no rclpy
 
 
 def test_modules_import():
