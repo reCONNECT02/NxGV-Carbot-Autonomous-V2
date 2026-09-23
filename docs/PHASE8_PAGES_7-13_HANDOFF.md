@@ -14,7 +14,7 @@ are merged (the draft sections are at the end of this file).
 | 8 | speed_pid | `phase8/page-08-speed-pid` | 4afe92e | done; built on main 795d5d3 (reuses main's DriveRequests / MotionRecorder / ServoLink) |
 | 9 | venue_thresholds | `phase8/page-09-venue-thresholds` | a34e501 | done (based on 09b604f) |
 | 10 | uwb_survey | `phase8/page-10-uwb-survey` | b7c6b3c | done (based on 09b604f) |
-| 11 | map_uwb_alignment | `phase8/page-11-map-uwb-alignment-wip` | 0540295 | **WIP**: backend, tests, GUI page and mock written; final test run + browser check + report not done. Contains page 10 merged with main 795d5d3 (4e14d33) |
+| 11 | map_uwb_alignment | `phase8/page-11-map-uwb-alignment` | b028719 | done (finished after this file was first written). Contains page 10 merged with main 795d5d3 (4e14d33). carbot_ops 173 pass; headless Chrome lap -> PASS -> Save, 0 JS errors. (`-wip` branch = same line, older head) |
 | 12 | mission_planner | `phase8/page-12-mission-planner` | 20b30aa | done (based on 09b604f) |
 | 13 | practice_runs | `phase8/page-13-practice-runs` | 6c41baa | done (based on 09b604f) |
 | 9+12+13 | — | `phase8/integration-pages-9-12-13` (this branch) | see git log | main 795d5d3 + pages 13, 9, 12 merged (c13032f, cdddad1, 242fb78). **Post-merge review / tests / browser check NOT finished** (agent stopped by usage limit) |
@@ -30,9 +30,9 @@ are merged (the draft sections are at the end of this file).
    Known Windows-only failures: `test_import::test_modules_import` (no rclpy),
    `test_unwritable_root_gives_message` (os.geteuid), `test_root_helper_fallback`.
    Browser: mock + headless Chrome, every page renders with 0 JS errors.
-2. **Finish page 11** on its branch: run tests, browser check on the mock, final commit.
+2. ~~Finish page 11~~ done (b028719).
 3. **Merge into the integration branch**: `phase8/page-08-speed-pid`, then
-   `phase8/page-11-map-uwb-alignment-wip` (brings page 10). Resolve shared files keeping both sides.
+   `phase8/page-11-map-uwb-alignment` (brings page 10). Resolve shared files keeping both sides.
 4. **Deduplicate param helpers**: main has `servo_link.ServoLink`; page 9 added
    `param_link.ParamLink` (same interface). Make page 9 use ServoLink, delete param_link.py.
 5. Update `docs/PHASES.md` (pages 8–13 sections, drafts below) + `docs/BACKLOG.md`, commit,
@@ -86,7 +86,7 @@ are merged (the draft sections are at the end of this file).
   cost, `road_max_chroma` tightness, ParamLink against real road_perception.
 * Page 10: micro-ROS feed at 10 Hz into the wizard, offsets (~1 m) + verify ≤ 15 cm with raised
   anchors, RDK CPU.
-* Page 11: everything (WIP).
+* Page 11: real-lap dead-reckoning RMS, live-fit CPU, timestamp alignment odom/imu/UWB, `/api/tab/map` fetch on the real gui_server.
 * Page 12: planning time on the RDK (laptop: ~150 s for three legs), planner folder found from a
   `--symlink-install` build, OpenCV in the wizard node, canvas touch/drag on the tablet.
 * Page 13: real MissionState/MissionEvent timing, challenge-exit detection.
@@ -119,11 +119,16 @@ Contract: step 9 block style + `need`, `instructions`, 16 `procedure` keys; inpu
 | GUI / mock / tests | `STEP_PAGES.uwb_survey`, `STEP_ARGS`, `setKeep`; synthetic tag, `--unlock`; `test_step_uwb_survey.py` (24) | Headless Chrome link -> survey -> offsets -> verify -> Save, 0 JS errors |
 Contract: step 10 `need`, `procedure.min_verify_separation_m`, `min_fixes`, `max_extent_m`; ops.yaml `uwb_buffer_s`, `uwb_rate_window_s`; carbot_ops exec-depends uwb_localization; wizard_core result `message`.
 
-### Page 11 — map-to-UWB alignment (WIP)
-`carbot_ops/step_map_uwb_alignment.py` (lap + points modes, CLI robust fit, merges only
-`track_to_venue`, keep refused if anchors/offsets differ), `test_step_map_uwb_alignment.py`,
-`STEP_PAGES.map_uwb_alignment` + calstep map box, mock lap hand + parked points. Needs final
-test run + browser check.
+### Page 11 — map-to-UWB alignment
+| Piece | Where | Notes |
+|---|---|---|
+| Step | `carbot_ops/step_map_uwb_alignment.py` | RUN `{"mode":"lap"}` then STEP `{"op":"stop"}`; or `{"mode":"points","pose":NAME}` per pose (+ `clear_points`). CLI fit reused (`calib_map_uwb`, `alignment.fit_track_to_venue`). Checks lap_min_s, extent, min_points, max_rms_m, min_inlier_frac. Refuses without this session's step-10 uwb.yaml, or with stale /odom or /imu |
+| Lap pose | shared `MotionRecorder` | dead-reckoned (/odom distance + /imu yaw) from `start_pose`; nothing published, local estimate untouched |
+| Save / keep | `<session>/data/uwb.yaml` | merges ONLY `track_to_venue {x_m, y_m, yaw_deg, aligned}`; Save refused if step 10 changed after the fit; replay captures `captures/step11_*.jsonl`. Keep copies track_to_venue, refused if anchors/offsets/tag differ |
+| Map identity for step 12 | `11_map_uwb_alignment.yaml` | `map {file, sha1, sha1_lf, sha1_crlf}` (same hash as mission.yaml map.sha1), `basis` |
+| GUI / mock / tests | `STEP_PAGES.map_uwb_alignment` + generic calstep map box `out.map`; `--skip-to 11` lap hand + parked points; `test_step_map_uwb_alignment.py` (24) | Headless Chrome lap: RMS 5.2 cm, PASS, Save, 0 JS errors |
+Contract: step 11 procedure + `points_min_extent_m`, `lap_max_s`, `max_input_age_s`, `live_fit_period_s`, `overlay_max_points`; carbot_ops exec-depends carbot_localization.
+Open: lap pose is odometry+IMU dead reckoning (no lane corrections) — real-lap RMS unknown; live fit CPU on the RDK; start_pose + light_goal_pose are only ~1 m apart (< points_min_extent_m 1.5), so pick far-apart poses for points mode; step 12 should check the step-11 map.sha1.
 
 ### Page 12 — mission planner
 | Piece | Where | Notes |
