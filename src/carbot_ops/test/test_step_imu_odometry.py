@@ -418,3 +418,89 @@ def test_recorder_ignores_samples_before_settle():
     rec.on_imu(1.5, -90.0)
     assert rec.yaw == pytest.approx(10.0)
     assert math.isclose(wrap_deg(190.0), -170.0)
+
+
+# --------------------------------------------------------------------------- delete runs
+def delete(step, test, index=None):
+    a = {'op': 'delete_run', 'test': test}
+    if index is not None:
+        a['index'] = index
+    return step.handle('delete_run', a, {})
+
+
+def test_delete_newest_corrected_run_undoes_its_correction():
+    step, car, link, _ = make(tpm_true=1000.0)                      # odom reads 5 % long at 1050: a correction follows
+    r = distance_run(step, car)
+    assert r['status'] == 'CORRECTED' and link.values['ticks_per_meter'] != 1050.0
+    out = delete(step, 'distance', 0)
+    assert out['ok'] and out['invalidate_result'] and 'ticks_per_meter back to 1050' in out['message']
+    assert link.values['ticks_per_meter'] == 1050.0 and step.runs['distance'] == []
+    assert step.live({})['tests']['distance']['status'] == 'NOT_RUN'
+
+
+def test_delete_older_run_leaves_the_live_value_and_says_so():
+    step, car, link, _ = make(tpm_true=1000.0)
+    distance_run(step, car)                                         # CORRECTED (first)
+    second = distance_run(step, car)                                # verify run
+    assert second['status'] == 'PASS'
+    out = delete(step, 'distance', 0)                               # delete the OLD corrected run, not the newest
+    assert out['ok'] and 'stays on' in out['message']
+    assert link.values['ticks_per_meter'] != 1050.0 and len(step.runs['distance']) == 1
+    assert step.live({})['tests']['distance']['status'] == 'PASS'   # the verify run is in charge again
+
+
+def test_delete_when_live_value_changed_since_keeps_it():
+    step, car, link, _ = make(tpm_true=1000.0)
+    distance_run(step, car)
+    link.values['ticks_per_meter'] = step.values['ticks_per_meter'] = 999.0      # set by hand afterwards + re-read
+    out = delete(step, 'distance', 0)
+    assert out['ok'] and 'left on' in out['message'] and link.values['ticks_per_meter'] == 999.0
+
+
+def test_delete_spin_run_restores_the_scale():
+    step, car, link, _ = make(imu_gain=1.1)
+    r = spin(step, car)
+    assert r['status'] == 'CORRECTED' and link.values['imu_yaw_scale'] != 1.0
+    out = delete(step, 'spin', 0)
+    assert out['ok'] and link.values['imu_yaw_scale'] == 1.0
+
+
+def test_delete_refused_while_measuring_and_for_bad_input():
+    step, car, link, _ = make()
+    step.live({})
+    assert not delete(step, 'distance', 0)['ok']                    # nothing to delete
+    op(step, 'distance_start')
+    out = delete(step, 'distance', 0)
+    assert not out['ok'] and 'in progress' in out['message']
+    op(step, 'abort')
+    distance_run(step, car)
+    assert not delete(step, 'nope', 0)['ok'] and not delete(step, 'distance', 7)['ok'] and not delete(step, 'distance')['ok']
+
+
+def test_delete_all_runs_and_live_index():
+    step, car, link, _ = make(tpm_true=1000.0)
+    distance_run(step, car)
+    distance_run(step, car)
+    live = step.live({})['tests']['distance']
+    assert [r['index'] for r in live['runs']] == [0, 1]
+    out = step.handle('delete_all_runs', {'op': 'delete_all_runs', 'test': 'distance'}, {})
+    assert out['ok'] and 'Values already set' in out['message'] and step.runs['distance'] == []
+
+
+def test_deleting_a_run_drops_an_unsaved_step_result(tmp_path):
+    step, car, link, clock = make(tpm_true=1100.0)
+    w = _wizard(tmp_path, step, clock)
+    _pass_earlier(tmp_path, w)
+    distance_run(step, car)                                         # CORRECTED
+    distance_run(step, car)                                         # PASS
+    spin(step, car)
+    assert w.action('imu_odometry', 'RUN', '', {})['ok']
+    done = None
+    while done is None:
+        car.wait(1.0)
+        done = w.tick({})
+    assert done.status == 'PASS' and done.unsaved
+    r = w.action('imu_odometry', 'STEP', json.dumps({'op': 'delete_run', 'test': 'distance', 'index': 1}), {})
+    assert r['ok'], r
+    slot = next(x for x in w.slots if x.id == 'imu_odometry')
+    assert slot.status == 'PENDING' and slot.result is None and slot.unsaved is False

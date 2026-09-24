@@ -65,7 +65,7 @@ def test_layout_matches_floorboard_geometry():
 
 def test_axle_offset_moves_the_boards_forward_of_the_axle_line():
     off = float(TARGET['axle_offset_m'])
-    assert off == 0.150                                       # 2026-09-24: rear axle 150 mm further back
+    assert off == 0.065                                       # 2026-09-24: rear axle 65 mm further back (150 mm was not detected)
     for raw, eff in zip(TARGET['boards'], BOARDS):
         assert eff['centre_m'][0] == pytest.approx(raw['centre_m'][0] + off)
         assert eff['centre_m'][1] == raw['centre_m'][1] and eff['yaw_deg'] == raw['yaw_deg']
@@ -84,7 +84,7 @@ def test_axle_offset_zero_gives_the_layout_as_first_printed():
 
 
 def test_front_board_is_fully_inside_the_front_camera_view():
-    """The reason for the 150 mm axle move: at 0.62 the near corners were outside the picture."""
+    """The reason for the axle move: at 0.62 the near corners were outside the picture."""
     from carbot_perception.camera_model import Intrinsics, Mount, project_ground
     root = os.path.join(REPO, 'src', 'carbot_bringup', 'config', 'data')
     cams = yaml.safe_load(open(os.path.join(root, 'cameras.yaml'), encoding='utf-8'))
@@ -123,7 +123,7 @@ def test_overlapping_boards_are_rejected():
 
 def test_roll_fit():
     assert mb.roll_fit(1310, 940) == 1067
-    assert mb.roll_fit(470, 1037) == 610                      # the front-board-only sheet: a 24 in roll
+    assert mb.roll_fit(470, 952) == 610                       # the front-board-only sheet: a 24 in roll
     assert mb.roll_fit(1310, 880) == 914
     assert mb.roll_fit(1300, 1200) is None
 

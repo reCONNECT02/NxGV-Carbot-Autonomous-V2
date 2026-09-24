@@ -445,6 +445,9 @@ class Wizard:
         except Exception as e:  # noqa: BLE001  a page operation must not stop the wizard
             return result(False, f'{a["op"]} failed: {e!r}')
         self.current = s.index
+        if r.get('ok') and r.get('invalidate_result') and s.unsaved and s.status in ('PASS', 'FAIL'):
+            # the op removed data an unsaved result was computed from (e.g. step 6 deleted a run)
+            s.status, s.result, s.unsaved = s.saved_status or ('PENDING' if s.required else 'SKIPPED_OPTIONAL'), None, False
         return result(bool(r.get('ok')), str(r.get('message', '')))
 
     def _a_cancel(self, s: Slot, arg, inputs) -> Dict:

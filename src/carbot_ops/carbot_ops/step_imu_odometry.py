@@ -204,7 +204,62 @@ class ImuOdometryStep(StepImpl):
             if self.active['phase'] != 'measuring':
                 return {'ok': False, 'message': 'Wait: the IMU scale is still being set for the spin.'}
             return self._distance_stop(now) if test == 'distance' else self._spin_stop(now)
+        if op in ('delete_run', 'delete_all_runs'):
+            return self._delete(op, args)
         return {'ok': False, 'message': f'Unknown operation {op!r}'}
+
+    @staticmethod
+    def _fmt(v) -> str:
+        return ('on' if v else 'off') if isinstance(v, bool) else f'{v:g}'
+
+    # ------------------------------------------------------------------ delete runs
+    def _delete(self, op: str, args: Dict) -> Dict:
+        """Remove one run (delete_run: test + index) or every run of a test (delete_all_runs: test) from the list.
+        The pass state of a test is its LATEST run, so deleting a bad measurement (car pushed crooked) puts the
+        previous one back in charge. Corrections a run already applied LIVE on servo_controller are undone only
+        for the newest run of its test while the live value is still the corrected one; otherwise they stay and
+        the message says so (press Re-read, then measure again)."""
+        if self.active is not None or self.t0 is not None:
+            return {'ok': False, 'message': 'A measurement is in progress: Stop or Abort it first, then delete runs.'}
+        if self.busy:
+            return {'ok': False, 'message': f'Wait: {self.busy}.'}
+        test = str(args.get('test', ''))
+        if test not in self.runs:
+            return {'ok': False, 'message': f'Delete which runs? test must be one of {sorted(self.runs)}, not {test!r}.'}
+        runs = self.runs[test]
+        if not runs:
+            return {'ok': False, 'message': f'There are no {test} runs to delete.'}
+        if op == 'delete_all_runs':
+            n = len(runs)
+            self.runs[test] = []
+            return {'ok': True, 'invalidate_result': True,
+                    'message': f'Deleted all {n} {test} run{"s" if n > 1 else ""}. Values already set on {SERVO} were left '
+                               'as they are (press Re-read to see them); measure again.'}
+        try:
+            i = int(args['index'])
+        except (KeyError, TypeError, ValueError):
+            return {'ok': False, 'message': 'delete_run needs the index of the run.'}
+        if not 0 <= i < len(runs):
+            return {'ok': False, 'message': f'There is no {test} run number {i + 1}.'}
+        run = runs.pop(i)
+        note = ''
+        corrected = run.get('corrected') or {}
+        if corrected and i == len(runs) and self.values is not None:       # it was the newest run of this test
+            before = {}
+            if 'ticks_per_meter' in corrected:
+                before['ticks_per_meter'] = run['ticks_per_meter']
+            if 'odom_reverse_polarity' in corrected:
+                before['odom_reverse_polarity'] = run['reverse_polarity']
+            if 'imu_yaw_scale' in corrected:
+                before['imu_yaw_scale'] = run['imu_yaw_scale']
+            if before and all(self.values.get(k) == v for k, v in corrected.items()):
+                self._set(before, 'undo the correction of a deleted run')
+                note = ' Its correction was undone: ' + ', '.join(f'{k} back to {self._fmt(v)}' for k, v in before.items()) + '.'
+            elif before:
+                note = f' Its correction ({", ".join(corrected)}) was left on {SERVO}: the live value has changed since.'
+        elif corrected:
+            note = f' Its correction ({", ".join(corrected)}) stays on {SERVO}: only the newest run can be undone.'
+        return {'ok': True, 'invalidate_result': True, 'message': f'Deleted {test} run {i + 1}.{note}'}
 
     def _abort(self) -> Dict:
         a, self.active = self.active, None
@@ -439,7 +494,9 @@ class ImuOdometryStep(StepImpl):
         tests = {}
         for t in ('distance', 'spin'):
             runs = self.runs[t]
-            tests[t] = {'status': runs[-1]['status'] if runs else 'NOT_RUN', 'runs': runs[-self.max_runs:],
+            off = len(runs) - len(runs[-self.max_runs:])
+            tests[t] = {'status': runs[-1]['status'] if runs else 'NOT_RUN',
+                        'runs': [dict(r, index=off + k) for k, r in enumerate(runs[-self.max_runs:])],
                         'n_runs': len(runs), 'failed_runs': sum(1 for r in runs if r['status'] != 'PASS')}
         return {'values': self.values, 'busy': self.busy, 'link_error': self.link_error, 'active': act,
                 'tests': tests, 'spin_test': self.spin_test, 'straight_run_m': self.true_m,

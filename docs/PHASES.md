@@ -106,16 +106,16 @@ never rename silently.
   the car outline, centre line and rear-axle line for placing the car. Tests:
   `python3 -m pytest -q tools/calibration` (rasterises the layout and the PDF and re-detects
   every board against `FloorBoard.ground_points`).
-* **Step 4 = front camera only, rear axle 150 mm further back (2026-09-24)**: the side cameras
+* **Step 4 = front camera only, rear axle 65 mm further back (2026-09-24; first tried 150 mm, the board was not detected there)**: the side cameras
   are gone, so `calibration_steps.yaml` step 4 `target.boards` holds ONE board (`front`, yaw 90,
   6x4 inner corners, 50 mm squares; the left/right entries are kept as a comment). New key
-  `target.axle_offset_m: 0.150`: the car's rear axle sits 150 mm BEHIND the layout's reference line
+  `target.axle_offset_m: 0.065`: the car's rear axle sits 65 mm BEHIND the layout's reference line
   because at `centre_m` x 0.62 the front camera lost the near corners of the board (2 of 4 outer
   corners outside the 320x240 picture). `centre_m` stays the board position on the layout;
   `carbot_common.calib_tools.floor_board_dicts` turns it into base_link (x + `axle_offset_m`,
-  so the front board is at x 0.77) for the solver (`calib_extrinsics`), `make_boards.py` and
+  so the front board is at x 0.685) for the solver (`calib_extrinsics`), `make_boards.py` and
   `draw_mat.py`. A missing key is an error. `axle_offset_m: 0.0` gives the layout as first printed.
-  The front-board-only sheet is 470 x 1037 mm (fits a 610 mm / 24 in roll, 470 mm across) and must
+  The front-board-only sheet is 470 x 952 mm (fits a 610 mm / 24 in roll, 470 mm across) and must
   be reprinted: the board keeps its printed shape, only the axle line / car outline move relative
   to it. Checked offline, not on the car: all 24 inner and 4 outer corners project inside the front
   camera picture (u 55..280, v 146..168 of 320x240, hfov 60 deg, mount z 0.0935 m, pitch 2.5 deg).

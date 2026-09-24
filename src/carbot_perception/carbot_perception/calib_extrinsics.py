@@ -10,7 +10,7 @@ docs/images/calib_mat.png): tape a cross on the floor where the REAR-AXLE
 CENTRE goes and a straight line for the car's centre line. Lay each floor
 board flat at its position in base_link = centre_m + target.axle_offset_m in x
 (carbot_common.calib_tools.floor_board_dicts; the rear axle sits axle_offset_m
-BEHIND the layout's reference line, 0.150 m since 2026-09-24), measured from the
+BEHIND the layout's reference line, 0.065 m since 2026-09-24 (0.150 was not detected)), measured from the
 cross along / across the line, with its long side along yaw_deg.
 If a board is not fully visible in its camera, move it, MEASURE the new
 centre and edit centre_m - the measurement is what matters, not the default.

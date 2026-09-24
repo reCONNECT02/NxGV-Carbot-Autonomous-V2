@@ -213,6 +213,7 @@ TABS.calstep = {
     /* ---- one delegated click handler for every button on the page */
     el.addEventListener('click', async e => {
       const b = e.target.closest('[data-act]'); if (!b || b.disabled || busy) return;
+      if (b.dataset.confirm && !window.confirm(b.dataset.confirm)) return;
       let arg = b.dataset.arg || '';
       if (b.dataset.argfrom) {
         const fn = STEP_ARGS[b.dataset.argfrom];
@@ -604,21 +605,27 @@ STEP_PAGES.imu_odometry = st => {
       `<p class="muted" style="font-size:12px">${D.f(st.run.remaining_s, 0)} s left, ${st.run.samples} IMU messages. Nobody touches the car or the table.</p>`;
   } else liveHtml += '<div class="muted">Nothing is being measured. Use the buttons under Controls.</div>';
   const STAT = { PASS: ['pass', 'ok-t'], CORRECTED: ['corrected, verify', 'bad-t'], FAIL: ['fail', 'bad-t'], NO_DATA: ['no data', 'bad-t'] };
-  const runsTbl = (title, t, cols) => {
+  const noDel = running || !!a || !!busy;           /* runs cannot be deleted while something is measuring */
+  const delBtn = (test, index, label, all) => `<button class="btn" style="padding:0 6px;min-height:22px;font-size:12px" data-act="STEP" ` +
+    `data-arg="${Cal.esc(JSON.stringify(all ? { op: 'delete_all_runs', test } : { op: 'delete_run', test, index }))}" ` +
+    `data-confirm="${Cal.esc(all ? `Delete ALL ${test} runs?` : `Delete ${test} run ${index + 1}? A correction it made is undone only if it is the newest run.`)}" ` +
+    `${noDel ? 'disabled' : ''}>${label}</button>`;
+  const runsTbl = (title, t, cols, test) => {
     if (!t.runs || !t.runs.length) return `<h4 style="margin:12px 0 4px">${title}</h4><div class="muted">No run yet.</div>`;
     const off = t.n_runs - t.runs.length;
     const last = t.runs[t.runs.length - 1];
-    return `<h4 style="margin:12px 0 4px">${title} <small class="muted">${t.n_runs} run${t.n_runs > 1 ? 's' : ''}</small></h4>` +
-      `<table class="calruns"><tr><th>#</th>${cols.map(c => `<th class="r">${c[0]}</th>`).join('')}<th>Result</th></tr>` +
+    return `<h4 style="margin:12px 0 4px">${title} <small class="muted">${t.n_runs} run${t.n_runs > 1 ? 's' : ''}</small> ${delBtn(test, 0, 'Delete all', true)}</h4>` +
+      `<table class="calruns"><tr><th>#</th>${cols.map(c => `<th class="r">${c[0]}</th>`).join('')}<th>Result</th><th></th></tr>` +
       t.runs.map((r, i) => `<tr><td>${off + i + 1}</td>${cols.map(c => `<td class="r">${Cal.esc(c[1](r))}</td>`).join('')}` +
-        `<td class="${(STAT[r.status] || ['', 'muted'])[1]}">${Cal.esc((STAT[r.status] || [r.status])[0])}</td></tr>`).join('') + '</table>' +
+        `<td class="${(STAT[r.status] || ['', 'muted'])[1]}">${Cal.esc((STAT[r.status] || [r.status])[0])}</td>` +
+        `<td>${delBtn(test, r.index != null ? r.index : off + i, 'Delete', false)}</td></tr>`).join('') + '</table>' +
       (last.status !== 'PASS' && (last.why || last.fix) ? `<div class="calwhy">${last.why ? `<b>Why:</b> ${Cal.esc(last.why)}` : ''}${last.fix ? `<br><b>Fix:</b> ${Cal.esc(last.fix)}` : ''}</div>` : '') +
       (t.failed_runs >= lv.max_runs && last.status !== 'PASS' ? Cal.alert('bad', `${t.failed_runs} runs without a pass`, 'Something mechanical is off (wheel slipping, car not pushed straight, IMU loose). Check it before more runs.') : '');
   };
   liveHtml += runsTbl('Distance runs', dist, [['Odom', r => r.odom_m != null ? D.f(r.odom_m, 3) + ' m' : '—'],
-    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['ticks/m', r => D.f(r.ticks_per_meter, 1)]]);
+    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['ticks/m', r => D.f(r.ticks_per_meter, 1)]], 'distance');
   if (lv.spin_test) liveHtml += runsTbl('Spins', spin, [['IMU', r => (r.yaw_at_scale_deg != null ? D.f(r.yaw_at_scale_deg, 1) : D.f(r.yaw_change_deg, 1)) + '°'],
-    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['scale', r => D.f(r.imu_yaw_scale, 4)]]);
+    ['Error', r => r.error_pct != null ? (r.error_pct > 0 ? '+' : '') + D.f(r.error_pct, 1) + ' %' : '—'], ['scale', r => D.f(r.imu_yaw_scale, 4)]], 'spin');
   const lim = lv.limits || {};
   liveHtml += `<p class="muted" style="font-size:12px;margin:8px 0 0">Limits: distance ±${D.f(lim.distance_pct, 1)} %, spin ±${D.f(lim.spin_pct, 1)} %, drift ${D.f(lim.drift_deg_per_min, 1)} °/min. ` +
     'A corrected run never passes: the next run with the new value verifies it.</p></div>';
