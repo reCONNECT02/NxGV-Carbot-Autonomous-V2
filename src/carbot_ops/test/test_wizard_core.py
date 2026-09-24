@@ -248,15 +248,15 @@ def test_live_payload_shape(tmp_path):
     live = w.live(Feed().next())
     assert live['step']['built'] and live['step']['live']['n'] == 9
     assert live['step']['meta']['instructions']
-    w.action('camera_intrinsics', 'SELECT', '', {})
+    w.action('extrinsics_ipm', 'SELECT', '', {})
     live = w.live({})
-    assert not live['step']['built'] and live['step']['blocked_by']['index'] == 2
+    assert not live['step']['built'] and live['step']['blocked_by']['index'] == 3
 
 
 def test_blocking_follows_depends_on_not_step_number(tmp_path):
     w, _ = make(tmp_path)
     by = lambda i: [b.index for b in [w.blocker(w.slot(i))] if b]
-    assert by(1) == [] and by(2) == [1]
+    assert by(1) == [] and by(2) == [1] and by(3) == []
     # 8 (speed PID), 9 (venue colours) and 10 (UWB) do not wait for each other
     assert by(8) == [6]
     assert w.slot(8).cfg['depends_on'] == [6] and 8 not in w.slot(9).cfg['depends_on'] + w.slot(10).cfg['depends_on']
