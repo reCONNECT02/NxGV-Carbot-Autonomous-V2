@@ -22,7 +22,11 @@ servo_controller:
     drive_motor_index: 0
     odom_distance_scale: 1.0        # (calib step 6)
     odom_yaw_scale: 1.0             # (calib step 6)
-    encoder_jump_threshold: 800.0
+    # 2026-09-24 (BACKLOG #61): was 800. risabot5's wheel gives ~286000 ticks/m (calibration step 6), i.e. thousands
+    # of ticks per 50 ms cycle: at 800 the filter dropped almost every reading and odometry counted a few percent of
+    # the real distance (`Encoder jump filtered` ~20x/s). Glitches are still limited by max_linear_velocity (5 cm/cycle).
+    # Keep it well above (max speed x ticks_per_meter x 0.05 s).
+    encoder_jump_threshold: 100000.0
     max_linear_velocity: 1.0
     max_angular_velocity: 6.0
     odom_reverse_polarity: false
