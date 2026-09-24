@@ -196,7 +196,7 @@ steps:
   - index: 7
     id: servo_steering
     title: Servo centre + steering limits
-    required: true
+    required: false      # 2026-09-25 risabot1: owner skips it (steering min/max typed in the GUI Steering test tab; full-lock circles slip the belt)
     tab: control
     tool: ros2 run carbot_control calib_steering
     need: Step 6 passed (the IMU yaw measures the circles). calibrate.launch.py running. Clear flat floor about 1.5 x 2.5 m, e-stop ready.
