@@ -1388,6 +1388,12 @@ STEP_PAGES.uwb_survey = (st, live) => {
 STEP_ARGS.map_uwb_alignment = (el, b) => {
   if (b.dataset.mode === 'uwb_lap') return { arg: { mode: 'uwb_lap' } };
   if (b.dataset.mode === 'lap') return { arg: { mode: 'lap' } };
+  if (b.dataset.mode === 'manual') {
+    const num = k => { const i = el.querySelector(`[data-uwb11="${k}"]`); return i ? parseFloat(String(i.value).trim().replace(',', '.')) : NaN; };
+    const v = { x_m: num('mx'), y_m: num('my'), yaw_deg: num('myaw') };
+    if (!Object.values(v).every(Number.isFinite)) return { error: 'Manual: type numbers for x (m), y (m) and yaw (deg)' };
+    return { arg: Object.assign({ mode: 'manual' }, v) };
+  }
   const s = el.querySelector('[data-uwb11="pose"]');
   const pose = s ? String(s.value || '') : '';
   if (!pose) return { error: 'Points: choose the map pose the car is parked on' };
@@ -1425,6 +1431,13 @@ STEP_PAGES.map_uwb_alignment = st => {
     ctl += '<h4 style="margin:12px 0 6px">Odometry lap (fallback)</h4>' + (running && run && run.mode === 'lap'
       ? `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'stop' }))}">Stop lap<small>after one full slow lap (at least ${D.f(lim.lap_min_s, 0)} s)</small></button>`
       : `<button class="btn primary" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="lap" ${off}>Start lap<small>car EXACTLY on the start pose, facing west</small></button>`);
+  }
+  if (modes.includes('manual')) {
+    const inp = (k, ph) => `<input type="text" inputmode="decimal" data-keep data-uwb11="${k}" placeholder="${ph}" style="width:72px">`;
+    ctl += '<h4 style="margin:12px 0 6px">Manual (you fitted the map by hand)</h4>' +
+      '<p class="muted" style="margin:0 0 6px;font-size:12px">Fit the map onto the lap with map_builder.py edit, then type the numbers it shows (map → venue x, y, yaw). The wizard cannot check them.</p>' +
+      `<div class="row"><label>x (m)${inp('mx', '0.000')}</label><label>y (m)${inp('my', '0.000')}</label><label>yaw (°)${inp('myaw', '0.0')}</label></div>` +
+      `<button class="btn" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="manual" ${off}>Use these numbers<small>then press Save below</small></button>`;
   }
   if (modes.includes('points')) {
     const poses = Object.keys(lv.poses || {}).sort();
