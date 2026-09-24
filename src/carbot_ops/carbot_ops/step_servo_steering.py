@@ -46,7 +46,8 @@ from .wizard_core import StepImpl, StepRefused
 OWNER, BRIDGE, COMMON = 'command_owner', 'tunnel_bridge', '/**'
 PROC_KEYS = ('raw_duty', 'circle_yaw_deg', 'circle_max_distance_m', 'straight_run_m', 'max_runs', 'timeout_s',
              'stop_settle_s', 'imu_settle_s', 'odom_timeout_s',
-             'stall_grace_s', 'stall_window_s', 'stall_min_progress_m', 'stall_boost_step', 'stall_boost_max_duty')
+             'stall_grace_s', 'stall_window_s', 'stall_min_progress_m', 'stall_boost_step', 'stall_boost_max_duty',
+             'kick_at_start', 'kick_duty', 'kick_s', 'kick_step', 'kick_max_duty', 'max_kicks')
 PASS_KEYS = ('straight_drift_m_per_m', 'min_radius_m_max')
 SERVO_PARAMS = ('servo_center', 'servo_range_left', 'servo_range_right', 'imu_yaw_scale')
 OWNER_PARAMS = ('mode', 'steering.steer_sign')
@@ -87,6 +88,14 @@ class ServoSteeringStep(StepImpl):
         self.stall_grace, self.stall_window = float(p['stall_grace_s']), float(p['stall_window_s'])
         self.stall_min, self.boost_step = float(p['stall_min_progress_m']), float(p['stall_boost_step'])
         self.boost_max = float(p['stall_boost_max_duty'])
+        # kick: static friction is much bigger than rolling friction, so a short high-duty burst gets the car
+        # rolling and the duty then falls back to the (low) cruise duty
+        self.kick_start, self.kick_duty0 = bool(p['kick_at_start']), float(p['kick_duty'])
+        self.kick_s, self.kick_step = float(p['kick_s']), float(p['kick_step'])
+        self.kick_max, self.max_kicks = float(p['kick_max_duty']), int(p['max_kicks'])
+        if self.kick_s <= 0 or self.kick_duty0 < self.duty or self.kick_max < self.kick_duty0 or self.max_kicks < 0:
+            raise ConfigError('calibration_steps.yaml servo_steering.procedure: kick_s must be > 0, kick_duty >= raw_duty, '
+                              'kick_max_duty >= kick_duty and max_kicks >= 0')
         if self.stall_window <= 0 or self.boost_step < 0 or self.boost_max < self.duty:
             raise ConfigError('calibration_steps.yaml servo_steering.procedure: stall_window_s must be > 0, '
                               'stall_boost_step >= 0 and stall_boost_max_duty >= raw_duty')
@@ -204,9 +213,13 @@ class ServoSteeringStep(StepImpl):
         seg = self._seg()
         if r['phase'] == 'settling' and now >= self.rec.ignore_until:
             r['phase'], r['t'] = 'driving', now
-            r['duty'], r['boosts'] = self.duty, 0
+            r['duty'], r['boosts'] = self.duty, 0                 # cruise duty
+            r['kicks'], r['kick_duty'], r['kick_until'] = 0, self.kick_duty0, None
             r['prog_t'], r['prog_d'] = now, abs(self.rec.dist)
-            self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg}')
+            if self.kick_start and self.max_kicks > 0:
+                self._kick(r, seg, now)
+            else:
+                self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg}')
         elif r['phase'] == 'driving':
             d, y, el = self.rec.dist, self._yaw_rad(), now - r['t']
             if self.rec.odom_t is None or now - self.rec.odom_t > self.odom_to:
@@ -218,7 +231,12 @@ class ServoSteeringStep(StepImpl):
             done = (abs(d) >= self.straight_m if seg == 'straight'
                     else abs(y) >= self.target or abs(d) >= self.circle_max)
             if not done:
-                self._stall_boost(r, seg, now, abs(d), el)
+                if r.get('kick_until') is not None and now >= r['kick_until']:
+                    r['kick_until'] = None                       # kick over: back to the cruise duty
+                    r['prog_t'], r['prog_d'] = now, abs(d)
+                    self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg}')
+                elif r.get('kick_until') is None:
+                    self._stall_boost(r, seg, now, abs(d), el)
             if done:
                 r['phase'], r['t'] = 'stopping', now
                 self.drive.command(SOURCE, 0.0, self._steer(seg), 'stop')
@@ -238,11 +256,22 @@ class ServoSteeringStep(StepImpl):
         if elapsed < self.stall_grace or now - r['prog_t'] < self.stall_window:
             return
         r['prog_t'] = now                                        # next check after another window
+        if r['kicks'] < self.max_kicks:                          # first another (stronger) kick ...
+            self._kick(r, seg, now, stronger=r['kicks'] > 0)
+            return
         if r['duty'] + 1e-9 >= self.boost_max or self.boost_step <= 0:
             return
-        r['duty'] = min(self.boost_max, round(r['duty'] + self.boost_step, 4))
+        r['duty'] = min(self.boost_max, round(r['duty'] + self.boost_step, 4))   # ... then a higher cruise duty
         r['boosts'] += 1
         self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg} (stall boost)')
+
+    def _kick(self, r: Dict, seg: str, now: float, stronger: bool = False) -> None:
+        """Short burst at kick_duty (kick_step higher on every repeat, up to kick_max_duty) to break static friction."""
+        if stronger:
+            r['kick_duty'] = min(self.kick_max, round(r['kick_duty'] + self.kick_step, 4))
+        r['kicks'] += 1
+        r['kick_until'] = now + self.kick_s
+        self.drive.command(SOURCE, r['kick_duty'], self._steer(seg), f'step 7 {seg} (kick {r["kicks"]})')
 
     def _segment_done(self, seg: str, d: float, y: float) -> Optional[Dict]:
         r, cap = self.run, self.run['cap']
@@ -399,6 +428,7 @@ class ServoSteeringStep(StepImpl):
                    'distance_m': round(self.rec.dist, 3), 'yaw_deg': round(math.degrees(self._yaw_rad()), 1),
                    'elapsed_s': round(now - r['t'], 1) if 't' in r else 0.0, 'note': r['note'],
                    'duty': r.get('duty', self.duty), 'boosts': r.get('boosts', 0), 'base_duty': self.duty,
+                   'kicks': r.get('kicks', 0), 'kicking': r.get('kick_until') is not None,
                    'servo_center': cap['servo_center'], 'steer_sign': cap['steer_sign'],
                    'circles': {s: {'distance_m': round(cap[s]['distance'], 3),
                                    'yaw_deg': round(math.degrees(cap[s]['yaw']), 1),

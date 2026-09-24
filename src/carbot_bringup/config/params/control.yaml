@@ -63,7 +63,7 @@ command_owner:
     estop_latch_in_race: true       # race: an e-stop is final (= manual intervention, 0 marks)
     calibration:                    # calibrate mode only (steps 7/8 via /carbot/calibration/request)
       max_speed_mps: 0.25
-      duty_max: 0.35
+      duty_max: 0.50                # was 0.35; step 7 kick (0.40-0.50) needs headroom, supervised + e-stop only
 
 tunnel_bridge:
   ros__parameters:

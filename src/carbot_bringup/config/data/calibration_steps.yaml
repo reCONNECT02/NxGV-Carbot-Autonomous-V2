@@ -221,7 +221,13 @@ steps:
                 # moves less than stall_min_progress_m per stall_window_s (after stall_grace_s), the duty goes up
                 # by stall_boost_step, never above stall_boost_max_duty (command owner cap: calibration.duty_max 0.35).
                 stall_grace_s: 1.5, stall_window_s: 1.0, stall_min_progress_m: 0.02,
-                stall_boost_step: 0.02, stall_boost_max_duty: 0.30}
+                stall_boost_step: 0.02, stall_boost_max_duty: 0.30,
+                # kick (2026-09-24, BACKLOG #63): risabot5's static friction is far bigger than its rolling friction
+                # (at 0.30 it did not start, at 0.24 it rolled once started). Every segment starts with a kick_duty
+                # burst of kick_s, then falls back to raw_duty; a stall repeats the kick, kick_step stronger each
+                # time up to kick_max_duty (max_kicks), only then the cruise duty is raised. The command owner caps
+                # calibration duty at control.yaml command_owner.calibration.duty_max (0.50).
+                kick_at_start: true, kick_duty: 0.40, kick_s: 0.5, kick_step: 0.05, kick_max_duty: 0.50, max_kicks: 6}
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
     id: speed_pid

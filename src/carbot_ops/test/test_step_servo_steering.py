@@ -62,11 +62,13 @@ class Car:
     """RL / RR = full-lock radii, true_centre = servo_center that drives straight."""
 
     def __init__(self, clock, rec, servo, drive, RL=0.42, RR=0.44, true_centre=93, true_sign=-1.0,
-                 imu_gain=1.0, raw_yaw=37.0, speed_per_duty=1.25, stuck=False, min_duty=0.0):
+                 imu_gain=1.0, raw_yaw=37.0, speed_per_duty=1.25, stuck=False, min_duty=0.0, static_duty=None):
         self.clock, self.rec, self.servo, self.drive = clock, rec, servo, drive
         self.RL, self.RR, self.true_centre, self.true_sign = RL, RR, true_centre, true_sign
         self.gain, self.raw_yaw, self.k_speed, self.stuck = imu_gain, raw_yaw, speed_per_duty, stuck
-        self.min_duty = min_duty          # static friction: the car only moves at or above this duty
+        self.min_duty = min_duty          # rolling friction: once rolling it keeps moving at or above this duty
+        self.static_duty = min_duty if static_duty is None else static_duty   # to START rolling it needs this duty
+        self.rolling = False
         self.x = self.y = self.th = 0.0
         self.odom_on = True
         self.publish()
@@ -88,7 +90,9 @@ class Car:
         self.clock.t += dt
         c = self.drive.cmd
         if c is not None and not self.stuck:
-            v = c[1] * self.k_speed if c[1] >= self.min_duty else 0.0
+            need = self.min_duty if self.rolling else self.static_duty
+            self.rolling = c[1] >= need
+            v = c[1] * self.k_speed if self.rolling else 0.0
             ds = v * dt
             dth = ds * self.curvature(c[2])
             self.x += ds * math.cos(self.th + dth / 2)
@@ -161,8 +165,9 @@ def test_full_pass_corrects_centre_then_verifies():
     assert drive.cmd is None
     # left lock = steer_sign (-1), right = +1, straight = 0; all CALIBRATION_RAW at raw_duty
     driving = [c for c in drive.log if c[1] > 0]
-    assert [c[2] for c in driving] == [-1.0, 1.0, 0.0, 0.0]
-    assert {c[0] for c in drive.log} == {'CALIBRATION_RAW'} and {c[1] for c in driving} == {0.16}
+    per_segment = [c[2] for c in driving if 'kick 1' in c[3]]          # every segment starts with kick 1
+    assert per_segment == [-1.0, 1.0, 0.0, 0.0]              # one steering value per segment (the kick shares it)
+    assert {c[0] for c in drive.log} == {'CALIBRATION_RAW'} and {c[1] for c in driving} == {0.16, step.kick_duty0}
 
 
 def test_waits_for_go_before_every_segment():
@@ -346,56 +351,89 @@ def test_live_view_is_json():
     json.dumps(lv)
 
 
-# ---------------------------------------------------------------- stall boost (BACKLOG #63)
-def test_normal_car_is_never_boosted():
+# ---------------------------------------------------------------- kick + stall boost (BACKLOG #63)
+def _positive_duties(drive):
+    return [c[1] for c in drive.log if c[1] > 0]
+
+
+def test_normal_car_only_gets_the_start_kick():
     step, car, sl, drive, _ = make()
     res = full_run(step, car)
     assert res['passed']
-    assert {c[1] for c in drive.log if c[1] > 0} == {step.duty}          # only the base duty was ever requested
+    assert set(_positive_duties(drive)) <= {step.duty, step.kick_duty0}       # kick at the start, then cruise
+    assert not any('stall boost' in c[3] for c in drive.log)
 
 
-def test_stalled_car_gets_more_duty_until_it_moves():
-    step, car, sl, drive, _ = make(min_duty=0.23)                        # 0.16 does not move it
+def test_static_friction_is_broken_by_the_kick_then_it_cruises_low():
+    """risabot5: it would not start at 0.30 but rolled at 0.24 once started. Static 0.38 / rolling 0.14 here."""
+    step, car, sl, drive, _ = make(min_duty=0.14, static_duty=0.38)
     step.live({})
     assert step.start(car.clock.t, {}) is None
     assert go(step)['ok']
-    res = drive_until(step, car)
-    assert res is None                                                    # the left circle finished, waits for Go
-    duties = [c[1] for c in drive.log if c[1] > 0]
-    assert duties[0] == step.duty and duties == sorted(duties) and duties[-1] >= 0.23
-    assert all('stall boost' in c[3] for c in drive.log if c[1] > step.duty)
-    assert max(duties) <= step.boost_max + 1e-9
-    assert step.live({})['run']['boosts'] >= 4 and step.live({})['run']['base_duty'] == step.duty
+    assert drive_until(step, car) is None                                    # the left circle finished
+    log = drive.log
+    assert log[0][1] == step.kick_duty0 and 'kick 1' in log[0][3]
+    assert [c[1] for c in log if c[1] > 0][1] == step.duty                   # then straight back to the cruise duty
+    assert max(c[1] for c in log) == step.kick_duty0                         # never above the first kick
+    assert step.live({})['run']['kicks'] == 1 and step.live({})['run']['boosts'] == 0
 
 
-def test_boost_is_capped_and_starts_over_each_segment():
-    step, car, sl, drive, _ = make(min_duty=0.9)                          # never moves: above the cap
+def test_a_stronger_kick_follows_when_the_first_one_does_not_start_it():
+    step, car, sl, drive, _ = make(min_duty=0.14, static_duty=0.46)          # 0.40 fails, 0.45 fails, 0.50 starts it
+    step.live({})
+    step.start(car.clock.t, {})
+    go(step)
+    assert drive_until(step, car) is None
+    kicks = [c[1] for c in drive.log if 'kick' in c[3]]
+    assert kicks[:3] == [0.40, 0.45, 0.50] and max(kicks) <= step.kick_max + 1e-9
+    assert step.live({})['run']['boosts'] == 0                               # the cruise duty was never raised
+
+
+def test_car_that_needs_more_cruise_duty_gets_it_after_the_kicks():
+    step, car, sl, drive, _ = make(min_duty=0.23)                            # rolls only at >= 0.23 (0.16 is too low)
+    step.live({})
+    step.start(car.clock.t, {})
+    go(step)
+    assert drive_until(step, car) is None                                    # finished (kicks + boosts add up)
+    assert max(c[1] for c in drive.log) <= step.kick_max + 1e-9
+
+
+def test_never_moving_car_is_capped_and_times_out():
+    step, car, sl, drive, _ = make(min_duty=0.9)                             # never moves
     step.live({})
     step.start(car.clock.t, {})
     go(step)
     res = drive_until(step, car)
     assert res is not None and not res['passed'] and 'not finished within' in res['summary']
-    assert max(c[1] for c in drive.log) <= step.boost_max + 1e-9
-    step2, car2, sl2, drive2, _ = make(min_duty=0.23)
-    step2.live({})
-    step2.start(car2.clock.t, {})
-    go(step2)
-    drive_until(step2, car2)
-    go(step2)                                                             # next segment: back to the base duty
-    car2.step(); step2.tick(car2.clock.t, {})
-    for _ in range(80):
-        car2.step(); step2.tick(car2.clock.t, {})
-        if step2.run['phase'] == 'driving':
-            break
-    assert [c[1] for c in drive2.log if c[1] > 0][-1] == step2.duty or step2.run['duty'] >= step2.duty
+    assert max(c[1] for c in drive.log) <= step.kick_max + 1e-9
+    assert max(c[1] for c in drive.log if 'kick' not in c[3]) <= step.boost_max + 1e-9
+    assert sum(1 for c in drive.log if 'kick' in c[3]) <= step.max_kicks
 
 
-def test_stall_boost_keys_are_required_and_checked():
-    bad = copy.deepcopy(STEP7)
-    del bad['procedure']['stall_boost_step']
-    with pytest.raises(ConfigError, match='stall_boost_step'):
-        make(cfg=bad)
+def test_each_segment_starts_with_a_kick_again():
+    step, car, sl, drive, _ = make(min_duty=0.14, static_duty=0.38)
+    step.live({})
+    step.start(car.clock.t, {})
+    go(step)
+    assert drive_until(step, car) is None
+    n = len(drive.log)
+    go(step)
+    assert drive_until(step, car) is None
+    second = [c for c in drive.log[n:] if c[1] > 0]
+    assert second[0][1] == step.kick_duty0 and 'kick 1' in second[0][3]
+
+
+def test_kick_and_stall_keys_are_required_and_checked():
+    for key in ('stall_boost_step', 'kick_duty', 'max_kicks'):
+        bad = copy.deepcopy(STEP7)
+        del bad['procedure'][key]
+        with pytest.raises(ConfigError, match=key):
+            make(cfg=bad)
     worse = copy.deepcopy(STEP7)
     worse['procedure']['stall_boost_max_duty'] = worse['procedure']['raw_duty'] - 0.05
     with pytest.raises(ConfigError, match='stall_boost_max_duty'):
+        make(cfg=worse)
+    worse = copy.deepcopy(STEP7)
+    worse['procedure']['kick_duty'] = worse['procedure']['raw_duty'] - 0.05
+    with pytest.raises(ConfigError, match='kick_duty'):
         make(cfg=worse)
