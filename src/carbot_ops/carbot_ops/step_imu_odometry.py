@@ -133,6 +133,8 @@ class ImuOdometryStep(StepImpl):
         self.active: Optional[Dict] = None      # distance / spin test in progress
         self.runs: Dict[str, List[Dict]] = {'distance': [], 'spin': []}
         self.t0: Optional[float] = None         # drift (RUN)
+        self._restored_for: Optional[str] = None    # session whose saved values were put back on servo_controller
+        self.restored: Dict = {}                    # what was put back (shown on the page)
 
     # ------------------------------------------------------------------ servo_controller link
     def _read(self) -> None:
@@ -211,6 +213,41 @@ class ImuOdometryStep(StepImpl):
     @staticmethod
     def _fmt(v) -> str:
         return ('on' if v else 'off') if isinstance(v, bool) else f'{v:g}'
+
+    # ------------------------------------------------------------------ saved values after a relaunch
+    def background(self, session: Optional[str], inputs: Dict) -> None:
+        """calibrate.launch.py starts servo_controller from base_nodes.yaml only ("calibration session: NONE"), so
+        after a relaunch it runs ticks_per_meter 1050 / polarity off while this session's step 6 saved something
+        else, and every later step (7 radius, 8 speed PID) measured with the wrong scale. Once per session, as
+        soon as servo_controller answers, put the saved values back. Never while a test is measuring."""
+        if not session or session == self._restored_for or self.active is not None or self.t0 is not None:
+            return
+        now = self.clock()
+        if self.values is None:
+            if not self.busy and now - self.read_at >= READ_RETRY_S:
+                self._read()
+            return
+        if self.busy:
+            return
+        self._restored_for = session
+        saved = {k: ct.overlay_value(session, SERVO, k) for k in PARAMS}
+        if any(v is None for v in saved.values()):
+            return                                   # step 6 was not saved in this session
+        want = {'ticks_per_meter': float(saved['ticks_per_meter']), 'odom_reverse_polarity': bool(saved['odom_reverse_polarity']),
+                'imu_yaw_scale': float(saved['imu_yaw_scale'])}
+        diff = {k: v for k, v in want.items() if not self._same(self.values.get(k), v)}
+        if diff:
+            self.restored = dict(diff)
+            self._set(diff, 'restore the calibration saved in this session (the launch does not load it)')
+
+    @staticmethod
+    def _same(a, b) -> bool:
+        if isinstance(b, bool) or isinstance(a, bool):
+            return bool(a) == bool(b)
+        try:
+            return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(b)))
+        except (TypeError, ValueError):
+            return False
 
     # ------------------------------------------------------------------ delete runs
     def _delete(self, op: str, args: Dict) -> Dict:
@@ -498,7 +535,7 @@ class ImuOdometryStep(StepImpl):
             tests[t] = {'status': runs[-1]['status'] if runs else 'NOT_RUN',
                         'runs': [dict(r, index=off + k) for k, r in enumerate(runs[-self.max_runs:])],
                         'n_runs': len(runs), 'failed_runs': sum(1 for r in runs if r['status'] != 'PASS')}
-        return {'values': self.values, 'busy': self.busy, 'link_error': self.link_error, 'active': act,
+        return {'values': self.values, 'restored': self.restored, 'busy': self.busy, 'link_error': self.link_error, 'active': act,
                 'tests': tests, 'spin_test': self.spin_test, 'straight_run_m': self.true_m,
                 'drift_test_s': self.drift_s, 'max_runs': self.max_runs, 'ages': self.rec.ages(now),
                 'limits': {'distance_pct': self.dist_lim, 'spin_pct': self.spin_lim, 'drift_deg_per_min': self.drift_lim},

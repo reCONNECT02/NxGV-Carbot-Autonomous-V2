@@ -169,8 +169,11 @@ steps:
     need: Steps 1-5 passed. calibrate.launch.py running (servo_controller publishes /odom and /imu/rpy). Car on the floor; you move it by hand.
     instructions:
       - Put two tape marks exactly 2.00 m apart on a straight, flat part of the floor.
-      - "DISTANCE: rear axle on the first mark, press Start distance run, push the car straight
-         to the second mark, press Stop. If the distance is wrong the page corrects
+      - "DISTANCE: turn Manual control ON in the GUI header, put the rear axle on the first mark, press
+         Start distance run, DRIVE the car slowly with the joystick straight to the second mark, press
+         Stop, then turn Manual control OFF. Do NOT pull the car by hand: the wheel encoder gives wrong
+         counts when the wheel is turned by hand (risabot5, 2026-09-24: hand-pulled runs gave 293103
+         ticks/m, motor-driven about 13000). If the distance is wrong the page corrects
          ticks_per_meter (or the encoder direction) live: do one more run to verify."
       - "SPIN: line the car up with a tape mark, press Start spin, turn it by hand ONE full turn
          to the LEFT (counter-clockwise seen from above) back onto the mark, press Stop. Fixes

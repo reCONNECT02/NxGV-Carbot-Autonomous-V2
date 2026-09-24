@@ -504,3 +504,38 @@ def test_deleting_a_run_drops_an_unsaved_step_result(tmp_path):
     assert r['ok'], r
     slot = next(x for x in w.slots if x.id == 'imu_odometry')
     assert slot.status == 'PENDING' and slot.result is None and slot.unsaved is False
+
+
+# --------------------------------------------------------------------------- saved values after a relaunch
+def test_saved_calibration_is_put_back_after_a_relaunch(tmp_path):
+    sess = str(tmp_path / 'calibration' / 's1')
+    os.makedirs(sess)
+    ct.merge_overlay(sess, SERVO, {'ticks_per_meter': 13400.0, 'odom_reverse_polarity': True, 'imu_yaw_scale': 1.02})
+    step, car, link, _ = make()                         # servo_controller came up with the defaults
+    step.background(sess, {})                           # first call only starts the read
+    step.background(sess, {})
+    assert link.values['ticks_per_meter'] == 13400.0 and link.values['odom_reverse_polarity'] is True
+    assert link.values['imu_yaw_scale'] == 1.02
+    assert step.live({})['restored']['ticks_per_meter'] == 13400.0
+    n = len(link.sets)
+    link.values['ticks_per_meter'] = 999.0              # a later run changes it: never overwritten again this session
+    step.background(sess, {})
+    assert len(link.sets) == n and link.values['ticks_per_meter'] == 999.0
+
+
+def test_nothing_restored_when_step_6_was_not_saved_or_a_test_is_running(tmp_path):
+    step, car, link, _ = make()
+    empty = str(tmp_path / 'calibration' / 's0')
+    os.makedirs(empty)
+    step.background(empty, {}); step.background(empty, {})
+    assert link.sets == [] and step.restored == {}
+    sess = str(tmp_path / 'calibration' / 's1')
+    os.makedirs(sess)
+    ct.merge_overlay(sess, SERVO, {'ticks_per_meter': 500.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0})
+    step.live({})
+    op(step, 'distance_start')
+    step.background(sess, {})
+    assert link.sets == []                              # measuring: hands off
+    op(step, 'abort')
+    step.background(sess, {})
+    assert link.values['ticks_per_meter'] == 500.0

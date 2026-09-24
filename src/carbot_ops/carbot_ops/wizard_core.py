@@ -87,6 +87,11 @@ class StepImpl:
     def cancel(self) -> None:
         pass
 
+    def background(self, session: Optional[str], inputs: Dict) -> None:
+        """Called on EVERY wizard tick, also while another step is open or nothing is running. `session` is the
+        resumed / current session folder (None until one exists). Used by step 6 to put the calibration saved in
+        the session back on servo_controller after a relaunch (the launch itself loads no session overlay)."""
+
     def progress(self, now: float) -> Dict:
         return {}
 
@@ -468,6 +473,11 @@ class Wizard:
 
     def tick(self, inputs: Dict) -> Optional[Slot]:
         """Advance the running step. Returns the slot when it just finished."""
+        for impl in self.impls.values():
+            try:
+                impl.background(self.session, inputs)
+            except Exception:  # noqa: BLE001  a background chore must never stop the wizard
+                pass
         s = self.running
         if s is None:
             return None
