@@ -42,6 +42,7 @@ servo_controller:
     carbot_arm_enabled: true        # /carbot/vehicle/arm from the command owner -> AUTO / MANUAL
     carbot_battery_rate_hz: 1.0     # /carbot/vehicle/battery_v
     carbot_steering_rate_hz: 10.0   # /carbot/vehicle/steering (live servo angle + min/max seen, GUI Steering test tab)
+    carbot_reconnect_after_failures: 10   # this many motor-board write failures in a row -> reopen /dev/myserial (USB dropout); 0 = off
     # base record/playback bypasses command owner + safety veto; parking is
     # planned (block 11), never replayed. Modes where playback may start:
     carbot_playback_allowed_modes: [calibrate]

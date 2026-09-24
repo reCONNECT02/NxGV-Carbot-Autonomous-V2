@@ -109,6 +109,9 @@ class CarbotVehicleExtension:
         steer_rate = float(_param(node, 'carbot_steering_rate_hz', 10.0))
         if steer_rate > 0:
             node.create_timer(1.0 / steer_rate, self._steering)
+        self.reconnect_after = int(_param(node, 'carbot_reconnect_after_failures', 10))
+        if self.reconnect_after > 0:
+            node.create_timer(1.0, self._reconnect_check)
         _apply = node.apply_hardware
 
         def apply_and_track(motor_pwm, steer_angle):        # sees EVERY steering command, not just the 10 Hz samples
@@ -136,6 +139,34 @@ class CarbotVehicleExtension:
             return
         if v > 0.0:
             self.battery_pub.publish(self.Float32(data=v))
+
+    def _reconnect_check(self) -> None:
+        """The motor board's USB adapter can drop and come back under another ttyUSB number (low battery / EMI):
+        the base controller keeps the dead port forever ('Rosmaster motor write failed'). Reopen /dev/myserial."""
+        n = self.node
+        if getattr(n, 'hw_error_count', 0) < self.reconnect_after:
+            return
+        n.get_logger().warn(f'Carbot: {n.hw_error_count} motor-board write failures in a row, reopening /dev/myserial')
+        try:
+            from Rosmaster_Lib import Rosmaster
+            try:
+                n.bot.ser.close()
+            except Exception:  # noqa: BLE001  already dead
+                pass
+            bot = Rosmaster()
+            bot.create_receive_threading()
+            bot.set_auto_report_state(True)
+            bot.set_motor(0, 0, 0, 0)
+            bot.set_pwm_servo(n.servo_steer_id, n.servo_center)
+        except Exception as e:  # noqa: BLE001  board not back yet: try again next second
+            n.get_logger().warn(f'Carbot: reopen failed ({e!r}), retrying')
+            return
+        n.bot = bot
+        n.sent_motor_val = None
+        n.sent_servo_val = None
+        n.hw_error_count = 0
+        n.hw_error_tripped = False
+        n.get_logger().info('Carbot: motor board reconnected')
 
     def _steering(self) -> None:
         n = self.node
