@@ -110,12 +110,18 @@ def test_resave_keeps_old_file(tmp_path):
     assert len(files) == 2
 
 
+def _depends(w, step, deps):
+    s = w.slot(step)
+    s.cfg = dict(s.cfg, depends_on=deps)         # copy: STEPS is shared between tests
+
+
 def test_order_is_enforced(tmp_path):
     class Dummy(wc.StepImpl):
         def tick(self, now, inputs):
             return {'passed': True, 'summary': 'ok'}
     w, _ = make(tmp_path)
     w.impls['camera_identity'] = Dummy({})
+    _depends(w, 'camera_identity', [1])          # blocking still works when a step declares it
     r = w.action('camera_identity', 'RUN', '', {})
     assert not r['ok'] and 'Finish step 1' in r['message']
 
@@ -250,18 +256,12 @@ def test_live_payload_shape(tmp_path):
     assert live['step']['meta']['instructions']
     w.action('camera_intrinsics', 'SELECT', '', {})
     live = w.live({})
-    assert not live['step']['built'] and live['step']['blocked_by']['index'] == 2
+    assert not live['step']['built'] and live['step']['blocked_by'] is None    # no step blocks another
 
 
-def test_blocking_follows_depends_on_not_step_number(tmp_path):
+def test_no_step_is_blocked_by_another(tmp_path):
     w, _ = make(tmp_path)
-    by = lambda i: [b.index for b in [w.blocker(w.slot(i))] if b]
-    assert by(1) == [] and by(2) == [1] and by(3) == [2]
-    # 8 (speed PID), 9 (venue colours) and 10 (UWB) do not wait for each other
-    assert by(8) == [6]
-    assert w.slot(8).cfg['depends_on'] == [6] and 8 not in w.slot(9).cfg['depends_on'] + w.slot(10).cfg['depends_on']
-    assert by(10) == [1]                    # only step 1 (sensor health), not 2..9
-    assert by(9) == [3]
+    assert all(w.blocker(s) is None and s.cfg['depends_on'] == [] for s in w.slots)
 
 
 def test_depends_on_is_required_and_earlier(tmp_path):

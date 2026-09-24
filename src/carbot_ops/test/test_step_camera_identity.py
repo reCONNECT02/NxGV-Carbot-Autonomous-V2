@@ -148,14 +148,21 @@ def test_run_needs_confirmation_argument(tmp_path):
     assert not r['ok'] and 'Confirm' in r['message']
 
 
+def _depends(w, step, deps):
+    s = w.slot(step)
+    s.cfg = dict(s.cfg, depends_on=deps)         # copy: STEPS is shared between tests
+
+
 def test_order_step1_first(tmp_path):
     w, _ = make(tmp_path, front_only())
+    _depends(w, 'camera_identity', [1])
     r = w.action('camera_identity', 'RUN', CONFIRM, Feed().next())
     assert not r['ok'] and 'Finish step 1' in r['message']
 
 
 def test_unsaved_step1_pass_says_press_save(tmp_path):
     w, clock = make(tmp_path, front_only())
+    _depends(w, 'camera_identity', [1])
     run(w, clock, Feed(), 'sensor_health')                    # PASS, but Save not pressed
     r = w.action('camera_identity', 'RUN', CONFIRM, Feed().next())
     assert not r['ok'] and 'not saved yet' in r['message'] and 'press Save' in r['message']

@@ -103,6 +103,8 @@ def test_parse_argument_and_slug():
 def test_blocked_until_required_steps_pass(tmp_path):
     impl = PracticeRunsStep(STEP13, CHALLENGES)
     w = wc.Wizard(STEPS, str(tmp_path), dict(CFG), {'practice_runs': impl}, now=Clock())
+    s = w.slot('practice_runs')
+    s.cfg = dict(s.cfg, depends_on=[1, 2, 3])     # copy: STEPS is shared between tests
     r = w.action('practice_runs', 'RUN', op(op='start', challenge=1), Mission().inputs())
     assert not r['ok'] and 'Finish step 1' in r['message']
 
