@@ -28,6 +28,9 @@ OWNER_START = {'mode': 'calibrate', 'speed_pid.kp': 0.8, 'speed_pid.ki': 0.4, 's
                'speed_pid.integral_limit': 0.15, 'feedforward.duty_per_mps': 1.0, 'feedforward.static_duty': 0.08}
 STATIC, PER_MPS = 0.045, 0.8
 N_SEG = len(STEP8['procedure']['sweep_duties']) + len(STEP8['procedure']['step_targets_mps'])
+STEP8_BRK = STEP8                                               # the repo YAML: breakaway ramp + kick ON
+STEP8 = copy.deepcopy(STEP8_BRK)                                # the older tests below run without it
+STEP8['procedure']['breakaway']['enabled'] = False
 
 
 class Clock:
@@ -65,9 +68,10 @@ class Drive:
 
 
 class Car:
-    def __init__(self, clock, rec, owner, drive, static=STATIC, per=PER_MPS, tau=0.2, stuck=False):
+    def __init__(self, clock, rec, owner, drive, static=STATIC, per=PER_MPS, tau=0.2, stuck=False, breakaway=0.0):
         self.clock, self.rec, self.owner, self.drive = clock, rec, owner, drive
         self.static, self.per, self.tau, self.stuck = static, per, tau, stuck
+        self.breakaway = breakaway                    # static friction: a stopped car needs this duty to start
         self.ctrl = oc.SpeedController(oc.SpeedCfg())
         self.x = self.v = 0.0
         self.odom_on = True
@@ -95,6 +99,8 @@ class Car:
             self.ctrl.cfg = self._cfg()
             duty = self.ctrl.update(c[1], self.v, dt)
         v_ss = 0.0 if self.stuck else math.copysign(max(0.0, abs(duty) - self.static) / self.per, duty)
+        if abs(self.v) < 0.002 and abs(duty) < self.breakaway:
+            v_ss = 0.0
         self.v += (v_ss - self.v) * min(1.0, dt / self.tau)
         self.x += self.v * dt
         self.publish()
@@ -403,4 +409,72 @@ def test_live_view_is_json():
         go(step)
         if drive_until(step, car) is not None:
             break
+    json.dumps(step.live({}))
+
+
+# ---------------------------------------------------------------- breakaway ramp + kick
+BREAKAWAY = 0.14
+
+
+def test_breakaway_is_measured_both_ways_then_every_segment_is_kicked():
+    step, car, owner, drive, _ = make(cfg=STEP8_BRK, breakaway=BREAKAWAY)
+    res, n = full_run(step, car)
+    assert res['passed'], res['summary']
+    assert n == N_SEG + 2                                      # + forward and backward breakaway ramps
+    bd = res['breakaway_duty']
+    assert BREAKAWAY <= bd['forward'] <= BREAKAWAY + 0.04 and BREAKAWAY <= bd['backward'] <= BREAKAWAY + 0.04
+    assert res['capture']['breakaway'] == bd
+    assert 'breakaway' in res['summary']
+    ff = res['feedforward']                                    # the 0.06 duty moved the car thanks to the kick
+    assert ff['static_duty'] == pytest.approx(STATIC, abs=0.01)
+    assert len(ff['points']) >= 6
+    # a low sweep duty is preceded by a KICK (a bigger raw duty) and then drops straight to the segment value
+    cmds = [c for c in drive.log if c[1] != 0.0]
+    i = next(k for k, c in enumerate(cmds) if c[1] == 0.06 and k > 3)         # first sweep duty, after the ramps
+    assert cmds[i - 1][0] == 'CALIBRATION_RAW' and cmds[i - 1][1] > bd['forward']
+    assert drive.cmd is None
+
+
+def test_closed_loop_step_is_kicked_too():
+    step, car, owner, drive, _ = make(cfg=STEP8_BRK, breakaway=BREAKAWAY)
+    full_run(step, car)
+    seq = [c for c in drive.log if c[1] != 0.0]
+    j = next(k for k, c in enumerate(seq) if c[0] == 'CALIBRATION')
+    assert seq[j - 1][0] == 'CALIBRATION_RAW' and abs(seq[j - 1][1]) > BREAKAWAY - 0.01
+
+
+def test_car_that_never_moves_aborts_the_breakaway_ramp():
+    step, car, owner, drive, _ = make(cfg=STEP8_BRK, stuck=True)
+    res, n = full_run(step, car)
+    assert not res['passed'] and n == 1
+    assert 'did not move at duty' in res['note'] or any('did not move' in c['why'] for c in res['checks'])
+    assert max(abs(c[1]) for c in drive.log) <= STEP8_BRK['procedure']['breakaway']['max_duty'] + 1e-9
+    assert drive.cmd is None and owner.sets == []
+
+
+def test_breakaway_config_errors():
+    cfg = copy.deepcopy(STEP8_BRK)
+    del cfg['procedure']['breakaway']['step_s']
+    with pytest.raises(ConfigError, match='step_s'):
+        make(cfg)
+    cfg = copy.deepcopy(STEP8_BRK)
+    cfg['procedure']['breakaway']['max_duty'] = 0.01
+    with pytest.raises(ConfigError, match='max_duty'):
+        make(cfg)
+    cfg = copy.deepcopy(STEP8_BRK)
+    del cfg['procedure']['breakaway']
+    with pytest.raises(ConfigError, match='breakaway'):
+        make(cfg)
+
+
+def test_live_view_shows_the_ramp():
+    step, car, *_ = make(cfg=STEP8_BRK, breakaway=BREAKAWAY)
+    step.live({})
+    assert step.start(car.clock.t, {}) is None
+    assert go(step)['ok']
+    for _ in range(40):
+        car.step()
+        step.tick(car.clock.t, {})
+    lv = step.live({})['run']
+    assert lv['phase'] == 'ramping' and lv['duty'] > 0.06 and lv['kind'] == 'breakaway'
     json.dumps(step.live({}))

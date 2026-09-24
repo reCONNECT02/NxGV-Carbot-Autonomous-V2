@@ -249,7 +249,15 @@ steps:
     # phase 8 page: stop_settle_s = speed-0 requests after each step (as calib_drive);
     # odom_timeout_s = /odom older than this while driving aborts the run.
     procedure: {sweep_duties: [0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.22], step_targets_mps: [0.03, 0.075, 0.15], hold_s: 3.0, steady_s: 1.0, max_runs: 3,
-                stop_settle_s: 0.8, odom_timeout_s: 0.5}
+                stop_settle_s: 0.8, odom_timeout_s: 0.5,
+                # 2026-09-25 (risabot1): static friction is far above rolling friction, so a low duty never starts the car.
+                # Breakaway: raw duty rises from start_duty by step_duty every step_s until the encoder shows move_m of travel
+                # (that duty = the breakaway threshold, measured forward and backward first). Every later segment is KICKED:
+                # breakaway + margin_duty, raised the same way while the encoder sees nothing, and the moment it moves the
+                # command drops to the segment's own value; measuring starts kick_settle_s later. No motion up to max_duty /
+                # kick_timeout_s aborts the run.
+                breakaway: {enabled: true, start_duty: 0.06, step_duty: 0.01, step_s: 0.3, max_duty: 0.45, move_m: 0.01,
+                            margin_duty: 0.02, kick_timeout_s: 3.0, kick_settle_s: 1.0}}
     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}
   # Step 9 (wizard page, phase 8): measures the venue road / tape colours from what road_perception
   # already publishes (road grid + its stitched debug image, no raw camera images in the wizard) and

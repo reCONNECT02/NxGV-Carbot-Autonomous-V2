@@ -1196,7 +1196,7 @@ STEP_PAGES.speed_pid = st => {
   } else if (r) {
     const sg = r.segment;
     if (r.phase === 'ready' && sg) {
-      ctl += Cal.alert('info', `Next: ${sg.label}`, `The car drives ${sg.direction.toUpperCase()} for ${D.f(pr.hold_s, 0)} s. ` +
+      ctl += Cal.alert('info', `Next: ${sg.label}`, (r.kind === 'breakaway' ? `The motor duty rises slowly ${sg.direction.toUpperCase()} until the car first moves, then it stops (a few cm). ` : `The car drives ${sg.direction.toUpperCase()} for ${D.f(pr.hold_s, 0)} s. `) +
         'Keep about 1.5 m free that way (move it back to the middle if needed) and a hand near STOP MOTORS.') +
         `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'go' }))}" ${busy ? 'disabled' : ''}>Go: ${Cal.esc(sg.direction)}` +
         `<small>${sg.source === 'CALIBRATION_RAW' ? `raw duty ${D.f(sg.command, 2)}` : `${D.f(sg.command, 3)} m/s closed loop`}, stops by itself</small></button>`;
@@ -1209,13 +1209,16 @@ STEP_PAGES.speed_pid = st => {
   const ages = lv.ages || {};
   const ageTxt = x => x == null ? 'never' : x > 1 ? `${D.f(x, 1)} s old` : 'live';
   let liveHtml = `<div class="panel"><h3>Live <small>/odom ${Cal.esc(ageTxt(ages.odom))} · speed ${D.f(lv.speed_mps, 3)} m/s</small></h3>`;
-  if (r && ['driving', 'stopping'].includes(r.phase) && r.segment) {
+  if (r && ['ramping', 'kicking'].includes(r.phase) && r.segment) {
+    liveHtml += `<div class="calbig">duty ${D.f(r.duty, 2)} <span class="muted">${r.phase === 'ramping' ? 'finding the breakaway duty' : 'kick: drops to the target the moment it moves'} · ${D.f(r.distance_m, 3)} m · ${D.f(r.speed_mps, 3)} m/s</span></div>`;
+  } else if (r && ['driving', 'stopping'].includes(r.phase) && r.segment) {
     const sg = r.segment;
     const tgt = sg.source === 'CALIBRATION' ? sg.command : null;
     liveHtml += `<div class="calbig">${D.f(r.speed_mps, 3)} m/s <span class="muted">${tgt != null ? `target ${D.f(tgt, 3)}` : `duty ${D.f(sg.command, 2)}`} · ${D.f(r.distance_m, 2)} m</span></div>` +
       `<div class="bar"><i style="width:${Math.round(Math.min(1, r.elapsed_s / (r.hold_s || 1)) * 100)}%"></i></div>` + calSpark(r.trace, tgt) +
       `<p class="muted" style="font-size:12px">${r.phase === 'stopping' ? 'Stopping…' : `${D.f(r.elapsed_s, 1)} s of ${D.f(r.hold_s, 0)} s; steady = mean of the last ${D.f(pr.steady_s, 1)} s`}</p>`;
   } else liveHtml += `<div class="muted">${running ? (r && r.phase === 'applying' ? 'Setting parameters…' : 'Waiting for Go.') : 'Not driving.'}</div>`;
+  if (r && r.breakaway && Object.keys(r.breakaway).length) liveHtml += `<p class="muted" style="font-size:12px">Breakaway duty: ${Object.entries(r.breakaway).map(([k, v]) => `${k} ${D.f(v, 2)}`).join(' · ')}</p>`;
   const res = st.result || {};
   const cap = res.capture || {};
   const sweep = (r && r.sweep) || (cap.sweep || []).map(x => ({ duty: x[0], speed_mps: x[1] }));

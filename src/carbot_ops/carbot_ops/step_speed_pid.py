@@ -9,6 +9,15 @@ armed, and the e-stop always wins).
 RUN starts a supervised sequence. Before EVERY segment the step waits in phase 'ready'
 until the user presses Go (page op `go`, action STEP; allowed while RUNNING):
 
+  breakaway     (procedure.breakaway.enabled) forward, then backward: CALIBRATION_RAW duty ramps from
+                start_duty by step_duty every step_s until the encoder shows move_m of travel; that duty
+                is the breakaway (static friction) threshold of the direction, the car then stops.
+                Every later segment starts with a KICK: the duty is set to breakaway + margin_duty and
+                raised by step_duty every step_s while the encoder shows no motion; the moment it moves
+                the command drops to the segment's own value (rolling friction is far below static
+                friction), and the hold time starts then. No motion up to max_duty / kick_timeout_s
+                aborts the run.
+
   sweep 1..N    CALIBRATION_RAW at procedure.sweep_duties[i] (odd steps backwards) for
                 hold_s; steady speed = mean /odom twist speed over the last steady_s.
                 After the last one: least-squares feedforward duty = static + per_mps * |v|,
@@ -45,7 +54,9 @@ from .wizard_core import StepImpl, StepRefused
 
 OWNER = csp.OWNER
 PROC_KEYS = ('sweep_duties', 'step_targets_mps', 'hold_s', 'steady_s', 'max_runs', 'stop_settle_s',
-             'odom_timeout_s')
+             'odom_timeout_s', 'breakaway')
+BREAK_KEYS = ('enabled', 'start_duty', 'step_duty', 'step_s', 'max_duty', 'move_m', 'margin_duty', 'kick_timeout_s',
+              'kick_settle_s')
 PASS_KEYS = ('max_steady_error_mps', 'max_overshoot_pct', 'min_creep_speed_mps')
 PID_PARAMS = tuple(f'speed_pid.{k}' for k in csp.PID_KEYS)
 FF_PARAMS = tuple(f'feedforward.{k}' for k in csp.FF_KEYS)
@@ -54,7 +65,8 @@ READ_RETRY_S = 2.0
 RAW, CLOSED = 'CALIBRATION_RAW', 'CALIBRATION'
 TRACE_POINTS = 80
 CHECK_LABEL = {'feedforward_fit': 'Feedforward fit (duty sweep)', 'steady_error': 'Steady speed error (worst step)',
-               'overshoot': 'Overshoot (worst step)', 'creep': 'Slowest moving sweep speed (creep)'}
+               'overshoot': 'Overshoot (worst step)', 'creep': 'Slowest moving sweep speed (creep)',
+               'breakaway': 'Breakaway duty (static friction)'}
 
 
 def _need(d: Dict, keys, where: str) -> None:
@@ -92,6 +104,15 @@ class SpeedPidStep(StepImpl):
             raise ConfigError('calibration_steps.yaml speed_pid.procedure: need 0 < steady_s <= hold_s')
         if self.max_runs < 1:
             raise ConfigError('calibration_steps.yaml speed_pid.procedure.max_runs must be >= 1')
+        b = p['breakaway']
+        _need(b, BREAK_KEYS, 'calibration_steps.yaml speed_pid.procedure.breakaway')
+        self.brk = {k: (bool(b[k]) if k == 'enabled' else float(b[k])) for k in BREAK_KEYS}
+        if (self.brk['start_duty'] <= 0 or self.brk['step_duty'] <= 0 or self.brk['step_s'] <= 0
+                or self.brk['move_m'] <= 0 or self.brk['margin_duty'] < 0 or self.brk['kick_timeout_s'] <= 0
+                or self.brk['kick_settle_s'] < 0
+                or self.brk['max_duty'] < self.brk['start_duty']):
+            raise ConfigError('calibration_steps.yaml speed_pid.procedure.breakaway: start_duty, step_duty, step_s, '
+                              'move_m and kick_timeout_s must be > 0, margin_duty and kick_settle_s >= 0, max_duty >= start_duty')
         self.values: Optional[Dict] = None       # command_owner: mode, pid {kp..}, ff {duty_per_mps, static_duty}
         self.busy, self.link_error, self.read_at = '', '', -math.inf
         self.run: Optional[Dict] = None
@@ -152,8 +173,9 @@ class SpeedPidStep(StepImpl):
             return (f'command_owner runs in {self.values["mode"]!r} mode: the car only drives for calibration '
                     'under calibrate.launch.py.')
         pid = dict(self.values['pid'])
-        self.run = {'kind': 'sweep', 'i': 0, 'phase': 'ready', 'pid': pid, 'ff': None, 'metrics': [],
-                    'cap': {'sweep': [], 'verify': [], 'pid_start': dict(pid)},
+        self.run = {'kind': 'breakaway' if self.brk['enabled'] else 'sweep', 'i': 0, 'phase': 'ready', 'pid': pid,
+                    'ff': None, 'metrics': [], 'break': {}, 'duty': 0.0, 't_step': 0.0,
+                    'cap': {'sweep': [], 'verify': [], 'pid_start': dict(pid), 'breakaway': {}},
                     'start': {'pid': dict(pid), 'ff': dict(self.values['ff'])},
                     'abort': '', 'note': '', 'retunes': [], 'rows': [], 'seg': None}
         return None
@@ -162,6 +184,11 @@ class SpeedPidStep(StepImpl):
         """The segment at (kind, i): source, signed command, label."""
         i = r['i']
         back = i % 2 == 1
+        if r['kind'] == 'breakaway':
+            d = self.brk['start_duty'] * (-1 if back else 1)
+            return {'source': RAW, 'command': d, 'direction': 'backward' if back else 'forward',
+                    'label': f'breakaway ramp {"backward" if back else "forward"} (duty rises from '
+                             f'{self.brk["start_duty"]:.2f} until the car moves)'}
         if r['kind'] == 'sweep':
             d = self.duties[i] * (-1 if back else 1)
             return {'source': RAW, 'command': d, 'direction': 'backward' if back else 'forward',
@@ -190,11 +217,58 @@ class SpeedPidStep(StepImpl):
             return {'ok': False, 'message': f'Wait: {self.busy}.'}
         seg = self._segment(r)
         now = self.clock()
-        r.update(phase='driving', t=now, seg=seg, rows=[])
+        sign = -1.0 if seg['direction'] == 'backward' else 1.0
+        r.update(t=now, seg=seg, rows=[], t_step=now, t_start=now)
         self.rec.zero()
-        self.rec.trace = r['rows']
-        self.drive.command(seg['source'], seg['command'], 0.0, f'step 8 {r["kind"]} {seg["command"]:+.3f}')
+        if r['kind'] == 'breakaway':
+            self.rec.trace = None
+            r.update(phase='ramping', duty=self.brk['start_duty'])
+            self.drive.command(RAW, sign * r['duty'], 0.0, f'step 8 breakaway {sign * r["duty"]:+.3f}')
+        elif self._needs_kick(r, seg):
+            self.rec.trace = None
+            r.update(phase='kicking', duty=r['break'][seg['direction']] + self.brk['margin_duty'])
+            self.drive.command(RAW, sign * r['duty'], 0.0, f'step 8 kick {sign * r["duty"]:+.3f}')
+        else:
+            r['phase'] = 'driving'
+            self.rec.trace = r['rows']
+            self.drive.command(seg['source'], seg['command'], 0.0, f'step 8 {r["kind"]} {seg["command"]:+.3f}')
         return {'ok': True, 'message': f'Driving the {seg["label"]} ({seg["direction"]}): keep the e-stop ready.'}
+
+    def _needs_kick(self, r: Dict, seg: Dict) -> bool:
+        """Kick (breakaway + margin, then drop to the segment's own value) unless a raw duty is already above it."""
+        if not self.brk['enabled'] or seg['direction'] not in r['break']:
+            return False
+        kick = r['break'][seg['direction']] + self.brk['margin_duty']
+        return seg['source'] != RAW or abs(seg['command']) < kick
+
+    def _ramp(self, r: Dict, now: float) -> Optional[Dict]:
+        """One tick of a breakaway ramp / kick: stop raising the duty the moment the encoder sees motion."""
+        seg, b = r['seg'], self.brk
+        sign = -1.0 if seg['direction'] == 'backward' else 1.0
+        if abs(self.rec.dist) >= b['move_m']:
+            if r['phase'] == 'ramping':
+                r['break'][seg['direction']] = round(r['duty'], 4)
+                r['cap']['breakaway'][seg['direction']] = round(r['duty'], 4)
+                r['phase'], r['t_stop'] = 'stopping', now
+                self.drive.command(RAW, 0.0, 0.0, 'stop')
+            else:                                   # kick worked: drop instantly to the segment's own command
+                r.update(phase='driving', t=now + b['kick_settle_s'], rows=[], rec_pending=True)
+                self.rec.zero()
+                self.rec.trace = None               # the kick's speed is not part of the measurement: record after settling
+                self.drive.command(seg['source'], seg['command'], 0.0, f'step 8 {r["kind"]} {seg["command"]:+.3f}')
+            return None
+        if r['phase'] == 'kicking' and now - r['t_start'] > b['kick_timeout_s']:
+            r['abort'] = (f'the car did not move within {b["kick_timeout_s"]:g} s of kicking up to duty '
+                          f'{r["duty"]:.2f} ({seg["label"]})')
+        elif now - r['t_step'] >= b['step_s']:
+            if r['duty'] + b['step_duty'] > b['max_duty'] + 1e-9:
+                r['abort'] = (f'the car did not move at duty {r["duty"]:.2f} (maximum {b["max_duty"]:.2f}); '
+                              f'{seg["label"]}')
+            else:
+                r['duty'] = round(r['duty'] + b['step_duty'], 4)
+                r['t_step'] = now
+                self.drive.command(RAW, sign * r['duty'], 0.0, f'step 8 {r["phase"]} {sign * r["duty"]:+.3f}')
+        return self._finish() if r['abort'] else None
 
     def tick(self, now: float, inputs: Dict) -> Optional[Dict]:
         r = self.run
@@ -202,10 +276,18 @@ class SpeedPidStep(StepImpl):
             return None
         if r['abort']:
             return self._finish()
+        if r['phase'] in ('ramping', 'kicking'):
+            if self.rec.odom_t is None or now - self.rec.odom_t > self.odom_to:
+                r['abort'] = f'/odom stopped while driving the {r["seg"]["label"]}'
+                return self._finish()
+            return self._ramp(r, now)
         if r['phase'] == 'driving':
             if self.rec.odom_t is None or now - self.rec.odom_t > self.odom_to:
                 r['abort'] = f'/odom stopped while driving the {r["seg"]["label"]}'
                 return self._finish()
+            if r.get('rec_pending') and now >= r['t']:
+                r['rec_pending'] = False
+                self.rec.trace = r['rows']
             if now - r['t'] >= self.hold:
                 r['phase'], r['t_stop'] = 'stopping', now
                 self.rec.trace = None
@@ -224,6 +306,12 @@ class SpeedPidStep(StepImpl):
     def _segment_done(self) -> Optional[Dict]:
         r, cap = self.run, self.run['cap']
         seg = r['seg']
+        if r['kind'] == 'breakaway':
+            r['i'] += 1
+            if r['i'] >= 2:
+                r['kind'], r['i'] = 'sweep', 0
+            r['phase'] = 'ready'
+            return None
         tt, vv, t_end = self._tv(r)
         if r['kind'] == 'sweep':
             v = cc.steady_speed(tt, vv, t_end, self.steady) if tt else 0.0
@@ -321,6 +409,14 @@ class SpeedPidStep(StepImpl):
              'the lowest sweep duty that moves the car is already too fast for creeping',
              'Add a lower duty to procedure.sweep_duties (calibration_steps.yaml) or check the motor / gearing.'),
         ]
+        if self.brk['enabled']:
+            bk = r['cap'].get('breakaway') or {}
+            both = 'forward' in bk and 'backward' in bk
+            rows.insert(0, ('breakaway', f'forward {bk["forward"]:.2f} / backward {bk["backward"]:.2f}' if both
+                            else 'not measured', f'moves before duty {self.brk["max_duty"]:.2f}',
+                            'the breakaway ramp did not finish for both directions',
+                            'Redo; check the battery, the motor belt and that the wheels are free.'))
+            flags['breakaway'] = both
         for key, measured, limit, why, fix in rows:
             ok = bool(flags.get(key))
             out.append({'key': key, 'label': CHECK_LABEL[key], 'measured': measured, 'limit': limit, 'passed': ok,
@@ -332,16 +428,18 @@ class SpeedPidStep(StepImpl):
         res = csp.analyse(cap, self.cfg)                   # the CLI's keys
         flags = dict(res['checks'])
         checks = self._checks(res, r)
-        passed = bool(res['passed']) and not r['abort']
+        passed = bool(res['passed']) and not r['abort'] and all(c['passed'] for c in checks if c['key'] == 'breakaway')
         ff, pid = res['feedforward'], res['pid']
+        bk = cap.get('breakaway') or {}
         if passed:
-            summary = (f'feedforward {ff["static_duty"]:.3f} + {ff["duty_per_mps"]:.3f} x |v|, kp {pid["kp"]:.3g} '
+            summary = ((f'breakaway {bk.get("forward", 0):.2f} / {bk.get("backward", 0):.2f}, ' if bk else '') +
+                       f'feedforward {ff["static_duty"]:.3f} + {ff["duty_per_mps"]:.3f} x |v|, kp {pid["kp"]:.3g} '
                        f'ki {pid["ki"]:.3g}, error {res["max_steady_error_mps"] * 100:.1f} cm/s, '
                        f'overshoot {res["max_overshoot_pct"]:.0f} %')
         else:
             summary = 'failed: ' + (r['abort'] or ', '.join(c['label'].lower() for c in checks if not c['passed']))
         doc = dict(res, step=csp.STEP_ID, passed=passed, summary=summary, checks=checks, check_flags=flags,
-                   note=r['note'], retunes=list(r['retunes']), capture=cap)
+                   note=r['note'], retunes=list(r['retunes']), capture=cap, breakaway_duty=dict(bk))
         return cc.plain(doc)
 
     # ------------------------------------------------------------------ save / keep
@@ -389,7 +487,7 @@ class SpeedPidStep(StepImpl):
         run = None
         if r is not None:
             cap = r['cap']
-            seg = r['seg'] if r['phase'] in ('driving', 'stopping') else (
+            seg = r['seg'] if r['phase'] in ('driving', 'stopping', 'ramping', 'kicking') else (
                 self._segment(r) if r['phase'] == 'ready' else None)
             ff = r['ff']
             verdicts = []
@@ -398,9 +496,11 @@ class SpeedPidStep(StepImpl):
                 verdicts.append({'pid': v['pid'], 'metrics': v['metrics'],
                                  'checks': cc.pid_verdict(ms, ff, self.pass_cfg)['checks'] if ff else {}})
             run = {'phase': r['phase'], 'kind': r['kind'], 'segment': seg,
-                   'index': r['i'], 'n': len(self.duties) if r['kind'] == 'sweep' else len(self.targets),
+                   'index': r['i'], 'n': 2 if r['kind'] == 'breakaway' else (
+                       len(self.duties) if r['kind'] == 'sweep' else len(self.targets)),
+                   'duty': round(r['duty'], 3), 'breakaway': dict(r['break']),
                    'verify_run': len(cap['verify']) + 1, 'max_runs': self.max_runs,
-                   'elapsed_s': round(now - r['t'], 1) if r['phase'] == 'driving' else 0.0, 'hold_s': self.hold,
+                   'elapsed_s': round(max(0.0, now - r['t']), 1) if r['phase'] == 'driving' else 0.0, 'hold_s': self.hold,
                    'speed_mps': round(self.rec.v, 4), 'distance_m': round(self.rec.dist, 3),
                    'trace': self._trace(r) if r['phase'] in ('driving', 'stopping') else [],
                    'sweep': [{'duty': d, 'speed_mps': round(v, 4)} for d, v in cap['sweep']],
@@ -412,7 +512,8 @@ class SpeedPidStep(StepImpl):
         return cc.plain({'values': self.values, 'busy': self.busy, 'link_error': self.link_error, 'run': run,
                          'ages': self.rec.ages(now), 'speed_mps': round(self.rec.v, 4),
                          'procedure': {'sweep_duties': self.duties, 'step_targets_mps': self.targets,
-                                       'hold_s': self.hold, 'steady_s': self.steady, 'max_runs': self.max_runs},
+                                       'hold_s': self.hold, 'steady_s': self.steady, 'max_runs': self.max_runs,
+                                       'breakaway': dict(self.brk)},
                          'limits': {'max_steady_error_cm_s': self.pass_cfg['max_steady_error_mps'] * 100,
                                     'max_overshoot_pct': self.pass_cfg['max_overshoot_pct'],
                                     'creep_limit_cm_s': 1.5 * self.pass_cfg['min_creep_speed_mps'] * 100}})
