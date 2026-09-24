@@ -120,6 +120,13 @@ class ExtrinsicsIpmStep(StepImpl):
             from carbot_perception import calib_extrinsics as solver
             if self.work_root:
                 os.makedirs(self.work_root, exist_ok=True)
+            for role, sensor in self.roles:          # the real picture decides, not the (possibly stale) config
+                path = ((run['cameras'].get('sensors') or {}).get(sensor) or {}).get('intrinsics_file', '')
+                fh, fw = run['frames'][role].shape[:2]
+                mismatch = self._size_mismatch(path, {'width': fw, 'height': fh})
+                if mismatch:
+                    raise ValueError(f'{role}: {mismatch} (the camera picture is {fw}x{fh}). '
+                                     'Redo and Save step 3 at this size')
             with tempfile.TemporaryDirectory(prefix='carbot_step4_', dir=self.work_root or None) as root:
                 name = 'wizard'
                 session = cs.open_session(root, name)

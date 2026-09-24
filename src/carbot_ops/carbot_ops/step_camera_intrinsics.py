@@ -29,7 +29,7 @@ from carbot_common import calib_tools as ct
 from carbot_common import topics as T
 from carbot_common.data import sensor_enabled
 
-from .wizard_core import StepImpl
+from .wizard_core import StepImpl, StepRefused
 
 PROC_KEYS = ('extra_views', 'capture_timeout_s', 'novelty', 'still_px', 'max_live_corners')
 PASS_KEYS = ('min_views', 'max_reprojection_px', 'min_coverage_cells')
@@ -327,6 +327,15 @@ class CameraIntrinsicsStep(StepImpl):
         for s in self.enabled():
             f = os.path.join(src, f'{s}.yaml')
             if os.path.isfile(f):
+                try:
+                    doc = ct.load_yaml(f)
+                    old = (int(doc['image_width']), int(doc['image_height']))
+                    now = (int(self.cameras['sensors'][s]['width']), int(self.cameras['sensors'][s]['height']))
+                except Exception:  # noqa: BLE001  no size to compare: keep as before
+                    old = now = None
+                if old != now:
+                    raise StepRefused(f'{os.path.basename(src_session)} has {s} intrinsics for {old[0]}x{old[1]} but the '
+                                      f'camera now runs {now[0]}x{now[1]}: they would be wrong. Redo this step.')
                 dst = os.path.join(session, 'intrinsics', f'{s}.yaml')
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(f, dst)

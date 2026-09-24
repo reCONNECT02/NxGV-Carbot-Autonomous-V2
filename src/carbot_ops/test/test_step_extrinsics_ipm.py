@@ -88,3 +88,20 @@ def test_intrinsics_from_another_image_size_are_refused(tmp_path):
     same.write_text(yaml.safe_dump({'image_width': want[0], 'image_height': want[1]}), encoding='utf-8')
     cameras['sensors']['astra']['intrinsics_file'] = str(same)
     assert step.start(0.0, {}) is None
+
+
+def test_solve_refuses_intrinsics_that_do_not_match_the_real_picture(tmp_path):
+    import numpy as np
+    cfg, cameras, root = fixture_data()
+    cameras = copy.deepcopy(cameras)
+    file = tmp_path / 'intrinsics.yaml'
+    file.write_text(yaml.safe_dump({'image_width': 320, 'image_height': 240}), encoding='utf-8')
+    cameras['sensors']['astra']['width'], cameras['sensors']['astra']['height'] = 320, 240   # stale session copy
+    cameras['sensors']['astra']['intrinsics_file'] = str(file)
+    step = ExtrinsicsIpmStep(cfg, cameras, lambda: cameras, root, str(tmp_path))
+    assert step.start(0.0, {}) is None                                      # config and file agree: start is allowed
+    run = step.run
+    run['frames']['front'] = np.zeros((480, 640, 3), np.uint8)              # ... but the camera really sends 640x480
+    step._solve(run)
+    assert run['result'] is None and '320x240' in run['error'] and '640x480' in run['error'], run['error']
+    assert 'Redo and Save step 3' in run['error']

@@ -163,3 +163,21 @@ def test_save_and_keep_write_intrinsics_and_cameras_yaml(tmp_path):
     cams2 = yaml.safe_load(open(new / 'data' / 'cameras.yaml', encoding='utf-8'))
     assert cams2['sensors']['astra']['intrinsics_file'] == os.path.abspath(new / 'intrinsics' / 'astra.yaml')
     assert (new / 'intrinsics' / 'astra.yaml').is_file() and len(kept) == 2
+
+
+def test_keep_previous_refuses_intrinsics_for_another_image_size(tmp_path):
+    from carbot_ops.wizard_core import StepRefused
+    cams = front_only()
+    w, h = int(cams['sensors']['astra']['width']), int(cams['sensors']['astra']['height'])
+    st = sci.CameraIntrinsicsStep(STEP3, cams, calib=fake_calib())
+    old = tmp_path / 'calibration' / 's1'
+    (old / 'intrinsics').mkdir(parents=True)
+    (old / 'intrinsics' / 'astra.yaml').write_text(yaml.safe_dump({'image_width': w // 2, 'image_height': h // 2}),
+                                                   encoding='utf-8')
+    new = tmp_path / 'calibration' / 's2'
+    new.mkdir()
+    with pytest.raises(StepRefused, match=f'{w // 2}x{h // 2}.*{w}x{h}'):
+        st.keep_data(str(old), str(new))
+    (old / 'intrinsics' / 'astra.yaml').write_text(yaml.safe_dump({'image_width': w, 'image_height': h}),
+                                                   encoding='utf-8')
+    assert len(st.keep_data(str(old), str(new))) == 2                       # same size: kept as before
