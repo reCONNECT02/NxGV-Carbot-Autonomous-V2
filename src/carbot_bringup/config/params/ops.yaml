@@ -42,6 +42,15 @@ race_supervisor:
     start_camera_uwb_agreement_m: 0.20
     auto_record: true
     ready_hold_s: 1.0               # all checks green for this long before READY
+    # phase 8 (real supervisor; additions, nothing renamed)
+    status_max_age_s: 3.0           # node heartbeats / camera report / safety / UWB status must be this fresh
+    pose_max_age_s: 1.0             # global pose freshness for the start-pose check
+    startup_grace_s: 5.0            # state LOADING for this long after launch
+    # Nodes that must be publishing /carbot/status and not ERROR / STUB before READY.
+    required_nodes: [system_monitor, uwb_ranges, local_pose, global_pose, global_planner, mission_logic,
+                     local_planner, path_tracker, road_perception, safety_monitor, command_owner]
+    # ERROR here is only shown as a warning while traffic_light / challenge4_gate holds are disabled.
+    warn_only_nodes: [bpu_detector]
 
 run_recorder:
   ros__parameters:

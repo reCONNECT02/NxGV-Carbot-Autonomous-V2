@@ -550,7 +550,7 @@ branches and hardware questions.
 | 11 | map_uwb_alignment | `phase8/complete-calibration` | integrated from `b028719`; untested on car |
 | 12 | mission_planner | `phase8/complete-calibration` | integrated; untested on car |
 | 13 | practice_runs | `phase8/complete-calibration` | records and grades attempts; driving requires a separate safe arming design |
-| — | race mode (preflight / READY / START) | — | **not started** |
+| — | race mode (preflight / READY / START) | `phase8/race-supervisor` | REAL supervisor written 2026-09-25 (was a stub that always answered NOT_READY); 13 unit tests pass; NOT run on the car yet |
 
 Next: validate the pages with the robot when it is available, resolve the practice-run
 arming design, review the front-only road seed position, then merge this branch to `main`.
@@ -748,4 +748,29 @@ Result: the ICP does not pay for itself (3-6 % at best, worse with noisy edges, 
 
 Handoff / open: verify `heading_lead_s` on the car (BACKLOG #56); ICP stays an experiment (#57); along-track error needs landmarks
 (#58). NOT tested on the car: everything above.
+
+
+### Race supervisor (2026-09-25, branch `phase8/race-supervisor`)
+
+Before this, `race_supervisor` was a stub: after the calibration gate it reported STATE_NOT_READY forever and its
+START service always answered "race mode is implemented in phase 8", so the GUI START button could never enable.
+
+What exists:
+* `carbot_ops/preflight_core.py` (pure, `test/test_preflight_core.py`, 13 tests): `evaluate()` builds the check rows,
+  `Machine` walks LOADING -> CAL_MISSING / NOT_READY / PREFLIGHT -> READY (all green for `ready_hold_s`) -> RUNNING ->
+  FINISHED / ESTOPPED. START is accepted only at READY, exactly once; nothing un-arms after START.
+* `carbot_ops/race_supervisor.py`: real `CarbotNode`. Checks: e_stop, manual_takeover, camera_roles (step 2),
+  required nodes alive and not ERROR/STUB (`bpu_detector` ERROR is only a warning row), front camera rate/age (from
+  system_monitor `TopicHealth` of the front image topic), lidar rate/age, UWB link + every anchor + surveyed/offsets flags,
+  battery, start pose (global pose vs `mission.yaml` poses[0], `start_position_tolerance_m` / `start_heading_tolerance_deg`),
+  safety_monitor `motion_allowed`. Serves `/carbot/race/start`; on accept publishes `/carbot/race/armed` True (latched).
+* NEW YAML keys, `ops.yaml race_supervisor` (all REQUIRED): `status_max_age_s`, `pose_max_age_s`, `startup_grace_s`,
+  `required_nodes`, `warn_only_nodes`. New required data file key: `data.mission`. Nothing renamed.
+
+Handoff / open:
+* NOT run on the car. First run: `race.launch.py`, open the GUI Preflight rows; each red row says why and the fix.
+* `start_pose` uses the UWB-weighted global pose. Step 10 verify was skipped and the UWB lap was ~1 m stretched with the
+  tag under 1 Hz, so this row may stay red until UWB is verified or the car is placed exactly on P0. The tolerance is YAML.
+* `start_camera_uwb_agreement_m` and `auto_record` are still unused (no camera-map pose source; `run_recorder` is not
+  launched in phase 7/8), see BACKLOG #65.
 
