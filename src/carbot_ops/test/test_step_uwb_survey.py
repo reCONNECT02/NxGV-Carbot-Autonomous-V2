@@ -13,7 +13,8 @@ from carbot_ops.step_uwb_survey import WRITES, ConfigError, UwbSurveyStep, parse
 from helpers import STEPS, UWB
 
 CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0, 'page_watch_s': 8.0}
-STEP10 = next(s for s in STEPS['steps'] if s['id'] == 'uwb_survey')
+_STEP10_YAML = next(s for s in STEPS['steps'] if s['id'] == 'uwb_survey')
+STEP10 = dict(_STEP10_YAML, procedure=dict(_STEP10_YAML['procedure'], verify_spot=True))   # tests cover Verify
 # the true layout on the "venue": anchors raised to 1.2 m, tag antenna 0.15 m
 TRUE = {'1782': (0.0, 0.0, 1.2), '1786': (7.5, 0.0, 1.2), '1783': (7.5, 4.83, 1.2)}
 BIAS = {'1782': 0.95, '1786': 1.02, '1783': 0.88}
@@ -450,3 +451,24 @@ def test_bad_offsets_mode_is_config_error():
     bad['procedure']['offsets_mode'] = 'sometimes'
     with pytest.raises(ConfigError):
         UwbSurveyStep(bad, UWB)
+
+
+def test_verify_spot_false_link_and_survey_pass_the_step(tmp_path):
+    """procedure.verify_spot: false -> Verify is optional; link + survey alone pass and save (offsets 0)."""
+    rig = Rig(tmp_path)
+    rig.step.need_verify = False
+    rig.tag.bias = {}
+    rig.run(arg('link'))
+    done = rig.run(survey_arg())
+    assert done.status == 'PASS', done.result
+    assert done.result['next'] == '' and done.result['stages']['verify'] is None
+    assert next(c for c in done.result['checks'] if c['key'] == 'verify')['passed']
+    assert [a['range_offset_m'] for a in done.result['uwb']['anchors']] == [0.0, 0.0, 0.0]
+    assert next(x for x in rig.step.live(rig.inputs())['stages'] if x['key'] == 'verify')['state'] == 'optional'
+    assert rig.do('SAVE')['ok']
+
+
+def test_verify_spot_must_be_a_bool():
+    bad = dict(STEP10, procedure=dict(STEP10['procedure'], verify_spot='no'))
+    with pytest.raises(ConfigError):
+        UwbSurveyStep(dict(bad, index=1), copy.deepcopy(UWB))

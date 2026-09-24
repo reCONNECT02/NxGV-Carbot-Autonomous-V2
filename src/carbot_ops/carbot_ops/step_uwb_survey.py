@@ -29,7 +29,8 @@ Haffiz switch: procedure.offsets_mode
   required  the old order: offsets must pass before verify.
 Order: offsets needs link + survey passed. Changing the survey clears offsets and
 verify. The step PASSES when link, survey and verify passed (+ offsets when required)
-and the link check covered every surveyed anchor.
+and the link check covered every surveyed anchor. procedure.verify_spot: false makes Verify
+optional: link + survey alone pass the step (Verify may still be run; its result is shown).
 
 Save merges ONLY these keys into <session>/data/uwb.yaml (calib_tools.merge_data):
 anchors (id, xyz_m, range_offset_m), tag.z_m, tag.mount_xy_m, anchors_surveyed,
@@ -135,7 +136,7 @@ class UwbSurveyStep(StepImpl):
         super().__init__(cfg)
         self.pos_cfg = pos_cfg or PositioningCfg()
         self.proc, self.pas = cfg.get('procedure') or {}, cfg.get('pass') or {}
-        for where, d, keys in (('procedure', self.proc, PROC_KEYS), ('pass', self.pas, PASS_KEYS)):
+        for where, d, keys in (('procedure', self.proc, PROC_KEYS + ('verify_spot',)), ('pass', self.pas, PASS_KEYS)):
             miss = [k for k in keys if k not in d]
             if miss:
                 raise ConfigError(f'calibration_steps.yaml uwb_survey.{where}: missing {", ".join(miss)}')
@@ -151,6 +152,10 @@ class UwbSurveyStep(StepImpl):
         if self.offsets_mode not in OFFSETS_MODES:
             raise ConfigError(f'calibration_steps.yaml uwb_survey.procedure.offsets_mode: '
                               f'{self.offsets_mode!r} (use {" | ".join(OFFSETS_MODES)})')
+        if not isinstance(self.proc['verify_spot'], bool):
+            raise ConfigError('calibration_steps.yaml uwb_survey.procedure.verify_spot: use true or false, got '
+                              f'{self.proc["verify_spot"]!r}')
+        self.need_verify = self.proc['verify_spot']
         self.max_err = float(self.pas['max_verify_error_m'])
         self.min_cov = float(self.pas['min_hdop_coverage'])
         self.need_all = bool(self.pas['all_anchors_seen'])
@@ -429,6 +434,8 @@ class UwbSurveyStep(StepImpl):
     # ------------------------------------------------------------------ result
     def _next(self) -> str:
         for k in STAGES:
+            if k == 'verify' and not self.need_verify:
+                continue                              # verify_spot: false: Verify is optional
             if k == 'offsets' and not self._offsets_required() and not self._offsets_done():
                 v = self.stages['verify'] or {}
                 if v.get('status') == 'PASS':
@@ -486,7 +493,9 @@ class UwbSurveyStep(StepImpl):
                                  f'>= {int(self.p["min_samples"])} samples per anchor',
                                  of['status'] == 'PASS', of['why'], of['fix']))
         vf = s['verify']
-        if vf is None:
+        if vf is None and not self.need_verify:
+            checks.append(_check('verify', LABEL['verify'], 'skipped (verify_spot: false)', 'optional', True))
+        elif vf is None:
             checks.append(_check('verify', LABEL['verify'], 'not run', f'<= {self.max_err * 100:.0f} cm', False,
                                  'not verified yet', 'Move the tag to a different measured spot and press Verify.'))
         else:
@@ -494,14 +503,15 @@ class UwbSurveyStep(StepImpl):
                                  f'{vf["error_m"] * 100:.1f} cm ({vf["fixes"]} filtered fixes, '
                                  f'{"with" if vf.get("with_offsets") else "no"} offsets)' if 'error_m' in vf
                                  else f'{vf["fixes"]} fixes', f'<= {self.max_err * 100:.0f} cm',
-                                 vf['status'] == 'PASS', vf['why'], vf['fix']))
+                                 vf['status'] == 'PASS' or not self.need_verify, vf['why'], vf['fix']))
         nxt = self._next()
         passed = not nxt
         done = sum(1 for k in STAGES if (s[k] or {}).get('status') == 'PASS')
-        total = len(STAGES) if self._offsets_required() or self._offsets_done() else len(STAGES) - 1
+        total = len(STAGES) - (0 if self._offsets_required() or self._offsets_done() else 1)             - (0 if self.need_verify else 1)
         last = s.get(just) or {}
         if passed:
-            summary = (f'verify error {vf["error_m"] * 100:.1f} cm ({vf.get("method", "")}); offsets ' +
+            summary = ((f'verify error {vf["error_m"] * 100:.1f} cm ({vf.get("method", "")})' if vf and 'error_m' in vf
+                        else 'verify skipped') + '; offsets ' +
                        (', '.join(f'{a} {o:+.3f}' for a, o in sorted(self.offsets.items())) + ' m'
                         if self.offsets else 'none (0.0)'))
             message = 'All stages passed: press Save.'
@@ -559,7 +569,8 @@ class UwbSurveyStep(StepImpl):
             v = self.stages[k]
             state = ('running' if r and r['stage'] == k else 'pass' if (v or {}).get('status') == 'PASS'
                      else 'fail' if v else 'todo')
-            if k == 'offsets' and state == 'todo' and not self._offsets_required():
+            if state == 'todo' and ((k == 'offsets' and not self._offsets_required())
+                                    or (k == 'verify' and not self.need_verify)):
                 state = 'optional'
             stages.append({'key': k, 'label': LABEL[k], 'state': state,
                            'why': (v or {}).get('why', ''), 'fix': (v or {}).get('fix', '')})
@@ -586,7 +597,8 @@ class UwbSurveyStep(StepImpl):
     def save_data(self, session: str, res: Dict) -> List[str]:
         upd = res.get('uwb')
         if not res.get('passed') or not upd:
-            raise StepRefused('Nothing to save: link, survey and verify must pass first.')
+            raise StepRefused('Nothing to save: link and survey' +
+                              (' and verify' if self.need_verify else '') + ' must pass first.')
         return [ct.merge_data(session, 'uwb.yaml', self.base, upd)]
 
     def keep_data(self, src_session: str, session: str) -> List[str]:

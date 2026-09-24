@@ -1300,7 +1300,8 @@ STEP_PAGES.uwb_survey = (st, live) => {
   const done = k => S[k] && S[k].state === 'pass';
   /* instructions 0-4 = layout / survey / tag (form), 5 = VERIFY, 6 = OFFSETS (Haffiz: only if verify fails) */
   const vfail = S.verify && S.verify.state === 'fail' && lv.next === 'offsets';
-  let stage = saved || done('verify') ? ins.length : vfail ? 6 : done('survey') ? 5 : 0;
+  const vOff = S.verify && S.verify.state === 'optional';
+  let stage = saved || done('verify') || (vOff && done('survey')) ? ins.length : vfail ? 6 : done('survey') ? 5 : 0;
   stage = Math.min(stage, ins.length);
   const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
 
