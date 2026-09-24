@@ -238,13 +238,13 @@ steps:
                 kick_at_start: true, kick_duty: 0.40, kick_s: 0.5, kick_step: 0.05, kick_max_duty: 0.50, max_kicks: 6}
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
-    depends_on: [7]
+    depends_on: [6]
     id: speed_pid
     title: Speed PID
     required: true
     tab: control
     tool: ros2 run carbot_control calib_speed
-    need: Step 7 passed (the car drives straight). calibrate.launch.py running. Straight clear floor, about 1.5 m free ahead AND behind, e-stop ready.
+    need: Step 6 passed (speed is measured from the wheel odometry). calibrate.launch.py running. Straight clear floor, about 1.5 m free ahead AND behind, e-stop ready.
     instructions:
       - "The car drives ITSELF straight, forward and back alternately (about 1.5 m free ahead
          and behind), through the command owner (calibrate mode only). E-stop ready. Press Run."

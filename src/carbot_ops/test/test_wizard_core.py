@@ -258,8 +258,8 @@ def test_blocking_follows_depends_on_not_step_number(tmp_path):
     by = lambda i: [b.index for b in [w.blocker(w.slot(i))] if b]
     assert by(1) == [] and by(2) == [1]
     # 8 (speed PID), 9 (venue colours) and 10 (UWB) do not wait for each other
-    assert by(8) == [7]
-    assert w.slot(8).cfg['depends_on'] == [7] and 8 not in w.slot(9).cfg['depends_on'] + w.slot(10).cfg['depends_on']
+    assert by(8) == [6]
+    assert w.slot(8).cfg['depends_on'] == [6] and 8 not in w.slot(9).cfg['depends_on'] + w.slot(10).cfg['depends_on']
     assert by(10) == [1]                    # only step 1 (sensor health), not 2..9
     assert by(9) == [3]
 
