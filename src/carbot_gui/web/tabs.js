@@ -472,7 +472,7 @@ TABS.loc = {
     let zoom = 'car', d = null;
     el.innerHTML = H.head('Localization', 'Local estimate vs UWB-aided vs raw UWB', H.seg('zoom', [['car', 'Around the car'], ['track', 'Whole track']], zoom), ctx) +
       `<div class="grid g-side"><div class="panel"><div class="cv" data-k="cv"></div>
-      <div class="legend"><span><i style="background:var(--lane)"></i>Local (05)</span><span><i style="background:var(--ok)"></i>Global, UWB-aided (06)</span><span><i style="background:var(--warn)"></i>Raw UWB fix</span><span><i style="background:var(--muted)"></i>Anchor range (dashed = gated or stale)</span></div></div>
+      <div class="legend"><span><i style="background:var(--lane)"></i>Local (05)</span><span><i style="background:var(--ok)"></i>Global, UWB-aided (06)</span><span><i style="background:var(--uwb)"></i>UWB position (Haffiz filter)</span><span><i style="background:var(--warn)"></i>Raw UWB solve</span><span><i style="background:var(--muted)"></i>Anchor range (dashed = gated or stale)</span></div></div>
       <div class="side" data-k="side"></div></div>`;
     const q = k => el.querySelector(`[data-k="${k}"]`);
     H.wireSeg(el, 'zoom', v => { zoom = v; draw(); });
@@ -494,8 +494,9 @@ TABS.loc = {
         g.font = '650 12px system-ui'; g.textAlign = 'left'; g.fillText(a.id, X + 13, Y + 4);
       });
       const tr = d && d.trails || {};
-      [['raw', '--warn'], ['global', '--ok'], ['local', '--lane']].forEach(([k, c]) => { if (tr[k] && tr[k].length > 1) D.line(g, tr[k], p => v.X(p[0]), p => v.Y(p[1]), D.css(c), 1.6, [3, 4]); });
+      [['raw', '--warn'], ['uwb', '--uwb'], ['global', '--ok'], ['local', '--lane']].forEach(([k, c]) => { if (tr[k] && tr[k].length > 1) D.line(g, tr[k], p => v.X(p[0]), p => v.Y(p[1]), D.css(c), 1.6, [3, 4]); });
       if (d && d.raw) D.dot(g, v.X(d.raw[0]), v.Y(d.raw[1]), 5, D.css('--warn'));
+      if (d && d.uwb_pos) { const [x, y, e] = d.uwb_pos; const c = D.css('--uwb'); D.ellipse(g, v.X(x), v.Y(y), e[0], e[1], e[2], v.s, c); D.dot(g, v.X(x), v.Y(y), 5, c); }
       if (d && d.global) { const [x, y, , e] = d.global; D.ellipse(g, v.X(x), v.Y(y), e[0], e[1], e[2], v.s, D.css('--ok')); D.dot(g, v.X(x), v.Y(y), 5, D.css('--ok')); }
       if (d && d.pose) { const [x, y, a] = d.pose; if (d.local_ellipse) D.ellipse(g, v.X(x), v.Y(y), d.local_ellipse[0], d.local_ellipse[1], d.local_ellipse[2], v.s, D.css('--lane')); D.arrow(g, v.X(x), v.Y(y), a, 12, D.css('--lane')); }
       g.fillStyle = D.css('--muted'); g.font = '11px system-ui'; g.textAlign = 'right'; g.fillText(`grid ${zoom === 'car' ? '10 cm' : '50 cm'}`, w - 8, h - 8);
@@ -507,7 +508,7 @@ TABS.loc = {
         const e = d.est || {}, u = d.uwb || {};
         q('side').innerHTML = H.panel('Estimator', H.kv([['State', D.esc(e.state || '—'), e.state === 'RUNNING' ? 'ok-t' : 'warn-t'], ['Local σ', D.f(e.local_sigma_m, 3) + ' m'], ['Global σ', D.f(e.global_sigma_m, 3) + ' m'],
           ['Offset x / y', `${D.f(e.global_offset_x_m, 3)} / ${D.f(e.global_offset_y_m, 3)} m`], ['UWB residual', D.f(e.uwb_residual_m, 3) + ' m'], ['UWB gain', D.f(e.uwb_gain)],
-          ['Accepted / rejected', `${e.uwb_accepted ?? '—'} / ${e.uwb_rejected ?? '—'}`], ['Re-acquires', e.uwb_reacquires ?? '—'], ['Visual updates', e.visual_updates ?? '—'],
+          ['Accepted / rejected', `${e.uwb_accepted ?? '—'} / ${e.uwb_rejected ?? '—'}`], ['UWB speed (filter)', d.uwb_pos ? D.f(d.uwb_pos[3], 2) + ' m/s' : '—'], ['Re-acquires', e.uwb_reacquires ?? '—'], ['Visual updates', e.visual_updates ?? '—'],
           ['IMU', e.imu_ok == null ? '—' : e.imu_ok ? 'fresh' : 'stale: heading from /odom', H.okc(e.imu_ok)], ['Map aligned to UWB', d.aligned ? 'yes' : 'no (step 11)', H.okc(d.aligned)]])) +
           H.panel('Anchors', `<div class="scroll"><table><tr><th>ID</th><th class="r">Raw</th><th class="r">Corr.</th><th class="r">Age</th><th class="r">Samples</th><th>Gate</th></tr>` +
             (d.anchors || []).map(a => `<tr><td>${D.esc(a.id)}</td><td class="r">${D.f(a.raw, 3)}</td><td class="r">${D.f(a.corr, 3)}</td><td class="r ${a.seen ? 'ok-t' : 'bad-t'}">${a.age != null ? D.f(a.age) + ' s' : 'never'}</td>` +

@@ -1,5 +1,6 @@
 """UWB range processing, pure Python (no ROS). Used by the uwb_ranges node,
-calibration step 10 (calib_uwb) and the sandbox.
+calibration step 10 (calib_uwb) and the sandbox. The position filter that sits
+on top of the solvers here is positioning.py (Haffiz's method).
 
 Follows docs/reference/UWB_Handoff.md:
   * tag JSON: {"tag","boot_id","seq","t_ms","last_unknown_id",
@@ -24,6 +25,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 
 # --------------------------------------------------------------------------- anchors
@@ -91,10 +94,20 @@ class Report:
     links: List[Link]
 
 
+def _strip_echo_prefix(text: str) -> str:
+    """Haffiz's parser: accept `data: '{...}'` (a pasted `ros2 topic echo` line) as well as plain JSON."""
+    raw = (text or '').strip()
+    if raw.startswith('data:'):
+        raw = raw[len('data:'):].strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ('"', "'"):
+            raw = raw[1:-1]
+    return raw
+
+
 def parse_report(text: str) -> Optional[Report]:
     """JSON string -> Report, or None if it is not a valid tag report."""
     try:
-        d = json.loads(text)
+        d = json.loads(_strip_echo_prefix(text))
     except (ValueError, TypeError):
         return None
     if not isinstance(d, dict):
@@ -134,6 +147,7 @@ class Processed:
     rebooted: bool
     latency_ms: float            # estimated extra WiFi delay of this report
     unknown_ids: List[str] = field(default_factory=list)
+    encode_time: float = 0.0     # estimated time the tag encoded the report (s, node clock)
 
 
 class LatencyFilter:
@@ -214,12 +228,95 @@ class RangeProcessor:
                 self.last_seq[ln.anchor] = ln.sample_seq
             out.append(ProcessedRange(ln.anchor, ln.r, corr, ln.age_ms, ln.sample_seq,
                                       reason == '', reason, encode - ln.age_ms / 1000.0))
-        return Processed(rep, arrival, out, rebooted, extra * 1000.0, unknown)
+        return Processed(rep, arrival, out, rebooted, extra * 1000.0, unknown, encode)
 
 
 # --------------------------------------------------------------------------- trilateration
+# Three solvers, chosen with common.yaml uwb_positioning.solver (default: linear).
+#   linear    Haffiz's method (tools/uwb/haffiz/turtle_uwb_visualizer.py solve_trilateration):
+#             subtract the first anchor's circle equation from the others -> linear system
+#             A p = B. With exactly 3 anchors it is his 2x2 solve, identical for any choice of
+#             reference anchor; with 4+ anchors it is the least-squares solution.
+#   nlls      Haffiz's noEKF method (turtle_uwb_visualizer_noEKF.py RobustTrilateration):
+#             non-linear least squares, soft_l1 loss, started from the previous solution.
+#   pairwise  the old tools/uwb/uwb_xy.py method (average of the pairwise circle intersections).
+SOLVERS = ('linear', 'nlls', 'pairwise')
+
+
+def solve_linear(anchors: 'AnchorSet', ranges: Dict[str, float]) -> Optional[Tuple[float, float]]:
+    """Haffiz closed-form trilateration. ranges = flattened, offset-corrected metres per anchor id.
+    None for < 3 anchors or a singular (collinear) geometry, never (0, 0)."""
+    ids = sorted(i for i in ranges if i in anchors.anchors)
+    if len(ids) < 3:
+        return None
+    x1, y1 = anchors.anchors[ids[0]].x, anchors.anchors[ids[0]].y
+    r1 = float(ranges[ids[0]])
+    A, B = [], []
+    for i in ids[1:]:
+        xi, yi = anchors.anchors[i].x, anchors.anchors[i].y
+        ri = float(ranges[i])
+        A.append([2.0 * (xi - x1), 2.0 * (yi - y1)])
+        B.append(r1 * r1 - ri * ri - x1 * x1 + xi * xi - y1 * y1 + yi * yi)
+    a = np.array(A)
+    b = np.array(B)
+    try:
+        if len(ids) == 3:
+            p = np.linalg.solve(a, b)
+        else:
+            if np.linalg.matrix_rank(a) < 2:
+                return None
+            p = np.linalg.lstsq(a, b, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return None
+    if not np.all(np.isfinite(p)):
+        return None
+    return float(p[0]), float(p[1])
+
+
+def _soft_l1_irls(anchor_xy: np.ndarray, r: np.ndarray, x0: Sequence[float], f_scale: float,
+                  iters: int = 50) -> Optional[np.ndarray]:
+    """Gauss-Newton with soft_l1 weights (scipy.optimize.least_squares loss='soft_l1'),
+    used when scipy is not installed. rho(z) = 2((1+z)^0.5 - 1), z = (res/f)^2."""
+    p = np.array(x0, float)
+    for _ in range(iters):
+        d = p[None, :] - anchor_xy
+        h = np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9)
+        res = h - r
+        J = d / h[:, None]
+        w = 1.0 / np.sqrt(1.0 + (res / f_scale) ** 2)
+        JW = J * w[:, None]
+        H = JW.T @ J + np.eye(2) * 1e-9
+        step = np.linalg.solve(H, -JW.T @ res)
+        p = p + step
+        if np.linalg.norm(step) < 1e-7:
+            break
+    return p if np.all(np.isfinite(p)) else None
+
+
+def solve_nlls(anchors: 'AnchorSet', ranges: Dict[str, float], x0: Sequence[float],
+               f_scale: float = 1.0) -> Optional[Tuple[float, float]]:
+    """Haffiz RobustTrilateration.solve: least_squares(residuals, x0, loss='soft_l1')."""
+    ids = sorted(i for i in ranges if i in anchors.anchors)
+    if len(ids) < 3:
+        return None
+    axy = np.array([[anchors.anchors[i].x, anchors.anchors[i].y] for i in ids])
+    r = np.array([float(ranges[i]) for i in ids])
+    try:
+        from scipy.optimize import least_squares
+    except ImportError:                                   # pragma: no cover  (scipy on the RDK)
+        p = _soft_l1_irls(axy, r, x0, f_scale)
+        return None if p is None else (float(p[0]), float(p[1]))
+
+    def residuals(pos):
+        return np.hypot(pos[0] - axy[:, 0], pos[1] - axy[:, 1]) - r
+    res = least_squares(residuals, np.array(x0, float), loss='soft_l1', f_scale=float(f_scale))
+    if not res.success or not np.all(np.isfinite(res.x)):
+        return None
+    return float(res.x[0]), float(res.x[1])
+
+
 def pair_estimate(a, ra, b, rb, others) -> Optional[Tuple[float, float]]:
-    """tools/uwb/uwb_xy.py pair_estimate, generalised: `others` = [(xy, r), ...]
+    """tools/uwb/uwb_xy.py (pre-Haffiz) pair_estimate, generalised: `others` = [(xy, r), ...]
     picks the mirror candidate that fits the other anchors best."""
     dx, dy = b[0] - a[0], b[1] - a[1]
     d = math.hypot(dx, dy)
@@ -239,9 +336,8 @@ def pair_estimate(a, ra, b, rb, others) -> Optional[Tuple[float, float]]:
     return p1 if err(p1) <= err(p2) else p2
 
 
-def trilaterate(anchors: AnchorSet, ranges: Dict[str, float]) -> Optional[Tuple[float, float]]:
-    """Average of all pairwise estimates (uwb_xy.py method). ranges = flattened,
-    offset-corrected metres per anchor id. Needs >= 3 anchors."""
+def trilaterate_pairwise(anchors: 'AnchorSet', ranges: Dict[str, float]) -> Optional[Tuple[float, float]]:
+    """Average of all pairwise estimates (the old uwb_xy.py method). Needs >= 3 anchors."""
     ids = sorted(i for i in ranges if i in anchors.anchors)
     if len(ids) < 3:
         return None
@@ -255,6 +351,22 @@ def trilaterate(anchors: AnchorSet, ranges: Dict[str, float]) -> Optional[Tuple[
     if not est:
         return None
     return (sum(p[0] for p in est) / len(est), sum(p[1] for p in est) / len(est))
+
+
+def trilaterate(anchors: 'AnchorSet', ranges: Dict[str, float], method: str = 'linear',
+                x0: Optional[Sequence[float]] = None, f_scale: float = 1.0) -> Optional[Tuple[float, float]]:
+    """One 2-D fix from one set of ranges. method: linear (Haffiz, default) | nlls | pairwise."""
+    if method == 'linear':
+        return solve_linear(anchors, ranges)
+    if method == 'pairwise':
+        return trilaterate_pairwise(anchors, ranges)
+    if method == 'nlls':
+        if x0 is None:
+            x0 = solve_linear(anchors, ranges)
+            if x0 is None:
+                return None
+        return solve_nlls(anchors, ranges, x0, f_scale)
+    raise ValueError(f'unknown trilateration method {method!r} (allowed: {", ".join(SOLVERS)})')
 
 
 # --------------------------------------------------------------------------- survey geometry

@@ -9,7 +9,12 @@ branch check, preflight start check), NEVER for steering, and it never writes
 the local estimate.
 
 In : /carbot/localization/local_pose, /carbot/localization/local_status,
-     /carbot/uwb/ranges (or /carbot/uwb/raw_fix when use_per_range_updates is false),
+     UWB, chosen by uwb_input (localization.yaml):
+       position (default) /carbot/uwb/position  Haffiz solver + CV Kalman filter; one
+                          whole-fix update per fix, R = filter covariance (track frame)
+                          + position_sigma_floor_m^2, gated at position_gate_chi2
+       ranges             /carbot/uwb/ranges    one gated update per fresh anchor range
+       raw_fix            /carbot/uwb/raw_fix   V4 whole-fix mode, R = fix_sigma_m^2
      /carbot/localization/reset, /carbot/mission/state
 Out: /carbot/localization/global_pose  PoseWithCovarianceStamped (track)
      /carbot/localization/status       LocalizationStatus (block 05 + 06 fields)
@@ -34,7 +39,7 @@ from .estimator_core import GlobalCfg, GlobalEstimator, PoseHistory, TrackToVenu
 
 REQUIRED = ['rate_hz', 'initial_variance_m2', 'growth_per_s_m2', 'growth_per_m_m2',
             'range_sigma_m', 'range_gate_chi2', 'position_gate_chi2', 'fix_sigma_m',
-            'use_per_range_updates', 'skip_repeated_sample_seq', 'latency_compensation',
+            'uwb_input', 'position_sigma_floor_m', 'skip_repeated_sample_seq', 'latency_compensation',
             'visual_landmark_min_rank', 'visual_landmark_sigma_m', 'max_uwb_age_s',
             'reacquire.reject_streak', 'reacquire.inflate_variance_m2', 'max_variance_m2',
             'pose_history_s', 'require_alignment', 'publish_venue_tf',
@@ -76,10 +81,16 @@ class GlobalPoseNode(CarbotNode):
         self.pub_status = self.create_publisher(LocalizationStatus, T.LOCALIZATION_STATUS, 10)
         self.sub(Odometry, T.LOCAL_POSE, self._on_local, 10)
         self.sub(LocalizationStatus, T.LOCAL_STATUS, self._on_local_status, 10)
-        if bool(self.p('use_per_range_updates')):
+        self.uwb_input = str(self.p('uwb_input'))
+        if self.uwb_input == 'position':
+            self.sub(Odometry, T.UWB_POSITION, self._on_position, 10)
+        elif self.uwb_input == 'ranges':
             self.sub(UwbRanges, T.UWB_RANGES, self._on_ranges, 10)
-        else:
+        elif self.uwb_input == 'raw_fix':
             self.sub(PointStamped, T.UWB_RAW_FIX, self._on_fix, 10)
+        else:
+            self.get_logger().error(f'localization.yaml global_pose.uwb_input={self.uwb_input!r}: '
+                                    'use position | ranges | raw_fix. UWB is OFF.')
         self.sub(PoseWithCovarianceStamped, T.LOCALIZATION_RESET, self._on_reset, 10)
         self.sub(MissionState, T.MISSION_STATE, self._on_mission, LATCHED)
         if bool(self.p('publish_venue_tf')):
@@ -171,6 +182,25 @@ class GlobalPoseNode(CarbotNode):
             return
         fx, fy = self.t2v.to_track(msg.point.x, msg.point.y)
         if self.est.fix_update(self._tag_xy(loc), (fx, fy)):
+            self.last_uwb_accept_wall = time.monotonic()
+
+    def _on_position(self, msg: Odometry) -> None:
+        """Haffiz filtered fix (venue) -> one whole-fix update at the local pose of its time."""
+        if not self._uwb_allowed():
+            return
+        t = stamp_s(msg.header.stamp)
+        loc = self.hist.at(t, float(self.p('max_uwb_age_s')))
+        if loc is None:
+            self.stale_skipped += 1
+            return
+        p = msg.pose.pose.position
+        fx, fy = self.t2v.to_track(p.x, p.y)
+        c = msg.pose.covariance
+        Cv = np.array([[c[0], c[1]], [c[6], c[7]]], float)
+        Rtv = self.t2v.R                                  # venue = Rtv track + t
+        floor = float(self.p('position_sigma_floor_m')) ** 2
+        R = Rtv.T @ Cv @ Rtv + np.eye(2) * floor
+        if self.est.fix_update(self._tag_xy(loc), (fx, fy), R):
             self.last_uwb_accept_wall = time.monotonic()
 
     # ------------------------------------------------------------------ outputs

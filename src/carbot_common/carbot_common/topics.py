@@ -81,7 +81,8 @@ LOCALIZATION_RESET = '/carbot/localization/reset'
 # UWB (uwb_localization)
 UWB_RANGES = '/carbot/uwb/ranges'                       # UwbRanges (parsed, offsets applied)
 UWB_STATUS = '/carbot/uwb/status'                       # UwbStatus
-UWB_RAW_FIX = '/carbot/uwb/raw_fix'                     # PointStamped venue, trilateration (GUI only)
+UWB_RAW_FIX = '/carbot/uwb/raw_fix'                     # PointStamped venue, solver fix (unfiltered; GUI/calibration)
+UWB_POSITION = '/carbot/uwb/position'                   # Odometry venue: Haffiz solver + CV Kalman filter (block 06 input)
 
 # Blocks 01/07 map + global plan
 TRACK_MAP_JSON = '/carbot/map/track_json'               # String JSON, transient local

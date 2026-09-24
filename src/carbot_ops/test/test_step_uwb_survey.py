@@ -131,7 +131,7 @@ def test_full_flow_passes_and_saves_only_step10_keys(tmp_path):
     for aid, b in BIAS.items():
         assert off[aid] == pytest.approx(b, abs=0.01)
     assert res['stages']['verify']['error_m'] <= 0.05
-    assert done.message == 'All four stages passed: press Save.'
+    assert done.message == 'All stages passed: press Save.'
     # a step-11 alignment already in this session's uwb.yaml must survive
     session = rig.wiz._ensure_session()
     prior = copy.deepcopy(UWB)
@@ -157,7 +157,7 @@ def test_full_flow_passes_and_saves_only_step10_keys(tmp_path):
 def test_intermediate_stage_says_what_is_next(tmp_path):
     rig = Rig(tmp_path)
     done = rig.run(arg('link'))
-    assert done.status == 'FAIL' and '1 of 4 stages passed' in done.result['summary']
+    assert done.status == 'FAIL' and '1 of 3 stages passed' in done.result['summary']   # offsets optional
     assert done.message == 'Link check passed. Next: Anchor + tag survey.'
     assert not rig.do('SAVE')['ok']
 
@@ -193,7 +193,7 @@ def test_changing_survey_clears_offsets_and_verify(tmp_path):
     assert rig.full().status == 'PASS'
     moved = dict(TRUE, **{'1783': (7.4, 4.83, 1.2)})
     done = rig.run(survey_arg(true=moved))
-    assert done.status == 'FAIL' and done.result['next'] == 'offsets'
+    assert done.status == 'FAIL' and done.result['next'] == 'verify'      # offsets optional (Haffiz)
     assert done.result['stages']['offsets'] is None and done.result['stages']['verify'] is None
     # the same survey again keeps them
     rig2 = Rig(tmp_path / 'b')
@@ -394,3 +394,59 @@ def test_session_uwb_falls_back_to_base(tmp_path):
     assert wu.session_uwb(str(tmp_path), UWB) is UWB
     assert wu.session_uwb(None, UWB) is UWB
     assert wu.anchor_set(UWB, zero_offsets=True).ids == sorted(TRUE)
+
+
+# ---------------------------------------------------------------- Haffiz switch: offsets optional
+def test_haffiz_no_offsets_verify_passes_directly(tmp_path):
+    """Calibrated tag (no range bias): link -> survey -> verify passes, offsets saved as 0."""
+    rig = Rig(tmp_path)
+    rig.tag.bias = {}
+    rig.run(arg('link'))
+    rig.run(survey_arg())
+    rig.tag.xy = [3.5, 2.5]
+    done = rig.run(arg('verify', (3.5, 2.5)))
+    assert done.status == 'PASS', done.result
+    vf = done.result['stages']['verify']
+    assert vf['with_offsets'] is False and vf['error_m'] <= 0.05 and vf['method'] == 'linear + cv_kf'
+    assert done.result['stages']['offsets'] is None
+    assert [a['range_offset_m'] for a in done.result['uwb']['anchors']] == [0.0, 0.0, 0.0]
+    assert rig.do('SAVE')['ok']
+    saved = session_uwb(rig.wiz)
+    assert saved['offsets_calibrated'] is True
+    live = rig.step.live(rig.inputs())
+    assert live['offsets_mode'] == 'optional'
+    assert next(x for x in live['stages'] if x['key'] == 'offsets')['state'] == 'optional'
+
+
+def test_haffiz_biased_ranges_fail_verify_then_offsets_fix_it(tmp_path):
+    rig = Rig(tmp_path)                                   # BIAS ~1 m on every range
+    rig.run(arg('link'))
+    rig.run(survey_arg())
+    rig.tag.xy = [3.5, 2.5]
+    done = rig.run(arg('verify', (3.5, 2.5)))
+    assert done.status == 'FAIL' and done.result['next'] == 'offsets'
+    assert 'Measure offsets' in done.result['stages']['verify']['fix']
+    rig.tag.xy = [5.0, 1.5]
+    assert rig.run(arg('offsets', (5.0, 1.5))).result['stages']['offsets']['status'] == 'PASS'
+    rig.tag.xy = [3.5, 2.5]
+    done = rig.run(arg('verify', (3.5, 2.5)))
+    assert done.status == 'PASS' and done.result['stages']['verify']['with_offsets'] is True
+
+
+def test_offsets_required_mode_keeps_the_old_order(tmp_path):
+    step_cfg = copy.deepcopy(dict(STEP10, index=1))
+    step_cfg['procedure']['offsets_mode'] = 'required'
+    rig = Rig(tmp_path)
+    rig.step = UwbSurveyStep(step_cfg, rig.uwb)
+    rig.wiz = wc.Wizard({'steps': [step_cfg]}, str(tmp_path), CFG, {'uwb_survey': rig.step}, now=rig.clock)
+    rig.run(arg('link'))
+    rig.run(survey_arg())
+    r = rig.do('RUN', arg('verify', (3.5, 2.5)))
+    assert not r['ok'] and 'Offsets' in r['message']
+
+
+def test_bad_offsets_mode_is_config_error():
+    bad = copy.deepcopy(STEP10)
+    bad['procedure']['offsets_mode'] = 'sometimes'
+    with pytest.raises(ConfigError):
+        UwbSurveyStep(bad, UWB)

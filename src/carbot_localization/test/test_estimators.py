@@ -167,3 +167,16 @@ def test_track_venue_roundtrip():
 def test_ellipse():
     a, b, ang = covariance_ellipse(np.diag([0.04, 0.01]), k=1.0)
     assert (a, b) == pytest.approx((0.2, 0.1)) and abs(ang) < 1e-9
+
+
+def test_fix_update_with_filter_covariance():
+    """Haffiz position input: R comes from the CV Kalman covariance (+ floor)."""
+    import numpy as np
+    g = GlobalEstimator(GlobalCfg(initial_variance=0.04))
+    tight = np.eye(2) * 0.02 ** 2
+    assert g.fix_update((1.0, 1.0), (1.05, 1.0), tight)
+    assert g.off[0] > 0.04                         # trusted: offset moves almost all the way
+    g2 = GlobalEstimator(GlobalCfg(initial_variance=0.04))
+    assert g2.fix_update((1.0, 1.0), (1.05, 1.0), np.eye(2) * 0.3 ** 2)
+    assert g2.off[0] < 0.02 < g.off[0]             # loose filter: much smaller pull
+    assert not g.fix_update((1.0, 1.0), (3.0, 1.0), tight)   # 2 m jump gated

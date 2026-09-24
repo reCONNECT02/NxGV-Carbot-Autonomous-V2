@@ -72,3 +72,18 @@ Status: TODO / DOING / DONE (phase) / WAITING (on the team).
 
 ## How to add a request
 Tell Claude in any chat, or add a row here yourself (next number, phase if known, status TODO).
+
+## UWB: Haffiz's positioning (branch uwb-haffiz)
+
+- Replaced the pairwise-trilateration + range-offset pipeline with Haffiz's method:
+  closed-form linear solver + constant-velocity Kalman filter (`uwb_localization/positioning.py`,
+  `common.yaml uwb_positioning`). See `docs/UWB.md`.
+- Block 06 (`global_pose`) reads `localization.yaml global_pose.uwb_input` (RENAMED from
+  `use_per_range_updates`); default `position` = his filtered `/carbot/uwb/position`.
+- Step 10: offsets now optional (`offsets_mode`); Verify checks the filtered position.
+- Step 11: new default mode `uwb_lap` (his position + `map_builder.py fit_rigid`, no odometry).
+- NOT YET DONE: headless-browser check of the step 10 / step 11 / Localization GUI pages on the
+  mock server (0 JS errors) — the code review and every pure-Python test pass, but the browser
+  rendering itself was not re-verified after this change. Do this before trusting the wizard UI
+  on the car.
+- NOT tested on hardware: nothing in this branch has run against the real tag / anchors.

@@ -16,12 +16,20 @@ RUN/REDO argument JSON:
   {"stage": "offsets", "spot": [x, y]}       tag still at a measured spot (>= min_distance_from_
                                              anchor_m from every anchor), procedure.seconds:
                                              offset = median(raw 3-D R) - tape 3-D distance
-  {"stage": "verify", "spot": [x, y]}        a DIFFERENT spot (>= min_verify_separation_m away):
-                                             median corrected fix within pass.max_verify_error_m
+  {"stage": "verify", "spot": [x, y]}        tag still at a measured spot: median of Haffiz's
+                                             FILTERED position (solver + CV Kalman filter, the
+                                             /carbot/uwb/position the car uses) within
+                                             pass.max_verify_error_m. If offsets were measured,
+                                             it must be a DIFFERENT spot (>= min_verify_separation_m).
 
-Order: offsets needs link + survey passed, verify needs offsets. Changing the
-survey clears offsets and verify. The step PASSES when all four passed (and the
-link check covered every surveyed anchor).
+Haffiz switch: procedure.offsets_mode
+  optional  (default) Haffiz uses no offsets. Verify may run right after link +
+            survey; if it passes, offsets are saved as 0.0. If it fails with ranges
+            that read long / short, the page says: Measure offsets, then Verify again.
+  required  the old order: offsets must pass before verify.
+Order: offsets needs link + survey passed. Changing the survey clears offsets and
+verify. The step PASSES when link, survey and verify passed (+ offsets when required)
+and the link check covered every surveyed anchor.
 
 Save merges ONLY these keys into <session>/data/uwb.yaml (calib_tools.merge_data):
 anchors (id, xyz_m, range_offset_m), tag.z_m, tag.mount_xy_m, anchors_surveyed,
@@ -39,6 +47,7 @@ from typing import Dict, List, Optional, Tuple
 
 from carbot_common import calib_tools as ct
 from uwb_localization.calib_uwb import spot_ok, venue_points
+from uwb_localization.positioning import PositioningCfg
 from uwb_localization.uwb_core import AnchorSet, compute_offsets, fix_clusters, hdop_coverage, layout_checks
 
 from . import wizard_uwb as wu
@@ -46,7 +55,8 @@ from .wizard_core import StepImpl, StepRefused
 
 PROC_KEYS = ('seconds', 'min_distance_from_anchor_m', 'link_check_s', 'min_samples', 'min_spacing_m',
              'min_triangle_angle_deg', 'hdop_limit', 'max_spread_m', 'min_verify_separation_m', 'min_fixes',
-             'max_extent_m')
+             'max_extent_m', 'verify_settle_fixes')
+OFFSETS_MODES = ('optional', 'required')
 PASS_KEYS = ('max_verify_error_m', 'all_anchors_seen', 'min_hdop_coverage')
 UWB_KEYS = ('anchors', 'tag', 'anchors_surveyed', 'offsets_calibrated')
 STAGES = ('link', 'survey', 'offsets', 'verify')
@@ -121,8 +131,9 @@ def _check(key, label, measured, limit, passed, why='', fix='', **kw) -> Dict:
 class UwbSurveyStep(StepImpl):
     can_keep_previous = True
 
-    def __init__(self, cfg: Dict, uwb: Dict, config_dir: str = ''):
+    def __init__(self, cfg: Dict, uwb: Dict, config_dir: str = '', pos_cfg: Optional[PositioningCfg] = None):
         super().__init__(cfg)
+        self.pos_cfg = pos_cfg or PositioningCfg()
         self.proc, self.pas = cfg.get('procedure') or {}, cfg.get('pass') or {}
         for where, d, keys in (('procedure', self.proc, PROC_KEYS), ('pass', self.pas, PASS_KEYS)):
             miss = [k for k in keys if k not in d]
@@ -136,6 +147,10 @@ class UwbSurveyStep(StepImpl):
         self.configured = wu.anchor_set(uwb, zero_offsets=True).ids      # ValueError if < 3 anchors
         self.config_dir = config_dir
         self.p = {k: float(self.proc[k]) for k in PROC_KEYS}
+        self.offsets_mode = str(self.proc.get('offsets_mode', ''))
+        if self.offsets_mode not in OFFSETS_MODES:
+            raise ConfigError(f'calibration_steps.yaml uwb_survey.procedure.offsets_mode: '
+                              f'{self.offsets_mode!r} (use {" | ".join(OFFSETS_MODES)})')
         self.max_err = float(self.pas['max_verify_error_m'])
         self.min_cov = float(self.pas['min_hdop_coverage'])
         self.need_all = bool(self.pas['all_anchors_seen'])
@@ -208,12 +223,13 @@ class UwbSurveyStep(StepImpl):
         if feed is None:
             return 'No UWB feed in the calibration wizard (node started without it): relaunch calibrate.launch.py.'
         if st in ('offsets', 'verify'):
-            need = [k for k in (('link', 'survey') if st == 'offsets' else ('offsets',))
+            need = [k for k in (('link', 'survey') if st == 'offsets' or not self._offsets_required()
+                                else ('offsets',))
                     if (self.stages[k] or {}).get('status') != 'PASS']
             if need:
                 return f'{LABEL[st]}: pass {" and ".join(LABEL[k] for k in need)} first.'
-            if st == 'offsets' and not self._link_covers():
-                return ('Offsets: the survey has anchors the link check did not listen for '
+            if not self._link_covers():
+                return (f'{LABEL[st]}: the survey has anchors the link check did not listen for '
                         f'({", ".join(self._link_missing())}): run the Link check again.')
             x, y = a['spot']
             bad = spot_ok(self.anchors(), x, y, self.p['min_distance_from_anchor_m'])
@@ -221,7 +237,7 @@ class UwbSurveyStep(StepImpl):
                 return (f'{LABEL[st]}: spot ({x:.2f}, {y:.2f}) is closer than '
                         f'{self.p["min_distance_from_anchor_m"]:g} m to anchor {", ".join(bad)}: pick a spot '
                         'inside the triangle, away from every anchor.')
-            if st == 'verify':
+            if st == 'verify' and self._offsets_done():
                 ox, oy = self.stages['offsets']['spot_m']
                 d = math.hypot(x - ox, y - oy)
                 if d < self.p['min_verify_separation_m']:
@@ -288,7 +304,7 @@ class UwbSurveyStep(StepImpl):
         why, fix = [], []
         if geo['errors']:
             why += geo['errors']
-            fix.append('Correct the numbers (metres, measured from anchor 1782) or move the anchors.')
+            fix.append('Correct the numbers (metres, all in one frame of your choice) or move the anchors.')
         if geo['hdop_coverage'] < self.min_cov:
             why.append(f'position accuracy is good (HDOP <= {self.p["hdop_limit"]:g}) over only '
                        f'{geo["hdop_coverage"] * 100:.0f} % of the {geo["hdop_area"]}')
@@ -357,32 +373,69 @@ class UwbSurveyStep(StepImpl):
                    ('Noisy anchors (multipath?): raise them / clear the line of sight.' if noisy else '')}
 
     def _finish_verify(self, r: Dict) -> None:
+        """Median of Haffiz's FILTERED position (what the car uses) vs the tape spot. The first
+        verify_settle_fixes are skipped while the Kalman filter converges."""
         x, y = r['args']['spot']
-        fx = wu.fixes(self.anchors(offsets=True), r['rows'])
+        with_offsets = self._offsets_done()
+        fx_all = wu.positions(self.anchors(offsets=with_offsets), r['rows'], self.pos_cfg)
+        settle = int(self.p['verify_settle_fixes'])
+        fx = fx_all[settle:] if len(fx_all) > settle else []
         need = int(self.p['min_fixes'])
         if len(fx) < need:
-            self.stages['verify'] = {'status': 'FAIL', 'spot_m': [x, y], 'fixes': len(fx),
-                                     'why': f'only {len(fx)} position fixes (need {need}; every report needs >= 3 anchors)',
+            self.stages['verify'] = {'status': 'FAIL', 'spot_m': [x, y], 'fixes': len(fx), 'with_offsets': with_offsets,
+                                     'why': f'only {len(fx)} position fixes after the first {settle} '
+                                            f'(need {need}; every report needs >= {self.pos_cfg.min_anchors} anchors)',
                                      'fix': 'Check every anchor is seen (Link check), then Verify again.'}
             return
-        mx = statistics.median(p[0] for p in fx)
-        my = statistics.median(p[1] for p in fx)
+        filt = [f.xy for f in fx]
+        raw = [f.raw for f in fx]
+        mx = statistics.median(p[0] for p in filt)
+        my = statistics.median(p[1] for p in filt)
+        rx = statistics.median(p[0] for p in raw)
+        ry = statistics.median(p[1] for p in raw)
         err = math.hypot(mx - x, my - y)
-        jitter, flip = fix_clusters(fx)
+        jitter, flip = fix_clusters(filt)
+        raw_jitter, raw_flip = fix_clusters(raw)
+        gated = sum(1 for f in fx if not f.accepted)
         ok = err <= self.max_err
+        if ok:
+            fix = ''
+        elif not with_offsets:
+            fix = ('No range offsets are applied (Haffiz uses none). If the tape numbers are right, the ranges '
+                   'read long / short (uncalibrated antenna delay, ~1 m before): put the tag at a measured spot and '
+                   'press Measure offsets, then Verify at a different spot.')
+        else:
+            fix = ('Re-check the tape measurements (anchor x, y, height; tag height) and both spots, '
+                   'then redo Offsets and Verify.')
+        if not ok and raw_flip > 0:
+            fix += (f' Raw fixes flip between two clusters {raw_flip * 100:.0f} cm apart (multipath): '
+                    'raise the anchors / clear the line of sight.')
         self.stages['verify'] = {
-            'status': 'PASS' if ok else 'FAIL', 'spot_m': [x, y], 'fixes': len(fx),
+            'status': 'PASS' if ok else 'FAIL', 'spot_m': [x, y], 'fixes': len(fx), 'with_offsets': with_offsets,
+            'method': f'{self.pos_cfg.solver} + {self.pos_cfg.filter}',
             'median_fix_m': [round(mx, 4), round(my, 4)], 'error_m': round(err, 4),
+            'raw_median_m': [round(rx, 4), round(ry, 4)], 'raw_error_m': round(math.hypot(rx - x, ry - y), 4),
             'jitter_m': round(jitter, 4), 'flip_flop_m': round(flip, 4),
-            'why': '' if ok else f'median fix ({mx:.2f}, {my:.2f}) is {err * 100:.1f} cm from the tape spot',
-            'fix': '' if ok else ('Re-check the tape measurements (anchor x, y, height; tag height) and both spots, '
-                                  'then redo Offsets and Verify.' +
-                                  (f' Fixes flip between two clusters {flip * 100:.0f} cm apart (multipath): '
-                                   'raise the anchors / clear the line of sight.' if flip > 0 else ''))}
+            'raw_jitter_m': round(raw_jitter, 4), 'raw_flip_flop_m': round(raw_flip, 4), 'gated': gated,
+            'why': '' if ok else f'median position ({mx:.2f}, {my:.2f}) is {err * 100:.1f} cm from the tape spot',
+            'fix': fix}
+
+    def _offsets_required(self) -> bool:
+        return self.offsets_mode == 'required'
+
+    def _offsets_done(self) -> bool:
+        return (self.stages['offsets'] or {}).get('status') == 'PASS'
 
     # ------------------------------------------------------------------ result
     def _next(self) -> str:
         for k in STAGES:
+            if k == 'offsets' and not self._offsets_required() and not self._offsets_done():
+                v = self.stages['verify'] or {}
+                if v.get('status') == 'PASS':
+                    continue                      # verified without offsets: offsets not needed
+                if v.get('status') == 'FAIL' and not v.get('with_offsets'):
+                    return 'offsets'              # failed without offsets: measure them next
+                continue
             if (self.stages[k] or {}).get('status') != 'PASS':
                 return k
         return '' if self._link_covers() else 'link'
@@ -420,7 +473,10 @@ class UwbSurveyStep(StepImpl):
                                  'anchors do not surround the track well enough',
                                  'Move the anchors so they surround the track, or add a 4th anchor.'))
         of = s['offsets']
-        if of is None:
+        if of is None and not self._offsets_required():
+            checks.append(_check('offsets', LABEL['offsets'], 'not measured (optional: Haffiz uses none)',
+                                 'only if Verify fails', True))
+        elif of is None:
             checks.append(_check('offsets', LABEL['offsets'], 'not run', 'every anchor', False, 'not measured yet',
                                  'Put the tag still on a measured spot and press Measure offsets.'))
         else:
@@ -435,19 +491,22 @@ class UwbSurveyStep(StepImpl):
                                  'not verified yet', 'Move the tag to a different measured spot and press Verify.'))
         else:
             checks.append(_check('verify', LABEL['verify'],
-                                 f'{vf["error_m"] * 100:.1f} cm ({vf["fixes"]} fixes)' if 'error_m' in vf
+                                 f'{vf["error_m"] * 100:.1f} cm ({vf["fixes"]} filtered fixes, '
+                                 f'{"with" if vf.get("with_offsets") else "no"} offsets)' if 'error_m' in vf
                                  else f'{vf["fixes"]} fixes', f'<= {self.max_err * 100:.0f} cm',
                                  vf['status'] == 'PASS', vf['why'], vf['fix']))
         nxt = self._next()
         passed = not nxt
         done = sum(1 for k in STAGES if (s[k] or {}).get('status') == 'PASS')
+        total = len(STAGES) if self._offsets_required() or self._offsets_done() else len(STAGES) - 1
         last = s.get(just) or {}
         if passed:
-            summary = (f'verify error {vf["error_m"] * 100:.1f} cm; offsets ' +
-                       ', '.join(f'{a} {o:+.3f}' for a, o in sorted(self.offsets.items())) + ' m')
-            message = 'All four stages passed: press Save.'
+            summary = (f'verify error {vf["error_m"] * 100:.1f} cm ({vf.get("method", "")}); offsets ' +
+                       (', '.join(f'{a} {o:+.3f}' for a, o in sorted(self.offsets.items())) + ' m'
+                        if self.offsets else 'none (0.0)'))
+            message = 'All stages passed: press Save.'
         else:
-            summary = f'{done} of {len(STAGES)} stages passed; next: {LABEL[nxt]}'
+            summary = f'{done} of {total} stages passed; next: {LABEL[nxt]}'
             if last.get('status') == 'PASS':
                 message = f'{LABEL[just]} passed. Next: {LABEL[nxt]}.'
             else:
@@ -500,6 +559,8 @@ class UwbSurveyStep(StepImpl):
             v = self.stages[k]
             state = ('running' if r and r['stage'] == k else 'pass' if (v or {}).get('status') == 'PASS'
                      else 'fail' if v else 'todo')
+            if k == 'offsets' and state == 'todo' and not self._offsets_required():
+                state = 'optional'
             stages.append({'key': k, 'label': LABEL[k], 'state': state,
                            'why': (v or {}).get('why', ''), 'fix': (v or {}).get('fix', '')})
         geo = (self.stages['survey'] or {}).get('geometry') or self.base_geometry
@@ -513,6 +574,7 @@ class UwbSurveyStep(StepImpl):
             'offset_spot_m': of.get('spot_m'),
             'saved_flags': {'anchors_surveyed': bool(self.base['anchors_surveyed']),
                             'offsets_calibrated': bool(self.base['offsets_calibrated'])},
+            'offsets_mode': self.offsets_mode, 'method': f'{self.pos_cfg.solver} + {self.pos_cfg.filter}',
             'limits': {'min_distance_from_anchor_m': self.p['min_distance_from_anchor_m'],
                        'min_verify_separation_m': self.p['min_verify_separation_m'],
                        'max_verify_error_m': self.max_err, 'max_spread_m': self.p['max_spread_m'],
@@ -524,7 +586,7 @@ class UwbSurveyStep(StepImpl):
     def save_data(self, session: str, res: Dict) -> List[str]:
         upd = res.get('uwb')
         if not res.get('passed') or not upd:
-            raise StepRefused('Nothing to save: all four stages must pass first.')
+            raise StepRefused('Nothing to save: link, survey and verify must pass first.')
         return [ct.merge_data(session, 'uwb.yaml', self.base, upd)]
 
     def keep_data(self, src_session: str, session: str) -> List[str]:

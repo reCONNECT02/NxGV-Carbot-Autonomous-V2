@@ -1298,8 +1298,9 @@ STEP_PAGES.uwb_survey = (st, live) => {
   const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
   /* what to do: the YAML instructions, ticked off by the stage that covers them */
   const done = k => S[k] && S[k].state === 'pass';
-  /* instructions 0-4 = layout / survey / tag (form), 5 = OFFSETS, 6 = VERIFY */
-  let stage = saved ? ins.length : done('verify') ? ins.length - 1 : done('offsets') ? 6 : done('survey') ? 5 : 0;
+  /* instructions 0-4 = layout / survey / tag (form), 5 = VERIFY, 6 = OFFSETS (Haffiz: only if verify fails) */
+  const vfail = S.verify && S.verify.state === 'fail' && lv.next === 'offsets';
+  let stage = saved || done('verify') ? ins.length : vfail ? 6 : done('survey') ? 5 : 0;
   stage = Math.min(stage, ins.length);
   const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
 
@@ -1321,13 +1322,16 @@ STEP_PAGES.uwb_survey = (st, live) => {
   const box = (k, n, body) => `<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px"><b>${n}. ${Cal.esc(S[k] ? S[k].label : k)}</b> ` +
     `${S[k] ? `<span class="chip ${S[k].state === 'pass' ? 'ok' : S[k].state === 'fail' ? 'bad' : S[k].state === 'running' ? 'blue' : 'grey'}">${Cal.esc(S[k].state)}</span>` : ''}<div class="ctl" style="margin-top:6px">${body}</div></div>`;
   const ctl = box('link', 1, btn('link', 'Link check', `Listens ${lim.link_check_s || 5} s: every anchor must be heard`, nxt === 'link')) +
-    box('survey', 2, `<p class="muted" style="margin:0;font-size:12px">Tape-measured antenna positions in METRES from anchor 1782 (+x towards 1786, +y towards 1783); z = height above the floor. ` +
+    box('survey', 2, `<p class="muted" style="margin:0;font-size:12px">Tape-measured antenna positions in METRES, all in ONE frame of your choice (Haffiz's layout: 1786 (−2.5, 0), 1782 (6.0, −0.6), 1783 (2.5, 8.0)); z = height above the floor. ` +
       'Leave the last row empty unless you add a 4th anchor (its id must also be in RangeProtocol.h).</p>' +
       `<table class="calcheck uwbform"><tr><th>Anchor</th><th>x</th><th>y</th><th>height</th></tr>${rows}</table>` +
       `<div class="row"><label>Tag height (m)${inp('data-uwb-tag="z"', tag.z_m)}</label><label>Tag fwd of rear axle (m)${inp('data-uwb-tag="fwd"', mxy[0])}</label>` +
       `<label>Tag left (m)${inp('data-uwb-tag="left"', mxy[1])}</label></div>` + btn('survey', 'Save survey', 'Checks spacing, angles and accuracy coverage (instant)', nxt === 'survey')) +
-    box('offsets', 3, spot('offsets', lv.offset_spot_m) + btn('offsets', 'Measure offsets', `Tag STILL at this spot, > ${lim.min_distance_from_anchor_m || 1} m from every anchor, ${lim.seconds || 20} s`, nxt === 'offsets')) +
-    box('verify', 4, spot('verify', lv.verify && lv.verify.spot_m) + btn('verify', 'Verify', `A different spot (>= ${lim.min_verify_separation_m || 0.5} m away), ${lim.seconds || 20} s, error <= ${D.f((lim.max_verify_error_m || 0.15) * 100, 0)} cm`, nxt === 'verify'));
+    box('verify', 3, `<p class="muted" style="margin:0;font-size:12px">Uses Haffiz's filtered position (${Cal.esc(lv.method || 'linear + cv_kf')}), the one the car uses.</p>` +
+      spot('verify', lv.verify && lv.verify.spot_m) + btn('verify', 'Verify', `Tag STILL at a measured spot, > ${lim.min_distance_from_anchor_m || 1} m from every anchor, ${lim.seconds || 20} s, error <= ${D.f((lim.max_verify_error_m || 0.15) * 100, 0)} cm` +
+      (S.offsets && S.offsets.state === 'pass' ? ` (>= ${lim.min_verify_separation_m || 0.5} m from the offset spot)` : ''), nxt === 'verify')) +
+    box('offsets', 4, `<p class="muted" style="margin:0;font-size:12px">${lv.offsets_mode === 'required' ? 'Required (offsets_mode: required).' : 'OPTIONAL: only if Verify fails because every range reads long / short. Then Verify again at a different spot.'}</p>` +
+      spot('offsets', lv.offset_spot_m) + btn('offsets', 'Measure offsets', `Tag STILL at this spot, > ${lim.min_distance_from_anchor_m || 1} m from every anchor, ${lim.seconds || 20} s`, nxt === 'offsets'));
 
   /* live: feed, per-anchor table, geometry, stage why/fix */
   const feed = lv.feed;
@@ -1360,7 +1364,9 @@ STEP_PAGES.uwb_survey = (st, live) => {
   const vf = lv.verify;
   if (vf && vf.error_m != null) {
     h += `<div class="panel"><h3>Verify</h3><div class="kv"><span>Tape spot</span><b>${D.f(vf.spot_m[0], 2)}, ${D.f(vf.spot_m[1], 2)}</b>` +
-      `<span>Median fix</span><b>${D.f(vf.median_fix_m[0], 2)}, ${D.f(vf.median_fix_m[1], 2)}</b>` +
+      `<span>Median position (filtered)</span><b>${D.f(vf.median_fix_m[0], 2)}, ${D.f(vf.median_fix_m[1], 2)}</b>` +
+      (vf.raw_median_m ? `<span>Median raw solve</span><b>${D.f(vf.raw_median_m[0], 2)}, ${D.f(vf.raw_median_m[1], 2)} <span class="muted">(${D.f(vf.raw_error_m * 100, 1)} cm)</span></b>` : '') +
+      `<span>Method</span><b>${Cal.esc(vf.method || '')}, ${vf.with_offsets ? 'with offsets' : 'no offsets'}${vf.gated ? `, ${vf.gated} gated` : ''}</b>` +
       `<span>Error</span><b class="${vf.status === 'PASS' ? 'ok-t' : 'bad-t'}">${D.f(vf.error_m * 100, 1)} cm (limit ${D.f((lim.max_verify_error_m || 0.15) * 100, 0)})</b>` +
       `<span>Jitter</span><b>${D.f(vf.jitter_m * 100, 1)} cm</b><span>Flip-flop</span><b>${vf.flip_flop_m > 0 ? D.f(vf.flip_flop_m * 100, 0) + ' cm (multipath)' : 'none'}</b></div></div>`;
   }
@@ -1379,6 +1385,7 @@ STEP_PAGES.uwb_survey = (st, live) => {
 /* ---- step 11: map-to-UWB alignment. Lap (Start lap / Stop lap) or points (one named map pose per
  *      Record point). The fit, fixes and anchors are drawn on the track map (out.map). */
 STEP_ARGS.map_uwb_alignment = (el, b) => {
+  if (b.dataset.mode === 'uwb_lap') return { arg: { mode: 'uwb_lap' } };
   if (b.dataset.mode === 'lap') return { arg: { mode: 'lap' } };
   const s = el.querySelector('[data-uwb11="pose"]');
   const pose = s ? String(s.value || '') : '';
@@ -1396,8 +1403,9 @@ STEP_PAGES.map_uwb_alignment = st => {
   const modes = lv.modes || ['lap', 'points'];
   const ins = Cal.list(st.meta.instructions);
   const saved = st.saved_status && !st.unsaved && ['PASS', 'KEPT_PREVIOUS'].includes(st.status);
-  /* instructions: 0 needs, 1 lap, 2 points, 3 check */
-  let stage = saved ? ins.length : st.status === 'PASS' ? 3 : !lv.ready ? 0 : (run && run.mode === 'points') || (lv.points || []).length ? 2 : 1;
+  /* instructions: 0 needs, 1 UWB lap, 2 odometry lap / points, 3 check */
+  let stage = saved ? ins.length : st.status === 'PASS' ? 3 : !lv.ready ? 0 :
+    (run && run.mode !== 'uwb_lap') || (lv.points || []).length ? 2 : 1;
   stage = Math.min(stage, ins.length);
   const todo = Cal.todo(ins.map((t, i) => [t, i < stage ? 'done' : i === stage ? 'now' : 'todo', st.status === 'FAIL' && i === stage]));
 
@@ -1406,8 +1414,14 @@ STEP_PAGES.map_uwb_alignment = st => {
   const off = !lv.ready || running ? 'disabled' : '';
   let ctl = '';
   if (!lv.ready) ctl += `<div class="alert bad"><b class="t">Step 10 is not saved in this session</b>${Cal.esc(lv.blocked)} <button class="btn" data-go="cal-10">Go to step 10</button></div>`;
+  const stopBtn = `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'stop' }))}">Stop lap<small>after one full slow lap (at least ${D.f(lim.lap_min_s, 0)} s)</small></button>`;
+  if (modes.includes('uwb_lap')) {
+    ctl += `<h4 style="margin:6px 0">UWB lap (best · Haffiz position + map builder fit)</h4>` + (running && run && run.mode === 'uwb_lap'
+      ? (run.fitting ? '<span class="muted">Fitting the map onto the lap…</span>' : stopBtn)
+      : `<button class="btn primary" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="uwb_lap" ${off}>Start UWB lap<small>start anywhere; walk the car once around the whole track</small></button>`);
+  }
   if (modes.includes('lap')) {
-    ctl += '<h4 style="margin:6px 0">Lap (best)</h4>' + (running && run && run.mode === 'lap'
+    ctl += '<h4 style="margin:12px 0 6px">Odometry lap (fallback)</h4>' + (running && run && run.mode === 'lap'
       ? `<button class="btn primary" data-act="STEP" data-arg="${Cal.esc(JSON.stringify({ op: 'stop' }))}">Stop lap<small>after one full slow lap (at least ${D.f(lim.lap_min_s, 0)} s)</small></button>`
       : `<button class="btn primary" data-act="${act}" data-argfrom="map_uwb_alignment" data-mode="lap" ${off}>Start lap<small>car EXACTLY on the start pose, facing west</small></button>`);
   }
@@ -1446,7 +1460,17 @@ STEP_PAGES.map_uwb_alignment = st => {
         `<span>Fix vs map pose</span><b class="${run.fix_error_m != null && run.fix_error_m > lim.inlier_m ? 'warn-t' : ''}">${run.fix_error_m == null ? '—' : D.f(run.fix_error_m * 100, 0) + ' cm'} <span class="muted">${Cal.esc(run.fix_frame || '')}</span></b></div></div>`;
     }
   }
-  if (fit) {
+  if (run && run.mode === 'uwb_lap') {
+    h += `<div class="panel"><h3>UWB lap so far</h3><div class="kv"><span>Tag reports</span><b>${run.reports}${run.lost ? ` <span class="bad-t">(${run.lost} lost)</span>` : ''}</b>` +
+      `<span>Haffiz position (venue)</span><b>${run.uwb_xy ? run.uwb_xy.map(v => D.f(v, 2)).join(', ') : '—'}</b>` +
+      `<span>Speed</span><b class="${run.speed_mps != null && run.speed_mps < lim.uwb_lap_min_speed_mps ? 'warn-t' : ''}">${run.speed_mps == null ? '—' : D.f(run.speed_mps, 2) + ' m/s'} <span class="muted">(below ${D.f(lim.uwb_lap_min_speed_mps, 2)} is not recorded)</span></b></div></div>`;
+  }
+  if (fit && fit.sections_fitted) {
+    h += `<div class="panel"><h3>Map builder fit</h3><div class="kv"><span>track → venue</span><b>x ${D.f(fit.x_m, 3)} m, y ${D.f(fit.y_m, 3)} m, yaw ${D.f(fit.yaw_deg, 2)}°</b>` +
+      `<span>Lap vs map RMS</span><b class="${fit.rms_m <= lim.uwb_lap_max_rms_m ? 'ok-t' : 'bad-t'}">${D.f(fit.rms_m * 100, 1)} cm <span class="muted">(limit ${D.f(lim.uwb_lap_max_rms_m * 100, 0)})</span></b>` +
+      `<span>Lap points on the map</span><b class="${fit.inlier_frac >= lim.uwb_lap_min_inlier_frac ? 'ok-t' : 'bad-t'}">${D.f(fit.inlier_frac * 100, 0)} % of ${fit.ranges}</b>` +
+      `<span>Sections driven</span><b class="${fit.sections_fitted.length >= lim.uwb_lap_min_sections ? 'ok-t' : 'bad-t'}">${fit.sections_fitted.length} <span class="muted">(${Cal.esc(fit.sections_fitted.join(', '))})</span></b></div></div>`;
+  } else if (fit) {
     h += `<div class="panel"><h3>${run ? 'Fit so far' : 'Last fit'}</h3><div class="kv"><span>track → venue</span><b>x ${D.f(fit.x_m, 3)} m, y ${D.f(fit.y_m, 3)} m, yaw ${D.f(fit.yaw_deg, 2)}°</b>` +
       `<span>Range RMS</span><b class="${fit.rms_m <= lim.max_rms_m ? 'ok-t' : 'bad-t'}">${D.f(fit.rms_m * 100, 1)} cm <span class="muted">(limit ${D.f(lim.max_rms_m * 100, 0)})</span></b>` +
       `<span>Inliers</span><b class="${fit.inlier_frac >= lim.min_inlier_frac ? 'ok-t' : 'bad-t'}">${D.f(fit.inlier_frac * 100, 0)} % of ${fit.ranges} <span class="muted">(min ${D.f(lim.min_inlier_frac * 100, 0)})</span></b></div></div>`;
@@ -1457,7 +1481,7 @@ STEP_PAGES.map_uwb_alignment = st => {
   const map = { label: run ? 'Track map · live' : 'Track map · UWB fixes moved with the fitted transform',
     path: ov.path, fixes: ov.fixes, anchors: ov.anchors, poses: ov.poses || lv.poses, points: ov.points,
     car: run && run.pose, fix: run && run.fix_xy,
-    legend: '<span><i style="background:var(--lane)"></i>Car path (odometry)</span><span><i style="background:var(--ok)"></i>UWB fixes</span>' +
+    legend: '<span><i style="background:var(--lane)"></i>Car path (odometry)</span><span><i style="background:var(--ok)"></i>UWB positions (Haffiz, moved with the fit)</span>' +
       '<span><i style="background:var(--warn)"></i>Anchors</span><span><i style="background:var(--muted)"></i>Named poses</span>' };
 
   let result = (st.message ? `<p class="muted" style="margin:0 0 10px">${Cal.esc(st.message)}</p>` : '');

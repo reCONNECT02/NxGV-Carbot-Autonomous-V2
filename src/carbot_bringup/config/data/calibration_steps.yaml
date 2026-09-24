@@ -312,28 +312,33 @@ steps:
              uwb.yaml offsets_calibrated]
     need: Step 1 passed (UWB tag and every anchor seen). Tape measure; the tag on the car or on a stand.
     # Wizard page (phase 8, page 10): RUN argument JSON {"stage": "link" | "survey" | "offsets" |
-    # "verify", ...}; one stage per Run, the step passes once all four passed. Same math as
-    # calib_uwb (raw tag JSON, offset = median(raw 3-D range) - tape 3-D distance).
+    # "verify", ...}; one stage per Run. Haffiz switch: the position is his solver + CV Kalman
+    # filter (common.yaml uwb_positioning); offsets are OPTIONAL (offsets_mode) because his method
+    # uses none. Pass = link + survey + verify (+ offsets when offsets_mode is required).
     instructions:
-      - "LAYOUT: spread the anchors 2-7 m apart in a triangle around the track (current
-         layout: 1782 (0, 0), 1786 (7.50, 0), 1783 (7.50, 4.83), metres). Never nearly in a line."
+      - "LAYOUT: spread the anchors 2-8 m apart in a triangle around the track, never nearly in a
+         line. Haffiz's tested layout (metres): 1786 (-2.5, 0), 1782 (6.0, -0.6), 1783 (2.5, 8.0)."
       - "HEIGHT: raise every anchor to 1.0-1.5 m on a stand with clear line of sight to the whole
          track. Anchors on the floor cause the ~25 cm flip-flop seen in testing."
-      - "4th ANCHOR (optional, covers the corner at (0, 4.83) outside the triangle): add its ID to
-         ANCHOR_IDS and set ANCHOR_COUNT 4 in firmware/uwb_tag/TagMicroROS/RangeProtocol.h,
-         re-flash the tag, then add it when the tool asks for anchors."
-      - "SURVEY: tape-measure every anchor antenna (x, y, height) in METRES from anchor 1782,
-         +x towards 1786, +y from 1786 towards 1783. Enter them on this page (the terminal tool asks for them)."
+      - "4th ANCHOR (optional): add its ID to ANCHOR_IDS and set ANCHOR_COUNT 4 in
+         firmware/uwb_tag/TagMicroROS/RangeProtocol.h, re-flash the tag, then add it in the survey."
+      - "SURVEY: tape-measure every anchor antenna (x, y, height) in METRES, all in ONE frame of your
+         choice (Haffiz's, or origin at one anchor). Step 11 lines the map up with this frame."
       - "TAG: measure the tag antenna on the car: height above the floor, and its position from
          the rear-axle centre (forward +x, left +y)."
-      - "OFFSETS: put the tag still at a tape-measured spot inside the triangle, more than 1 m from
-         every anchor, antenna as on the car, nobody in the line of sight (20 s)."
-      - "VERIFY: move it to a DIFFERENT measured spot (20 s). The corrected fix must be within 15 cm."
+      - "VERIFY: tag still at a tape-measured spot inside the triangle, more than 1 m from every anchor,
+         antenna as on the car, nobody in the line of sight (20 s). The filtered position must be within
+         15 cm. Pass = done: no offsets needed."
+      - "OFFSETS (only if Verify fails because every range reads long / short): measure offsets at one
+         spot, then Verify again at a DIFFERENT spot."
     procedure: {tool: tools/uwb/uwb_calib.py method (calib_uwb), seconds: 20, min_distance_from_anchor_m: 1.0,
                 verify_spot: true, link_check_s: 5, min_samples: 20, min_spacing_m: 2.0,
                 min_triangle_angle_deg: 25.0, hdop_limit: 2.0, max_spread_m: 0.08,
                 # wizard page only (phase 8)
-                min_verify_separation_m: 0.5, min_fixes: 10, max_extent_m: 30.0}
+                min_verify_separation_m: 0.5, min_fixes: 10, max_extent_m: 30.0,
+                # Haffiz switch
+                offsets_mode: optional,       # optional (no offsets unless verify fails) | required (old order)
+                verify_settle_fixes: 10}      # verify skips the first fixes while the Kalman filter settles
     pass: {max_verify_error_m: 0.15, all_anchors_seen: true, min_hdop_coverage: 0.9}
   - index: 11
     id: map_uwb_alignment
@@ -342,24 +347,35 @@ steps:
     tab: map
     tool: ros2 run carbot_localization calib_map_uwb
     writes: [uwb.yaml track_to_venue]
+    # Haffiz switch: new default mode uwb_lap = his filtered UWB position, recorded for one lap
+    # and fitted with tools/map/map_builder.py fit_rigid (no odometry, no exact start pose).
+    # track_map.yaml is not rewritten, so mission.yaml (step 12) stays valid.
     instructions:
-      - Needs steps 4, 6 and 10 done (block 05 must hold the lane; UWB offsets applied).
-      - "LAP (best): put the car on the map start pose (bottom-right lane, facing west), press
-         Start lap (terminal: Enter), then push or drive it SLOWLY once around the whole track and
-         press Stop lap (Enter)."
-      - "POINTS (quick, competition day): park the car on 2 or more known map poses far apart
-         (start, traffic-light stop, ...) for 10 s each."
-      - The fit uses every range directly; check the RMS and that the planned route overlays the
-        track on the Global map tab.
-    procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [lap, points], lap_min_s: 40,
+      - Needs step 10 saved (anchors surveyed, verify passed). UWB lap needs NO odometry and NO start pose.
+      - "UWB LAP (best): press Start UWB lap, push or drive the car SLOWLY (walking pace) once around
+         the WHOLE track in the middle of the lane, through the roundabout and the tunnel corner, then
+         press Stop lap. The map is fitted onto the lap with the team's map builder."
+      - "ODOMETRY LAP / POINTS (fallbacks): Start lap needs the car EXACTLY on the start pose and steps 4
+         and 6; Points = park on 2+ known map poses far apart for 10 s each."
+      - Check the green lap lies on the road on the map below, then Save. If the road shape itself is off,
+        fix it with map_builder.py edit captures/step11_uwb_lap.csv, then redo steps 11 and 12.
+    procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [uwb_lap, lap, points], lap_min_s: 40,
                 min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2,
                 # wizard page (phase 8 page 11); the terminal tool ignores these
                 points_min_extent_m: 1.5,     # points mode: poses must span this (was hard-coded in calib_map_uwb)
                 lap_max_s: 300,               # lap recording ends by itself after this
                 max_input_age_s: 1.0,         # /odom and /imu/rpy older than this = lap refused / failed
                 live_fit_period_s: 2.0,       # running fit shown while the lap is recorded
-                overlay_max_points: 400}      # fixes / path points sent to the GUI map overlay
-    pass: {max_rms_m: 0.20, min_inlier_frac: 0.8}
+                overlay_max_points: 400,      # fixes / path points sent to the GUI map overlay
+                # Haffiz switch: uwb_lap mode
+                uwb_lap_min_speed_mps: 0.05,  # slower fixes are dropped (no heading for the tag -> rear-axle shift)
+                uwb_lap_min_points: 100,      # moving positions needed for a fit (~10 s at 10 Hz)
+                uwb_lap_init: none,           # none = search everywhere | map = start from track_map.yaml venue_transform
+                map_tools_dir: tools/map}     # map_builder.py; relative = in the repo checkout ($CARBOT_REPO)
+    pass: {max_rms_m: 0.20, min_inlier_frac: 0.8,
+           uwb_lap_max_rms_m: 0.15,           # lap vs fitted map centrelines (lane wander + UWB error)
+           uwb_lap_min_inlier_frac: 0.8,      # lap points within map_builder icp_reject_m of a centreline
+           uwb_lap_min_sections: 5}           # map sections the lap drove through (else the fit can slide)
   # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
   # on the saved map. Page 12 built: required (BACKLOG #20).
   - index: 12

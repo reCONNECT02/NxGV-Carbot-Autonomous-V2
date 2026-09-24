@@ -1,0 +1,24 @@
+source /opt/ros/jazzy/setup.bash (change the jazzy to your ros version)
+source ~/microros_ws/install/local_setup.bash
+ros2 run micro_ros_agent micro_ros_agent udp4 10.244.217.167 --port 8888
+
+source /opt/ros/jazzy/setup.bash (change the jazzy to your ros version)
+export ROS_LOCALHOST_ONLY=0
+export ROS_DOMAIN_ID=1
+ros2 daemon stop
+ros2 topic echo /uwb3/input_json --full-length
+
+subscriber setup
+source /opt/ros/jazzy/setup.bash (change the jazzy to your ros version)
+export ROS_DOMAIN_ID=1
+python3 /home/kuk1/Documents/UWB/ros2_uwb_subscriber.py
+
+rviz setup
+source /opt/ros/jazzy/setup.bash (change the jazzy to your ros version)
+ros2 run rviz2 rviz2
+
+
+turtle setup
+source /opt/ros/jazzy/setup.bash (change the jazzy to your ros version)
+export ROS_DOMAIN_ID=1
+python3 /home/kuk1/Documents/UWB/turtle_uwb_visualizer.py

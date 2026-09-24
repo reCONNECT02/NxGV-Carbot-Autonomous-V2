@@ -151,7 +151,7 @@ def test_repo_yaml_builds_and_writes_list_matches():
     step = MapUwbAlignmentStep(STEP11, UWB, CONFIG_DIR, MotionRecorder(), lambda: None)
     assert [w.replace('uwb.yaml ', '') for w in STEP11['writes']] == list(WRITES)
     assert {'start_pose', 'light_goal_pose'} <= set(step.poses)
-    assert step.modes == ['lap', 'points']
+    assert step.modes == ['uwb_lap', 'lap', 'points']          # Haffiz UWB lap first
 
 
 @pytest.mark.parametrize('where,key', [('procedure', 'lap_min_s'), ('procedure', 'huber_m'),
@@ -385,3 +385,90 @@ def test_keep_previous_refused_without_alignment(tmp_path):
     cs.write_yaml(str(src / 'data' / 'uwb.yaml'), step10_doc())      # aligned false
     with pytest.raises(wc.StepRefused, match='aligned false'):
         rig.step.keep_data(str(src), rig.wiz.session)
+
+
+# ---------------------------------------------------------------- Haffiz switch: UWB lap mode
+ORDER = ['start_lane', 'lane_change', 'roundabout_east', 'roundabout', 'gate_approach', 'tunnel_corner',
+         'left_straight', 'top_left', 'top_straight', 'top_right', 'right_straight', 'bottom_right']
+
+
+def map_path(step_m=0.03):
+    """Rear-axle path along the repo map's centrelines (track frame) + heading."""
+    import numpy as np
+    from carbot_common.map_geometry import template_from_yaml
+    from carbot_ops.step_map_uwb_alignment import load_map_builder
+    mb = load_map_builder('tools/map', CONFIG_DIR)
+    tpl = template_from_yaml(yaml.safe_load(open(os.path.join(DATA, 'track_map.yaml'))))
+    lines = mb.centrelines(tpl, step_m)
+    pts = np.vstack([lines[n] for n in ORDER if n in lines])
+    d = np.diff(pts, axis=0)
+    keep = np.hypot(d[:, 0], d[:, 1]) > 1e-4
+    pts = pts[1:][keep]
+    d = d[keep]
+    return [(float(p[0]), float(p[1]), float(math.atan2(v[1], v[0]))) for p, v in zip(pts, d)]
+
+
+def run_uwb_lap(rig, path, stop=True):
+    r = rig.do('RUN', json.dumps({'mode': 'uwb_lap'}))
+    assert r['ok'], r
+    for k, (x, y, a) in enumerate(path):                     # 0.3 m/s: 3 cm per 0.1 s report
+        rig.clock.t += 0.1
+        tx, ty = tag_position((x, y, a), tuple(TAG['mount_xy_m']))
+        rig.tag.xy = list(to_venue(tx, ty))
+        rig.feed.add(rig.tag.report())
+        if k % 5 == 0:
+            assert rig.wiz.tick(rig.inputs()) is None
+    if stop:
+        assert rig.do('STEP', json.dumps({'op': 'stop'}))['ok']
+    import time as _t
+    for _ in range(600):
+        rig.clock.t += 0.2
+        done = rig.wiz.tick(rig.inputs())
+        if done:
+            return done
+        _t.sleep(0.05)
+    raise AssertionError('uwb lap fit never finished')
+
+
+def test_uwb_lap_finds_the_alignment_without_odometry(tmp_path):
+    pytest.importorskip('cv2')
+    rig = Rig(tmp_path)
+    rig.write_step10(step10_doc(bias={a: 0.0 for a in TRUE}))    # Haffiz: calibrated, no offsets
+    rig.tag.bias = {}
+    rig.motion = None                                           # no /odom, no /imu/rpy at all
+    rig.step.rec = MotionRecorder()
+    done = run_uwb_lap(rig, map_path())
+    assert done.status == 'PASS', done.result
+    f = done.result['fit']
+    assert f['x_m'] == pytest.approx(T2V['x_m'], abs=0.04)
+    assert f['y_m'] == pytest.approx(T2V['y_m'], abs=0.04)
+    assert f['yaw_deg'] == pytest.approx(T2V['yaw_deg'], abs=0.6)
+    assert f['rms_m'] < 0.05 and done.result['capture']['method'] == 'linear + cv_kf'
+    r = rig.do('SAVE')
+    assert r['ok'], r
+    saved = session_uwb(rig.wiz)
+    assert saved['track_to_venue']['aligned'] is True
+    lap_csv = os.path.join(rig.wiz.session, 'captures', 'step11_uwb_lap.csv')
+    assert os.path.isfile(lap_csv) and sum(1 for _ in open(lap_csv)) > 500
+
+
+def test_uwb_lap_too_short_fails_with_reason(tmp_path):
+    pytest.importorskip('cv2')
+    rig = Rig(tmp_path)
+    rig.write_step10(step10_doc(bias={a: 0.0 for a in TRUE}))
+    rig.tag.bias = {}
+    done = run_uwb_lap(rig, map_path()[:60])
+    assert done.status == 'FAIL'
+    whys = ' '.join(c['why'] for c in done.result['checks'] if not c['passed'])
+    assert 'too fast or cut short' in whys and 'moving UWB positions' in whys
+
+
+def test_uwb_lap_standing_still_gives_no_points():
+    from carbot_ops.step_map_uwb_alignment import uwb_lap_points
+    from uwb_localization.positioning import Fix
+    still = [Fix(0.1 * k, (1.0, 1.0), (1.0, 1.0), (0.01, 0, 0.01), (0.0, 0.0), True, 3) for k in range(20)]
+    moving = [Fix(0.1 * k, (1.0, 1.0), (1.0 + 0.03 * k, 1.0), (0.01, 0, 0.01), (0.3, 0.0), True, 3)
+              for k in range(20)]
+    lap, dropped = uwb_lap_points(still + moving, (0.12, 0.0), 0.05)
+    assert dropped == 20 and len(lap) == 20
+    assert lap[0][0] == pytest.approx(1.0 - 0.12)               # tag -> rear axle, heading east

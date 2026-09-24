@@ -216,6 +216,7 @@ class Mock:
             if name == 'loc':
                 out['local_ellipse'] = [0.02, 0.012, 0.3]
                 out['raw'] = [x + 0.08, y + 0.05]
+                out['uwb_pos'] = [x + 0.03, y + 0.02, [0.09, 0.06, 0.4], 0.15]     # Haffiz filtered position
                 out['anchors'] = [{'id': aid, 'x': ax, 'y': ay, 'offset': 0.92, 'raw': math.hypot(ax - x, ay - y) + 0.92,
                                    'corr': math.hypot(ax - x, ay - y), 'fresh': True, 'gated': aid == '1783',
                                    'seen': True, 'age': 0.08, 'fresh_count': 1200} for aid, ax, ay in ANCHORS]
@@ -226,7 +227,8 @@ class Mock:
                               'uwb_gain': 0.18, 'uwb_accepted': 1284, 'uwb_rejected': 67, 'uwb_reacquires': 0,
                               'visual_updates': 412, 'imu_ok': True}
                 out['trails'] = {'local': out['trail'], 'global': [[p[0] + 0.03, p[1] - 0.02] for p in out['trail']],
-                                 'raw': [[p[0] + 0.07 * math.sin(k), p[1] + 0.06 * math.cos(k)] for k, p in enumerate(out['trail'])]}
+                                 'raw': [[p[0] + 0.07 * math.sin(k), p[1] + 0.06 * math.cos(k)] for k, p in enumerate(out['trail'])],
+                                 'uwb': [[p[0] + 0.02 * math.sin(k / 3), p[1] + 0.02] for k, p in enumerate(out['trail'])]}
                 out['aligned'] = True
             return out
         if name == 'percplan':
@@ -374,7 +376,7 @@ class MockCar:
         in self.lap['hist'] so the fake UWB tag reports from where the car really is."""
         h = self.hand11
         run = h.run if h is not None else None
-        if run is None or run['mode'] != 'lap':
+        if run is None or run['mode'] not in ('lap', 'uwb_lap'):
             return None
         if self.lap is None or self.lap['run'] is not run:
             p = h.poses['start_pose']
@@ -770,7 +772,7 @@ class MockWizard:
             arg = json.loads(str(body.get('argument', '')) or '{}')
             if a in ('RUN', 'REDO') and arg.get('mode') == 'points':      # step 11: car parked on the pose
                 self.parked = self.step11.poses.get(str(arg.get('pose')))
-            elif a in ('RUN', 'REDO') and arg.get('mode') == 'lap':
+            elif a in ('RUN', 'REDO') and arg.get('mode') in ('lap', 'uwb_lap'):
                 self.parked = None
         except (ValueError, AttributeError, TypeError, IndexError):
             pass

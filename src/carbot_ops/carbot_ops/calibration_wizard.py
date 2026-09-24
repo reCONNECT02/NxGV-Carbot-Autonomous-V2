@@ -70,6 +70,7 @@ from .step_sensor_health import SensorHealthStep
 from .step_venue_thresholds import VenueThresholdsStep
 from .step_speed_pid import SpeedPidStep
 from .step_uwb_survey import UwbSurveyStep
+from uwb_localization.positioning import PositioningCfg
 from .wizard_core import StepImpl, Wizard
 
 REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibration_steps', 'data.cameras',
@@ -170,6 +171,8 @@ class CalibrationWizard(CarbotNode):
         self.servo = ServoLink(self, timeout_s=float(self.p('servo_param_timeout_s')))
         self.owner = ServoLink(self, 'command_owner', timeout_s=float(self.p('servo_param_timeout_s')))
         self.drive = DriveRequests(self, float(self.p('drive_request_hz')))
+        # Haffiz UWB position, common.yaml `/**` uwb_positioning (same as the uwb_ranges node)
+        pos_cfg = PositioningCfg.from_dict(self.params_under('uwb_positioning'))
         # one line per built step page (step id -> StepImpl); every other step is a placeholder
         factories = {
             'sensor_health': lambda s: SensorHealthStep(s, cameras, uwb),
@@ -185,9 +188,10 @@ class CalibrationWizard(CarbotNode):
             'mission_planner': lambda s: MissionPlannerStep(s, ct.bringup_config_dir(),
                                                             lambda: self.wiz.session if self.wiz else None),
             'practice_runs': lambda s: PracticeRunsStep(s, load_data(self, 'challenges')),
-            'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir()),
+            'uwb_survey': lambda s: UwbSurveyStep(s, uwb, ct.bringup_config_dir(), pos_cfg),
             'map_uwb_alignment': lambda s: MapUwbAlignmentStep(s, uwb, ct.bringup_config_dir(), self.motion,
-                                                               lambda: self.wiz.session if self.wiz else None),
+                                                               lambda: self.wiz.session if self.wiz else None,
+                                                               pos_cfg=pos_cfg),
             'lidar_camera': lambda s: LidarCameraStep(s, cameras, self._session_cameras, self._laser_mount),
         }
         impls = {}

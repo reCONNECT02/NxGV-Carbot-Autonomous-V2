@@ -35,6 +35,15 @@ tag:
 # UWB_Handoff.md section 10 gives the layout in cm; stored here in METRES.
 # range_offset_m = median(measured - true) from tools/uwb/uwb_calib.py (step 10),
 # subtracted from every raw range. 0.0 = NOT calibrated (raw ranges read ~1 m long).
+#
+# Haffiz switch: the position is his solver + CV Kalman filter (common.yaml uwb_positioning).
+# Any frame in metres works (step 11 fits the map onto it). His tested layout, if the
+# anchors stand where he measured them, is (heights: measure them):
+#   - {id: "1786", xyz_m: [-2.50,  0.00, 0.00], range_offset_m: 0.0}
+#   - {id: "1782", xyz_m: [ 6.00, -0.60, 0.00], range_offset_m: 0.0}
+#   - {id: "1783", xyz_m: [ 2.50,  8.00, 0.00], range_offset_m: 0.0}
+# Step 10 (survey) writes the real one into the calibration session; offsets are
+# optional there (his method uses none; measure them only if Verify fails).
 anchors:
   - {id: "1782", xyz_m: [0.00, 0.00, 0.00], range_offset_m: 0.0}
   - {id: "1786", xyz_m: [7.50, 0.00, 0.00], range_offset_m: 0.0}

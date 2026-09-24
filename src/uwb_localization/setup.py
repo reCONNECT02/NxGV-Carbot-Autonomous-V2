@@ -14,13 +14,14 @@ setup(
     zip_safe=True,
     maintainer='RISA team',
     maintainer_email='risabot@todo.todo',
-    description='Parses the micro-ROS UWB tag JSON (/uwb3/input_json) into per-anchor ranges for block 06. UWB never reaches the servo.',
+    description='micro-ROS UWB tag JSON -> ranges + Haffiz position (solver + CV Kalman filter) for block 06. UWB never reaches the servo.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'uwb_ranges = uwb_localization.uwb_ranges:main',
             'calib_uwb = uwb_localization.calib_uwb:main',                  # step 10
+            'record_lap = uwb_localization.record_lap:main',                # lap.csv for map_builder.py
         ],
     },
 )

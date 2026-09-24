@@ -22,7 +22,9 @@ Step side (inputs[INPUT_KEY] is a UwbFeed, or None when the node has none):
 
 Helpers: session_uwb(session, base_doc) (this session's data/uwb.yaml, i.e. what
 step 10 saved, else the launch's doc), anchor_set(doc, zero_offsets),
-fresh_samples(rows), fixes(anchors, rows). Tests / sandbox: SyntheticTag (fake tag JSON
+fresh_samples(rows), positions(anchors, rows, cfg) / fixes(anchors, rows, cfg):
+Haffiz's solver + filter (uwb_localization.positioning, common.yaml uwb_positioning,
+the SAME position the uwb_ranges node publishes on /carbot/uwb/position). Tests / sandbox: SyntheticTag (fake tag JSON
 with a per-anchor range bias; used by test_step_uwb_survey and gui_mock_server).
 """
 import json
@@ -37,6 +39,7 @@ from typing import Callable, Deque, Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from uwb_localization import calib_uwb as _cli
+from uwb_localization.positioning import Fix, PositioningCfg, positions_from_rows
 from uwb_localization.uwb_core import AnchorSet, parse_report
 
 INPUT_KEY = 'uwb_raw'
@@ -155,7 +158,16 @@ def anchor_set(doc: Dict, zero_offsets: bool = False) -> AnchorSet:
 
 
 fresh_samples = _cli.raw_fresh_samples      # rows -> ({anchor: [raw R m, one per new sample]}, unknown, reports)
-fixes = _cli.fixes                          # (AnchorSet, rows) -> [(x, y)] pairwise trilateration per report
+
+
+def positions(anchors: AnchorSet, rows: List[Dict], cfg: Optional[PositioningCfg] = None) -> List[Fix]:
+    """Raw tag rows -> Haffiz fixes (raw solver xy, filtered xy, covariance, velocity)."""
+    return positions_from_rows(anchors, rows, cfg or PositioningCfg())
+
+
+def fixes(anchors: AnchorSet, rows: List[Dict], cfg: Optional[PositioningCfg] = None) -> List[Tuple[float, float]]:
+    """Filtered positions only (what the car uses)."""
+    return [f.xy for f in positions(anchors, rows, cfg)]
 
 
 class SyntheticTag:

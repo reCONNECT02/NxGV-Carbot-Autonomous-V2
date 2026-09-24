@@ -88,7 +88,7 @@ class GuiServer(CarbotNode):
         self.nodes = {}                    # NodeStatus by node name
         self.hist = []                     # control history rows
         self.mismatch = []                 # gate vs route log
-        self.trails = {'local': [], 'global': [], 'raw': []}
+        self.trails = {'local': [], 'global': [], 'raw': [], 'uwb': []}
         self.manual = False
         self.estopped = False
         self.images = {}                   # key -> (t, bytes)
@@ -174,7 +174,8 @@ class GuiServer(CarbotNode):
                     ('local_status', LocalizationStatus, T.LOCAL_STATUS, 5),
                     ('loc_status', LocalizationStatus, T.LOCALIZATION_STATUS, 5),
                     ('uwb_ranges', UwbRanges, T.UWB_RANGES, 10), ('uwb_status', UwbStatus, T.UWB_STATUS, 5),
-                    ('raw_fix', PointStamped, T.UWB_RAW_FIX, 10)],
+                    ('raw_fix', PointStamped, T.UWB_RAW_FIX, 10),
+                    ('uwb_pos', Odometry, T.UWB_POSITION, 10)],     # Haffiz filtered position
             'det': [('detections', DetectionArray, T.DETECTIONS, 5)],
             'control': [(f'req_{s.lower()}', MotionRequest, T.request_topic(s), 5) for s in T.REQUEST_SOURCES],
             'health': [('health', SystemHealth, T.SYSTEM_HEALTH, 5)],
@@ -274,15 +275,17 @@ class GuiServer(CarbotNode):
                 self.mismatch = self.mismatch[-50:]
             self.events.add('mission', 'warn', '08', f'Gate reads {m.gate_state}, planned exit {m.planned_exit}. '
                                                      'Route kept.')
-        elif key in ('local_pose', 'global_pose', 'raw_fix'):
+        elif key in ('local_pose', 'global_pose', 'raw_fix', 'uwb_pos'):
             self._trail(key, m)
         with self.lock:
             self.raw[key] = (t, m)
 
     def _trail(self, key, m):
-        name = {'local_pose': 'local', 'global_pose': 'global', 'raw_fix': 'raw'}[key]
+        name = {'local_pose': 'local', 'global_pose': 'global', 'raw_fix': 'raw', 'uwb_pos': 'uwb'}[key]
         if key == 'raw_fix':
             x, y = G.venue_to_track(m.point.x, m.point.y, self.uwb.get('track_to_venue', {}))
+        elif key == 'uwb_pos':
+            x, y = G.venue_to_track(m.pose.pose.position.x, m.pose.pose.position.y, self.uwb.get('track_to_venue', {}))
         else:
             x, y = m.pose.pose.position.x, m.pose.pose.position.y
         with self.lock:
@@ -544,6 +547,14 @@ class GuiServer(CarbotNode):
         raw = self.get('raw_fix', 2.0)
         if raw is not None:
             out['raw'] = [_r(v) for v in G.venue_to_track(raw.point.x, raw.point.y, t2v)]
+        up = self.get('uwb_pos', 2.0)
+        if up is not None:
+            c = up.pose.covariance
+            ux, uy = G.venue_to_track(up.pose.pose.position.x, up.pose.pose.position.y, t2v)
+            a, b, ang = G.cov_ellipse(c[0], c[1], c[7])
+            ang -= math.radians(float(t2v.get('yaw_deg', 0.0)))        # venue -> track
+            v = up.twist.twist.linear
+            out['uwb_pos'] = [_r(ux), _r(uy), [_r(a, 4), _r(b, 4), _r(ang, 4)], _r(math.hypot(v.x, v.y))]
         rng, st = self.get('uwb_ranges', 2.0), self.get('uwb_status', 3.0)
         rmap = {r.anchor_id: r for r in rng.ranges} if rng is not None else {}
         smap = {}

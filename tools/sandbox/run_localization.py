@@ -36,7 +36,8 @@ from carbot_common.course import Course  # noqa: E402
 from carbot_localization.estimator_core import (GlobalCfg, GlobalEstimator, LocalCfg,  # noqa: E402
                                                 LocalEstimator, PoseHistory, TrackToVenue,
                                                 grid_axes, odom_increment)
-from uwb_localization.uwb_core import AnchorSet, RangeProcessor, parse_report, trilaterate  # noqa: E402
+from uwb_localization.positioning import Positioner, PositioningCfg, report_ranges  # noqa: E402
+from uwb_localization.uwb_core import AnchorSet, RangeProcessor, parse_report  # noqa: E402
 
 CONFIG = os.path.join(REPO, 'src', 'carbot_bringup', 'config')
 OUT = os.path.join(HERE, 'out')
@@ -48,6 +49,8 @@ def load_params(session=''):
         with open(p) as f:
             return yaml.safe_load(f) or {}
     loc = rd(os.path.join(CONFIG, 'params', 'localization.yaml'))
+    # common.yaml `/**` uwb_positioning (Haffiz), as every node receives it
+    loc['_uwb_positioning'] = rd(os.path.join(CONFIG, 'params', 'common.yaml'))['/**']['ros__parameters']['uwb_positioning']
     uwb_path = os.path.join(CONFIG, 'data', 'uwb.yaml')
     if session:
         ov = os.path.join(session, 'params_overlay.yaml')
@@ -84,6 +87,9 @@ class Pipeline:
         self.proc = RangeProcessor(self.anchors, up('max_range_age_ms'), up('min_range_m'), up('max_range_m'),
                                    up('latency.mode'), up('latency.window_s'), up('latency.base_transit_ms'),
                                    up('latency.max_extra_ms'))
+        self.pos_cfg = PositioningCfg.from_dict(loc['_uwb_positioning'])
+        self.positioner = Positioner(self.anchors, self.pos_cfg)
+        self.uwb_input = str(gp('uwb_input'))
         self.odom_hist = PoseHistory(lp('pose_history_s'))
         self.local_hist = PoseHistory(gp('pose_history_s'))
         self.prev_odom = self.prev_t = None
@@ -135,10 +141,29 @@ class Pipeline:
             return
         res = self.proc.process(rep, t)
         self.log['latency_ms'].append(res.latency_ms)
-        fix_in = {r.anchor: r.corrected_m for r in res.ranges if r.reason in ('', 'repeat')}
-        p = trilaterate(self.anchors, fix_in)
-        if p is not None:
-            self.log['raw_fix'].append(self.t2v.to_track(*p))
+        if res.rebooted:
+            self.positioner.reset()
+        rng, t_fix, _ = report_ranges(res, self.pos_cfg.skip_repeat_reports)
+        f = self.positioner.update(rng, t_fix) if rng else None
+        if f is not None:
+            self.log['raw_fix'].append(self.t2v.to_track(*f.raw))
+            self.log['uwb_pos'].append(self.t2v.to_track(*f.xy))
+        if self.uwb_input == 'position':                  # global_pose._on_position
+            if f is None:
+                return
+            loc = self.local_hist.at(t_fix, self.gp('max_uwb_age_s'))
+            if loc is None:
+                return
+            c, s = math.cos(loc[2]), math.sin(loc[2])
+            tag = (loc[0] + self.lever[0] * c - self.lever[1] * s, loc[1] + self.lever[0] * s + self.lever[1] * c)
+            Rtv = self.t2v.R
+            Cv = np.array([[f.cov[0], f.cov[1]], [f.cov[1], f.cov[2]]])
+            R = Rtv.T @ Cv @ Rtv + np.eye(2) * float(self.gp('position_sigma_floor_m')) ** 2
+            ok = self.glob.fix_update(tag, self.t2v.to_track(*f.xy), R)
+            self.log['gate_position'].append(ok)
+            return
+        if self.uwb_input != 'ranges':
+            return
         for r in res.ranges:
             if not r.fresh:
                 self.log['repeat' if r.reason == 'repeat' else 'dropped'].append(r.anchor)
@@ -332,9 +357,15 @@ def report(pipe, truth, a):
     lat = np.array(L['latency_ms']) if L['latency_ms'] else np.zeros(1)
     print(f'uwb latency above fastest packet: median {np.median(lat):.0f} ms, p95 {np.percentile(lat, 95):.0f} ms')
     print(f'repeated samples skipped {len(L["repeat"])}, dropped (old/out of range) {len(L["dropped"])}')
-    print('per anchor:      n   accepted   innov median   robust sd   (m)')
+    kf = pipe.positioner.kf
+    print(f'UWB position ({pipe.pos_cfg.solver} + {pipe.pos_cfg.filter}): {pipe.positioner.solved} fixes, '
+          f'filter gated {kf.rejected}, reacquires {kf.reacquires}; block 06 input: {pipe.uwb_input}')
+    if L['gate_position']:
+        print(f'  block 06 position updates accepted {np.mean(L["gate_position"]) * 100:.1f} %')
+    if pipe.uwb_input == 'ranges':
+        print('per anchor:      n   accepted   innov median   robust sd   (m)')
     sds = []
-    for aid in pipe.anchors.ids:
+    for aid in (pipe.anchors.ids if pipe.uwb_input == 'ranges' else []):
         inn, gate = np.array(L[f'innov_{aid}']), np.array(L[f'gate_{aid}'])
         if not len(inn):
             print(f'  {aid}:  no updates')

@@ -2,7 +2,7 @@
 
 :root{
   --ground:#E6E8EB; --panel:#F4F5F7; --raised:#FFFFFF; --ink:#161B26; --muted:#565E6D;
-  --line:#D2D6DC; --lane:#1D63E0; --lane-soft:#9EC0FA; --ok:#177A4B; --warn:#9A6200; --bad:#BF262B;
+  --line:#D2D6DC; --lane:#1D63E0; --lane-soft:#9EC0FA; --uwb:#8B3FD1; --ok:#177A4B; --warn:#9A6200; --bad:#BF262B;
   --ok-bg:#DDF1E6; --warn-bg:#F8EACB; --bad-bg:#F7DCDC; --blue-bg:#DCE8FD; --grid:#C9CED6; --road:#EEF0F2; --scene:#E9EBEE;
   --cam:#20262F; --car:#1D63E0; --car-dark:#123F91;
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
@@ -11,14 +11,14 @@
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --ground:#12151A; --panel:#1A1E25; --raised:#222731; --ink:#E8EBF0; --muted:#A1A9B6;
-    --line:#2F3540; --lane:#4C8DFF; --lane-soft:#27457A; --ok:#4FC98A; --warn:#E7B04A; --bad:#FF6B6B;
+    --line:#2F3540; --lane:#4C8DFF; --lane-soft:#27457A; --uwb:#C08BFF; --ok:#4FC98A; --warn:#E7B04A; --bad:#FF6B6B;
     --ok-bg:#16352A; --warn-bg:#3A2E14; --bad-bg:#3D1B1D; --blue-bg:#1B2A45; --grid:#2E343E; --road:#1E232B; --scene:#171B21;
     --cam:#0C0E12; --car:#3F7FF2; --car-dark:#1C3F85; color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --ground:#12151A; --panel:#1A1E25; --raised:#222731; --ink:#E8EBF0; --muted:#A1A9B6;
-  --line:#2F3540; --lane:#4C8DFF; --lane-soft:#27457A; --ok:#4FC98A; --warn:#E7B04A; --bad:#FF6B6B;
+  --line:#2F3540; --lane:#4C8DFF; --lane-soft:#27457A; --uwb:#C08BFF; --ok:#4FC98A; --warn:#E7B04A; --bad:#FF6B6B;
   --ok-bg:#16352A; --warn-bg:#3A2E14; --bad-bg:#3D1B1D; --blue-bg:#1B2A45; --grid:#2E343E; --road:#1E232B; --scene:#171B21;
   --cam:#0C0E12; --car:#3F7FF2; --car-dark:#1C3F85; color-scheme:dark;
 }

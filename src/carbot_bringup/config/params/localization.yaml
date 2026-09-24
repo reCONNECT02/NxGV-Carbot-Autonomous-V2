@@ -93,9 +93,11 @@ global_pose:
     # range, each individually innovation-gated.
     range_sigma_m: 0.05             # (bag) raise if too many good ranges are gated
     range_gate_chi2: 6.63           # 1-dof, 99 %
-    position_gate_chi2: 13.82       # V4 2-dof 99.9 % (whole-fix mode only)
-    fix_sigma_m: 0.05               # whole-fix mode only
-    use_per_range_updates: true     # false = V4 whole-fix mode on /carbot/uwb/raw_fix
+    position_gate_chi2: 13.82       # V4 2-dof 99.9 % (uwb_input position / raw_fix)
+    fix_sigma_m: 0.05               # uwb_input raw_fix only (V4)
+    # CHANGED (Haffiz switch): replaces use_per_range_updates (true -> ranges, false -> raw_fix).
+    uwb_input: position             # position (Haffiz filtered, /carbot/uwb/position) | ranges | raw_fix
+    position_sigma_floor_m: 0.05    # added to the filter covariance: its fixes are time-correlated
     skip_repeated_sample_seq: true
     latency_compensation: true      # use each range's estimated measurement time
     visual_landmark_min_rank: 0.25
@@ -116,7 +118,8 @@ uwb_ranges:
     max_range_age_ms: 400           # = firmware OMIT_OLDER_THAN_MS
     min_range_m: 0.05
     max_range_m: 30.0
-    publish_raw_fix: true           # pairwise trilateration (uwb_xy.py method), GUI/calibration only
+    publish_raw_fix: true           # solver fix, unfiltered (common.yaml uwb_positioning.solver)
+    publish_position: true          # Haffiz filtered position /carbot/uwb/position (block 06 input)
     status_publish_hz: 2.0
     latency:
       mode: min_filter              # min_filter | arrival

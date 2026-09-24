@@ -21,7 +21,8 @@ BLOCK 06  GlobalEstimator  (route identity only, never steering)
   update gated at chi2 13.82. Here (UWB_Handoff section 11): one EKF update per
   fresh anchor RANGE, each innovation-gated (1 dof), predicted at the pose at
   that range's own measurement time, 2x2 covariance. The V4 whole-fix update
-  is kept as an option (use_per_range_updates: false). A well-conditioned
+  is kept as an option (uwb_input: raw_fix). Default since the Haffiz switch:
+  uwb_input: position = his solver + CV Kalman fix, R from the filter covariance. A well-conditioned
   visual landmark pulls the offset toward zero exactly as V4 does.
   Added safety net (not in V4): if every range is gated out for `reject_streak`
   updates in a row, the variance is inflated once so the filter can re-acquire
@@ -398,11 +399,13 @@ class GlobalEstimator:
         self.last_gain = float(np.linalg.norm(K))
         return RangeUpdate(anchor, innov, m2, True, self.last_gain)
 
-    def fix_update(self, local_xy: Tuple[float, float], fix_track_xy: Tuple[float, float]) -> bool:
-        """V4 whole-fix update (use_per_range_updates: false)."""
+    def fix_update(self, local_xy: Tuple[float, float], fix_track_xy: Tuple[float, float],
+                   R: Optional[np.ndarray] = None) -> bool:
+        """Whole-fix update (uwb_input: position = Haffiz filtered fix, or raw_fix = V4 mode).
+        R = 2x2 measurement covariance in the track frame; None = fix_sigma_m^2 I (V4)."""
         g = np.array(local_xy) + self.off
         e = np.array(fix_track_xy) - g
-        R = np.eye(2) * self.c.fix_sigma ** 2
+        R = np.eye(2) * self.c.fix_sigma ** 2 if R is None else np.asarray(R, float)
         S = self.P + R
         m2 = float(e @ np.linalg.solve(S, e))
         self.residual = float(np.hypot(*e))

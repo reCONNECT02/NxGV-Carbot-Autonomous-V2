@@ -34,8 +34,8 @@ from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
 from carbot_common import topics as T
 
-from .uwb_core import (AnchorSet, RangeProcessor, compute_offsets, fix_clusters, hdop_coverage,
-                       layout_checks, parse_report, trilaterate)
+from .uwb_core import (AnchorSet, compute_offsets, fix_clusters, hdop_coverage,
+                       layout_checks, parse_report)
 
 STEP_ID = 'uwb_survey'
 
@@ -110,19 +110,15 @@ def raw_fresh_samples(rows: List[Dict]) -> Tuple[Dict[str, List[float]], List[st
     return out, sorted(unknown), n
 
 
-def fixes(anchors: AnchorSet, rows: List[Dict]) -> List[Tuple[float, float]]:
-    proc = RangeProcessor(anchors, 400, 0.05, 30.0, 'arrival')
-    out = []
-    for r in rows:
-        rep = parse_report(r['json'])
-        if rep is None:
-            continue
-        res = proc.process(rep, r['t'])
-        rng = {x.anchor: x.corrected_m for x in res.ranges if x.reason in ('', 'repeat')}
-        p = trilaterate(anchors, rng)
-        if p is not None:
-            out.append(p)
-    return out
+def fixes(anchors: AnchorSet, rows: List[Dict], cfg=None) -> List[Tuple[float, float]]:
+    """Haffiz filtered positions (common.yaml uwb_positioning), one per solvable report."""
+    from .positioning import PositioningCfg, cfg_from_common_yaml, positions_from_rows
+    if cfg is None:
+        try:
+            cfg = cfg_from_common_yaml()
+        except Exception:  # noqa: BLE001  checkout without carbot_bringup: Haffiz defaults
+            cfg = PositioningCfg()
+    return [f.xy for f in positions_from_rows(anchors, rows, cfg)]
 
 
 def venue_points(doc: Dict, anchors: AnchorSet, config_dir: str) -> Tuple[List[Tuple[float, float]], str]:

@@ -39,3 +39,24 @@
       uncertainty_base_m: 0.004
       uncertainty_per_m: 0.006
       uncertainty_limit_m: 0.02
+    # UWB 2-D position (Haffiz's method, uwb_localization/positioning.py). Every node
+    # that turns UWB ranges into a position reads THIS block: uwb_ranges (block 06
+    # input), the calibration wizard (step 10 verify, step 11 UWB lap), tools/uwb,
+    # record_lap and the sandbox -> one position, computed one way everywhere.
+    # Values = tools/uwb/haffiz/turtle_uwb_visualizer.py. UWB never reaches the servo.
+    uwb_positioning:
+      solver: linear              # linear (Haffiz) | nlls (Haffiz noEKF, soft_l1) | pairwise (old uwb_xy.py)
+      filter: cv_kf               # cv_kf (Haffiz) | moving_average (Haffiz noEKF) | none
+      min_anchors: 3              # ranges needed in one report for a fix (2-D)
+      skip_repeat_reports: false  # Haffiz: false = solve every report, even if no range is new
+      cv_kf:                      # constant-velocity Kalman filter, state [x, y, vx, vy]
+        process_noise: 0.2        # Haffiz process_noise (smoothness; lower = smoother, more lag)
+        measurement_noise_m: 0.25 # Haffiz measurement_noise (sensor confidence)
+        gate_mahalanobis2: 16.0   # Haffiz gate (~4 sigma); a fix above it is ignored
+        initial_variance_m2: 1.0  # Haffiz P = eye(4) * 1.0
+        reacquire_after_rejects: 30   # NOT Haffiz (0 = his): re-initialise after 30 gated fixes in a row (~3 s)
+      moving_average:
+        window: 10                # Haffiz noEKF window
+      nlls:
+        f_scale_m: 1.0            # scipy least_squares soft_l1 scale (Haffiz: default 1.0)
+        initial_xy_m: [1.5, 2.5]  # Haffiz noEKF first guess (venue metres)

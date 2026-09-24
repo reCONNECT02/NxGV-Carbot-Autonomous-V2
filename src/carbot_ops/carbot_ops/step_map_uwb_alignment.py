@@ -1,6 +1,22 @@
 """Calibration step 11 -- map-to-UWB alignment (pure, unit tested).
 
-The terminal tool (carbot_localization.calib_map_uwb) as a wizard page. It finds
+Three modes. The first is new with the Haffiz UWB switch and is the default:
+
+  {"mode": "uwb_lap"}             push / drive the car SLOWLY once around the track (any
+                                  start point), then STEP {"op": "stop"}. Records Haffiz's
+                                  FILTERED position (solver + CV Kalman filter, common.yaml
+                                  uwb_positioning, = /carbot/uwb/position), moves each fix
+                                  from the tag to the rear axle (heading from the filter's
+                                  velocity; slower than uwb_lap_min_speed_mps = dropped) and
+                                  fits the map onto it with the team's map builder
+                                  (tools/map/map_builder.py fit_rigid, the same fit that makes
+                                  track_map.yaml venue_transform). No odometry, no IMU, no
+                                  exact start pose. The fit runs in a worker thread.
+                                  track_map.yaml is NOT rewritten (mission.yaml stays valid);
+                                  Save also stores the lap as captures/step11_uwb_lap.csv for
+                                  `map_builder.py edit` if the road shape needs touching up.
+
+The two older modes (terminal tool carbot_localization.calib_map_uwb as a wizard page) find
 uwb.yaml track_to_venue (p_venue = R(yaw) p_track + [x, y]) with the SAME fit
 (alignment.fit_track_to_venue: Huber loss on the ranges, inliers within inlier_m)
 and the same range processing (calib_map_uwb.lap_samples / point_samples on the
@@ -36,16 +52,22 @@ checked on: result['map'] = {'file', 'sha1' (raw), 'sha1_lf', 'sha1_crlf'}
 (carbot_common.course.file_fingerprints, the hash mission.yaml map.sha1 uses),
 and result['basis'] = the step-10 anchors / offsets / tag the fit used.
 """
+import importlib
 import json
 import math
 import os
+import sys
+import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
+
+import numpy as np
 
 from carbot_common import calib_tools as ct
 from carbot_common.course import file_fingerprints
 from carbot_localization.alignment import fit_track_to_venue, tag_position
 from carbot_localization.calib_map_uwb import lap_samples, named_poses, point_samples
+from uwb_localization.positioning import PositioningCfg, rear_axle_from_tag
 
 from . import wizard_uwb as wu
 from .sensor_checks import ConfigError
@@ -54,9 +76,12 @@ from .wizard_core import StepImpl, StepRefused
 STEP_ID = 'map_uwb_alignment'
 PROC_KEYS = ('modes', 'lap_min_s', 'min_extent_m', 'huber_m', 'inlier_m', 'points_seconds', 'min_points',
              # wizard page (phase 8 page 11)
-             'points_min_extent_m', 'lap_max_s', 'max_input_age_s', 'live_fit_period_s', 'overlay_max_points')
-PASS_KEYS = ('max_rms_m', 'min_inlier_frac')
-MODES = ('lap', 'points')
+             'points_min_extent_m', 'lap_max_s', 'max_input_age_s', 'live_fit_period_s', 'overlay_max_points',
+             # Haffiz switch: uwb_lap mode
+             'uwb_lap_min_speed_mps', 'uwb_lap_init', 'uwb_lap_min_points', 'map_tools_dir')
+PASS_KEYS = ('max_rms_m', 'min_inlier_frac', 'uwb_lap_max_rms_m', 'uwb_lap_min_inlier_frac', 'uwb_lap_min_sections')
+MODES = ('uwb_lap', 'lap', 'points')
+UWB_LAP_INITS = ('none', 'map')
 # uwb.yaml keys this step writes (= calibration_steps.yaml map_uwb_alignment.writes)
 WRITES = ('track_to_venue',)
 STEP10 = 'step 10 (UWB anchor survey + offsets)'
@@ -79,7 +104,10 @@ def parse_argument(arg: str, poses: Dict) -> Tuple[Optional[Dict], str]:
     except ValueError:
         a = None
     if not isinstance(a, dict) or a.get('mode') not in MODES:
-        return None, 'Choose Start lap or Record point on this page (argument {"mode": "lap" | "points"}).'
+        return None, ('Choose Start UWB lap, Start lap or Record point on this page '
+                      '(argument {"mode": "uwb_lap" | "lap" | "points"}).')
+    if a['mode'] == 'uwb_lap':
+        return {'mode': 'uwb_lap'}, ''
     if a['mode'] == 'points':
         name = str(a.get('pose') or '').strip()
         if name not in poses:
@@ -107,6 +135,47 @@ def to_track(t2v: Dict, x: float, y: float) -> Tuple[float, float]:
     return c * dx + s * dy, -s * dx + c * dy
 
 
+def load_map_builder(tools_dir: str, config_dir: str = ''):
+    """Import tools/map/map_builder.py from the repo checkout (same search as step 12)."""
+    from .step_mission_planner import find_planner_dir
+    d = find_planner_dir(tools_dir, config_dir)
+    if not d:
+        raise ConfigError(f'calibration_steps.yaml map_uwb_alignment.procedure.map_tools_dir: {tools_dir} with '
+                          'map_builder.py not found (looked in $CARBOT_REPO and the parents of the package and '
+                          'working directory). Set CARBOT_REPO to the repo checkout.')
+    d = os.path.abspath(d)
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    return importlib.import_module('map_builder')
+
+
+def uwb_lap_points(fixes, lever: Tuple[float, float], min_speed: float) -> Tuple[np.ndarray, int]:
+    """Haffiz fixes -> rear-axle lap points (venue). Fixes slower than min_speed (no heading
+    from the filter velocity) are dropped; returns (Nx2, dropped)."""
+    pts, dropped = [], 0
+    for f in fixes:
+        if f.vel is None or math.hypot(*f.vel) < min_speed:
+            dropped += 1
+            continue
+        pts.append(rear_axle_from_tag(f.xy, math.atan2(f.vel[1], f.vel[0]), lever))
+    return (np.array(pts, float).reshape(-1, 2), dropped)
+
+
+def fit_uwb_lap(mb, tpl: Dict, lap: np.ndarray, init=None) -> Dict:
+    """map_builder.fit_rigid + overall residuals. T = track -> venue (x, y, yaw rad)."""
+    T, report = mb.fit_rigid(lap, tpl=tpl, init=init)
+    lines = mb.centrelines(tpl, mb.FIT['sample_step_m'])
+    _, dist = mb.LineIndex(lines).nearest(mb.apply(mb.invert(T), lap))
+    inl = dist < mb.FIT['icp_reject_m']
+    rms = float(np.sqrt(np.mean(dist[inl] ** 2))) if inl.any() else float('inf')
+    fitted = [n for n, r in report.items() if r['fitted']]
+    ext = float(np.hypot(*(lap.max(axis=0) - lap.min(axis=0)))) if len(lap) else 0.0
+    return {'T': T, 'report': report, 'rms_m': rms, 'inlier_frac': float(inl.mean()) if len(inl) else 0.0,
+            'covered': len(fitted) / max(len(report), 1), 'sections_fitted': fitted,
+            'sections_missed': [n for n in report if n not in fitted], 'n': int(len(lap)), 'extent_m': ext,
+            'median_abs_m': float(np.median(dist)) if len(dist) else float('inf')}
+
+
 def _thin(pts: List, n: int) -> List:
     if n <= 0 or len(pts) <= n:
         return list(pts)
@@ -124,8 +193,9 @@ class MapUwbAlignmentStep(StepImpl):
     ops_while_running = True            # Stop lap while RUNNING
 
     def __init__(self, cfg: Dict, uwb: Dict, config_dir: str, motion, session_fn: Callable[[], Optional[str]],
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, pos_cfg: Optional[PositioningCfg] = None):
         super().__init__(cfg)
+        self.pos_cfg = pos_cfg or PositioningCfg()
         self.proc, self.pas = cfg.get('procedure') or {}, cfg.get('pass') or {}
         _need(self.proc, PROC_KEYS, 'calibration_steps.yaml map_uwb_alignment.procedure')
         _need(self.pas, PASS_KEYS, 'calibration_steps.yaml map_uwb_alignment.pass')
@@ -134,7 +204,15 @@ class MapUwbAlignmentStep(StepImpl):
         if bad or not self.modes:
             raise ConfigError(f'calibration_steps.yaml map_uwb_alignment.procedure.modes: {self.proc["modes"]!r} '
                               f'(allowed: {", ".join(MODES)})')
-        self.p = {k: float(self.proc[k]) for k in PROC_KEYS if k != 'modes'}
+        self.p = {k: float(self.proc[k]) for k in PROC_KEYS if k not in ('modes', 'uwb_lap_init', 'map_tools_dir')}
+        self.uwb_lap_init = str(self.proc['uwb_lap_init'])
+        if self.uwb_lap_init not in UWB_LAP_INITS:
+            raise ConfigError(f'calibration_steps.yaml map_uwb_alignment.procedure.uwb_lap_init: '
+                              f'{self.uwb_lap_init!r} (use {" | ".join(UWB_LAP_INITS)})')
+        self.map_tools_dir = str(self.proc['map_tools_dir'])
+        self.uwb_max_rms = float(self.pas['uwb_lap_max_rms_m'])
+        self.uwb_min_inl = float(self.pas['uwb_lap_min_inlier_frac'])
+        self.uwb_min_sec = int(self.pas['uwb_lap_min_sections'])
         self.max_rms, self.min_inl = float(self.pas['max_rms_m']), float(self.pas['min_inlier_frac'])
         _need(uwb, ('anchors', 'tag', 'track_to_venue'), 'uwb.yaml')
         self.base, self.config_dir = uwb, config_dir
@@ -205,7 +283,9 @@ class MapUwbAlignmentStep(StepImpl):
         b = basis(doc)
         run = {'mode': a['mode'], 't0': now, 'cursor': feed.cursor(), 'rows': [], 'lost': 0, 'anchors': anchors,
                'lever': lever, 'basis': b, 'stop': False, 'live_fit': None, 'live_fit_t': -math.inf}
-        if a['mode'] == 'lap':
+        if a['mode'] == 'uwb_lap':
+            run.update(worker=None, fit_out=None)
+        elif a['mode'] == 'lap':
             stale = self._fresh(now)
             if stale:
                 return (f'Lap needs the wheel odometry and IMU ({stale}). Is servo_controller running? '
@@ -224,7 +304,7 @@ class MapUwbAlignmentStep(StepImpl):
 
     def handle(self, op: str, args: Dict, inputs: Dict) -> Dict:
         if op == 'stop':
-            if not self.run or self.run['mode'] != 'lap':
+            if not self.run or self.run['mode'] not in ('lap', 'uwb_lap'):
                 return {'ok': False, 'message': 'No lap is being recorded'}
             self.run['stop'] = True
             return {'ok': True, 'message': 'Lap stopped: fitting…'}
@@ -282,6 +362,8 @@ class MapUwbAlignmentStep(StepImpl):
                 return None
             self.run = None
             return self._finish_point(r)
+        if r['mode'] == 'uwb_lap':
+            return self._tick_uwb_lap(r, el)
         self._advance_pose(r)
         stale = self._fresh(now)
         if stale:
@@ -292,6 +374,126 @@ class MapUwbAlignmentStep(StepImpl):
             return None
         self.run = None
         return self._finish_lap(r, now)
+
+    # ------------------------------------------------------------------ uwb_lap (Haffiz)
+    def _current_map(self) -> Tuple[Dict, str]:
+        info = self._map_info()
+        return ct.load_yaml(info['file']), info['file']
+
+    def _tick_uwb_lap(self, r: Dict, el: float) -> Optional[Dict]:
+        if r['worker'] is None:
+            if not r['stop'] and el < self.p['lap_max_s']:
+                return None
+            r['stopped_by'] = 'user' if r['stop'] else 'lap_max_s'
+            r['duration_s'] = el
+            r['worker'] = threading.Thread(target=self._uwb_lap_work, args=(r,), daemon=True)
+            r['worker'].start()
+            return None
+        if r['worker'].is_alive():
+            return None
+        self.run = None
+        return self._finish_uwb_lap(r)
+
+    def _uwb_lap_work(self, r: Dict) -> None:
+        """Worker thread: positions -> rear-axle lap -> map_builder fit. Never raises."""
+        out: Dict = {}
+        try:
+            fixes = wu.positions(r['anchors'], r['rows'], self.pos_cfg)
+            lap, dropped = uwb_lap_points(fixes, r['lever'], self.p['uwb_lap_min_speed_mps'])
+            out.update(fixes=len(fixes), dropped=dropped, lap=lap)
+            if len(lap) < int(self.p['uwb_lap_min_points']):
+                out['error'] = (f'only {len(lap)} moving UWB positions (need {int(self.p["uwb_lap_min_points"])}; '
+                                f'{dropped} dropped as slower than {self.p["uwb_lap_min_speed_mps"]:g} m/s)')
+                return
+            doc, path = self._current_map()
+            mb = load_map_builder(self.map_tools_dir, self.config_dir)
+            from carbot_common.map_geometry import template_from_yaml
+            tpl = template_from_yaml(doc)
+            init = None
+            if self.uwb_lap_init == 'map' and doc.get('venue_transform'):
+                vt = doc['venue_transform']
+                init = (float(vt['x']), float(vt['y']), math.radians(float(vt['yaw_deg'])))
+            out['fit'] = fit_uwb_lap(mb, tpl, lap, init)
+            out['map_file'] = path
+        except Exception as e:  # noqa: BLE001  shown on the page, never kills the wizard
+            out['error'] = f'{type(e).__name__}: {e}'
+        finally:
+            r['fit_out'] = out
+
+    def _finish_uwb_lap(self, r: Dict) -> Dict:
+        o = r['fit_out'] or {}
+        dur = float(r.get('duration_s', 0.0))
+        info = {'mode': 'uwb_lap', 'duration_s': round(dur, 1), 'uwb_reports': len(r['rows']),
+                'lost_reports': r['lost'], 'fixes': o.get('fixes', 0), 'dropped_slow': o.get('dropped', 0),
+                'lap_points': int(len(o['lap'])) if 'lap' in o else 0, 'stopped_by': r.get('stopped_by', ''),
+                'method': f'{self.pos_cfg.solver} + {self.pos_cfg.filter}', 'init': self.uwb_lap_init}
+        checks = [_check('lap_time', 'Lap duration', f'{dur:.0f} s', f'>= {self.p["lap_min_s"]:g} s',
+                         dur >= self.p['lap_min_s'], f'the lap took only {dur:.0f} s: too fast or cut short',
+                         'Push / drive SLOWLY around the WHOLE track, then press Stop lap.')]
+        f = o.get('fit')
+        if f is None:
+            why = o.get('error', 'no fit')
+            checks.append(_check('fit', 'Map fit', why, 'solvable', False, why,
+                                 'Is the tag reporting with every anchor (step 10 Link check)? Keep the car moving '
+                                 'during the lap; drive the whole track.'))
+        else:
+            checks.append(_check('extent', 'Area covered', f'{f["extent_m"]:.1f} m', f'>= {self.p["min_extent_m"]:g} m',
+                                 f['extent_m'] >= self.p['min_extent_m'], 'the lap covers too small an area',
+                                 'Go around the whole track.'))
+            checks.append(_check('rms', 'Lap vs map centrelines (RMS)', f'{f["rms_m"] * 100:.1f} cm',
+                                 f'<= {self.uwb_max_rms * 100:.0f} cm', f['rms_m'] <= self.uwb_max_rms,
+                                 f'the UWB lap is {f["rms_m"] * 100:.1f} cm RMS off the fitted map',
+                                 'Drive in the middle of the lane; check step 10 (verify error, anchor heights) and '
+                                 'the tag mount; if the road itself differs, fix it with map_builder.py edit '
+                                 'captures/step11_uwb_lap.csv, then re-run steps 11 and 12.'))
+            checks.append(_check('inliers', 'Lap points on the map', f'{f["inlier_frac"] * 100:.0f} % of {f["n"]}',
+                                 f'>= {self.uwb_min_inl * 100:.0f} %', f['inlier_frac'] >= self.uwb_min_inl,
+                                 'too much of the lap is off the fitted map (multipath, or a different road shape)',
+                                 'Raise the anchors / clear the line of sight; if the road shape differs, fix it with '
+                                 'map_builder.py edit captures/step11_uwb_lap.csv.'))
+            nsec = len(f['sections_fitted'])
+            checks.append(_check('sections', 'Map sections driven', f'{nsec} ({", ".join(f["sections_fitted"])})',
+                                 f'>= {self.uwb_min_sec}', nsec >= self.uwb_min_sec,
+                                 f'only {nsec} map sections driven: the fit may slide along the track',
+                                 'Drive the whole loop: roundabout, lane change, tunnel corner.'))
+        passed = all(c['passed'] for c in checks)
+        res: Dict = {'step': STEP_ID, 'mode': 'uwb_lap', 'capture': info, 'checks': checks, 'basis': r['basis'],
+                     'map': self._map_info()}
+        if f is not None:
+            T = f['T']
+            res['fit'] = {'x_m': round(float(T[0]), 4), 'y_m': round(float(T[1]), 4),
+                          'yaw_deg': round(math.degrees(float(T[2])), 3), 'rms_m': round(f['rms_m'], 4),
+                          'inlier_frac': round(f['inlier_frac'], 3), 'ranges': f['n'],
+                          'extent_m': round(f['extent_m'], 2), 'median_abs_m': round(f['median_abs_m'], 4),
+                          'covered': round(f['covered'], 3), 'sections_fitted': f['sections_fitted'],
+                          'sections_missed': f['sections_missed']}
+        if passed:
+            ft = res['fit']
+            res['track_to_venue'] = {'x_m': ft['x_m'], 'y_m': ft['y_m'], 'yaw_deg': ft['yaw_deg'], 'aligned': True}
+            res['summary'] = (f'uwb_lap: x {ft["x_m"]:+.3f} m, y {ft["y_m"]:+.3f} m, yaw {ft["yaw_deg"]:+.2f} deg; '
+                              f'RMS {ft["rms_m"] * 100:.1f} cm, {len(ft["sections_fitted"])} map sections')
+            res['message'] = 'Alignment passed: check the lap overlay on the map, then press Save.'
+        else:
+            bad = [c for c in checks if not c['passed']]
+            res['summary'] = 'uwb_lap: ' + '; '.join(c['why'] for c in bad)
+            res['message'] = 'Alignment failed: ' + bad[0]['why'] + '.'
+        res['passed'] = passed
+        lap = o.get('lap')
+        self.last = {'mode': 'uwb_lap', 'fit': res.get('fit'), 'uwb_rows': r['rows'], 'pose_rows': None,
+                     'points': {}, 'lap_venue': lap.tolist() if lap is not None else [],
+                     'overlay': self._lap_overlay(r['anchors'], lap, res.get('fit'))}
+        return res
+
+    def _lap_overlay(self, anchors, lap, fit: Optional[Dict]) -> Dict:
+        n = int(self.p['overlay_max_points'])
+        out: Dict = {'transform': None, 'fixes': [], 'anchors': {}, 'path': [], 'points': [],
+                     'poses': {k: [round(v, 3) for v in p] for k, p in self.poses.items()}}
+        if fit and lap is not None and len(lap):
+            t2v = {'x_m': fit['x_m'], 'y_m': fit['y_m'], 'yaw_deg': fit['yaw_deg']}
+            out['transform'] = t2v
+            out['anchors'] = {k: [round(c, 3) for c in to_track(t2v, v.x, v.y)] for k, v in anchors.anchors.items()}
+            out['fixes'] = [[round(c, 3) for c in to_track(t2v, x, y)] for x, y in _thin(lap.tolist(), n)]
+        return out
 
     # ------------------------------------------------------------------ finish
     def _pose_rows(self, r: Dict) -> List[Dict]:
@@ -406,7 +608,7 @@ class MapUwbAlignmentStep(StepImpl):
             t2v = {'x_m': fit['x_m'], 'y_m': fit['y_m'], 'yaw_deg': fit['yaw_deg']}
             out['transform'] = t2v
             out['anchors'] = {k: [round(c, 3) for c in to_track(t2v, v.x, v.y)] for k, v in anchors.anchors.items()}
-            out['fixes'] = [[round(c, 3) for c in to_track(t2v, x, y)] for x, y in _thin(wu.fixes(anchors, rows), n)]
+            out['fixes'] = [[round(c, 3) for c in to_track(t2v, x, y)] for x, y in _thin(wu.fixes(anchors, rows, self.pos_cfg), n)]
         return out
 
     def _lever(self) -> Tuple[float, float]:
@@ -421,6 +623,18 @@ class MapUwbAlignmentStep(StepImpl):
         out = {'mode': r['mode'], 'elapsed_s': round(now - r['t0'], 1), 'reports': len(r['rows']), 'lost': r['lost']}
         if r['mode'] == 'points':
             out['pose'] = r['pose']
+            return out
+        if r['mode'] == 'uwb_lap':
+            out['fitting'] = r.get('worker') is not None
+            fx = wu.positions(r['anchors'], r['rows'][-30:], self.pos_cfg)
+            if fx:
+                out['uwb_xy'] = [round(fx[-1].xy[0], 3), round(fx[-1].xy[1], 3)]
+                v = fx[-1].vel
+                out['speed_mps'] = round(math.hypot(*v), 3) if v else None
+                t2v = (self.session_doc()[0] or {}).get('track_to_venue') or {}
+                if t2v.get('aligned'):
+                    out['fix_xy'] = [round(c, 3) for c in to_track(t2v, *fx[-1].xy)]
+                    out['fix_frame'] = 'saved alignment'
             return out
         path = r['path']
         xs, ys = [p[1] for p in path], [p[2] for p in path]
@@ -449,7 +663,7 @@ class MapUwbAlignmentStep(StepImpl):
         out['overlay'] = lf.get('overlay')
         # current UWB fix vs where the map pose says the tag is (fit so far, else the saved transform)
         t2v = lf.get('fit') or ((self.session_doc()[0] or {}).get('track_to_venue') or {})
-        fx = wu.fixes(r['anchors'], r['rows'][-5:])
+        fx = wu.fixes(r['anchors'], r['rows'][-30:], self.pos_cfg)
         if fx and (lf.get('fit') or t2v.get('aligned')):
             cx, cy = to_track(t2v, *fx[-1])
             out['fix_xy'] = [round(cx, 3), round(cy, 3)]
@@ -477,7 +691,11 @@ class MapUwbAlignmentStep(StepImpl):
                        'min_extent_m': self.p['min_extent_m'], 'points_min_extent_m': self.p['points_min_extent_m'],
                        'points_seconds': self.p['points_seconds'], 'min_points': int(self.p['min_points']),
                        'max_rms_m': self.max_rms, 'min_inlier_frac': self.min_inl,
-                       'inlier_m': self.p['inlier_m'], 'max_input_age_s': self.p['max_input_age_s']},
+                       'inlier_m': self.p['inlier_m'], 'max_input_age_s': self.p['max_input_age_s'],
+                       'uwb_lap_max_rms_m': self.uwb_max_rms, 'uwb_lap_min_inlier_frac': self.uwb_min_inl,
+                       'uwb_lap_min_sections': self.uwb_min_sec,
+                       'uwb_lap_min_speed_mps': self.p['uwb_lap_min_speed_mps']},
+            'method': f'{self.pos_cfg.solver} + {self.pos_cfg.filter}',
         }
         return out
 
@@ -501,6 +719,15 @@ class MapUwbAlignmentStep(StepImpl):
                     p = ct.capture_path(session, name)
                     ct.write_jsonl(p, rows)
                     written.append(p)
+            if last.get('mode') == 'uwb_lap' and last.get('lap_venue'):
+                p = ct.capture_path(session, 'step11_uwb_lap.csv')
+                with open(p, 'w', encoding='utf-8') as fh:
+                    fh.write('# x,y venue metres, rear axle, Haffiz filtered UWB (map_builder.py edit <this file>)\n')
+                    fh.writelines(f'{x:.4f},{y:.4f}\n' for x, y in last['lap_venue'])
+                written.append(p)
+                p = ct.capture_path(session, 'step11_uwb_lap_uwb.jsonl')
+                ct.write_jsonl(p, last['uwb_rows'])
+                written.append(p)
             for name, rows in (last.get('points') or {}).items():
                 p = ct.capture_path(session, f'step11_point_{name}.jsonl')
                 ct.write_jsonl(p, rows)
