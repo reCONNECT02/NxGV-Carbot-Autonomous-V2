@@ -24,6 +24,7 @@ class Cfg:
     battery_min_v: float
     start_position_tolerance_m: float
     start_heading_tolerance_deg: float
+    start_pose_check_enabled: bool   # false = assume the car sits on P0 (owner decision)
     ready_hold_s: float
     status_max_age_s: float       # battery / system health / safety / node heartbeat freshness
     pose_max_age_s: float
@@ -164,7 +165,10 @@ def evaluate(cfg: Cfg, s: Snapshot) -> List[Check]:
                          '' if good else 'Battery too low: charge or swap the pack'))
 
     # ---- start pose = map start (mission.yaml P0)
-    if s.pose is None or s.pose_age_s < 0 or s.pose_age_s > cfg.pose_max_age_s or s.start_pose is None:
+    if not cfg.start_pose_check_enabled:
+        out.append(_ok('start_pose', 'assumed', 'at P0',
+                       'assumed at P0: start_pose_check_enabled is false in ops.yaml'))
+    elif s.pose is None or s.pose_age_s < 0 or s.pose_age_s > cfg.pose_max_age_s or s.start_pose is None:
         out.append(_bad('start_pose', 'no pose', 'at P0', 'No fresh global pose yet'))
     else:
         px, py, pyaw = s.pose

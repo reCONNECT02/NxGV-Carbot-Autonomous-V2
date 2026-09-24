@@ -9,7 +9,7 @@ NODES = ('command_owner', 'safety_monitor')
 def cfg(**kw):
     base = dict(camera_min_rate_ratio=0.8, camera_max_age_s=0.5, lidar_min_hz=6.0, lidar_max_age_s=0.5,
                 uwb_anchor_max_age_s=1.0, battery_min_v=10.8, start_position_tolerance_m=0.20,
-                start_heading_tolerance_deg=15.0, ready_hold_s=1.0, status_max_age_s=3.0,
+                start_heading_tolerance_deg=15.0, start_pose_check_enabled=True, ready_hold_s=1.0, status_max_age_s=3.0,
                 pose_max_age_s=1.0, startup_grace_s=2.0, required_nodes=NODES,
                 warn_only_nodes=('bpu_detector',))
     base.update(kw)
@@ -146,3 +146,10 @@ def test_estop_and_finish_after_start_only():
     m2.start()
     m2.mission_complete()
     assert m2.state == pc.FINISHED
+
+
+def test_start_pose_check_can_be_assumed():
+    far = good(pose=(0.0, 0.0, 0.0))
+    assert failing(pc.evaluate(cfg(start_pose_check_enabled=False), far)) == []
+    row = [c for c in pc.evaluate(cfg(start_pose_check_enabled=False), good(pose=None)) if c.name == 'start_pose'][0]
+    assert row.ok and 'assumed' in row.detail

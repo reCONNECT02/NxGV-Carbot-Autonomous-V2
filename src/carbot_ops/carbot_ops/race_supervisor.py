@@ -31,7 +31,7 @@ from .monitor_core import RateMeter
 
 REQUIRED = ['preflight_period_s', 'camera_min_rate_ratio', 'camera_max_age_s', 'lidar_min_hz',
             'lidar_max_age_s', 'uwb_anchor_max_age_s', 'battery_min_v', 'start_position_tolerance_m',
-            'start_heading_tolerance_deg', 'start_camera_uwb_agreement_m', 'auto_record',
+            'start_heading_tolerance_deg', 'start_pose_check_enabled', 'start_camera_uwb_agreement_m', 'auto_record',
             'ready_hold_s', 'status_max_age_s', 'pose_max_age_s', 'startup_grace_s',
             'required_nodes', 'warn_only_nodes', 'data_root', 'data.calibration_steps',
             'data.cameras', 'data.uwb', 'data.mission']
@@ -53,6 +53,7 @@ class RaceSupervisor(CarbotNode):
             battery_min_v=float(self.p('battery_min_v')),
             start_position_tolerance_m=float(self.p('start_position_tolerance_m')),
             start_heading_tolerance_deg=float(self.p('start_heading_tolerance_deg')),
+            start_pose_check_enabled=bool(self.p('start_pose_check_enabled')),
             ready_hold_s=float(self.p('ready_hold_s')), status_max_age_s=float(self.p('status_max_age_s')),
             pose_max_age_s=float(self.p('pose_max_age_s')), startup_grace_s=float(self.p('startup_grace_s')),
             required_nodes=tuple(self.p('required_nodes')), warn_only_nodes=tuple(self.p('warn_only_nodes')))

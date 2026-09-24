@@ -769,7 +769,7 @@ What exists:
 
 Handoff / open:
 * NOT run on the car. First run: `race.launch.py`, open the GUI Preflight rows; each red row says why and the fix.
-* `start_pose` uses the UWB-weighted global pose. Step 10 verify was skipped and the UWB lap was ~1 m stretched with the
+* OWNER DECISION 2026-09-25: `ops.yaml race_supervisor.start_pose_check_enabled: false` = the car is ASSUMED to sit on P0 (row shows "assumed"). Set true once UWB is verified. `start_pose` (when enabled) uses the UWB-weighted global pose. Step 10 verify was skipped and the UWB lap was ~1 m stretched with the
   tag under 1 Hz, so this row may stay red until UWB is verified or the car is placed exactly on P0. The tolerance is YAML.
 * `start_camera_uwb_agreement_m` and `auto_record` are still unused (no camera-map pose source; `run_recorder` is not
   launched in phase 7/8), see BACKLOG #65.

@@ -39,6 +39,7 @@ race_supervisor:
     battery_min_v: 10.8             # CONFIRM for your pack
     start_position_tolerance_m: 0.20   # UWB (+-20 cm) vs map start pose
     start_heading_tolerance_deg: 15.0
+    start_pose_check_enabled: false  # 2026-09-25 owner: assume the car is on P0 until UWB is verified (then set true)
     start_camera_uwb_agreement_m: 0.20
     auto_record: true
     ready_hold_s: 1.0               # all checks green for this long before READY
