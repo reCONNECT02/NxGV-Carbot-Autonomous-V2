@@ -255,8 +255,9 @@ steps:
                 # (that duty = the breakaway threshold, measured forward and backward first). Every later segment is KICKED:
                 # breakaway + margin_duty, raised the same way while the encoder sees nothing, and the moment it moves the
                 # command drops to the segment's own value; measuring starts kick_settle_s later. No motion up to max_duty /
-                # kick_timeout_s aborts the run.
-                breakaway: {enabled: true, start_duty: 0.06, step_duty: 0.01, step_s: 0.3, max_duty: 0.45, move_m: 0.01,
+                # kick_timeout_s aborts the run. max_duty must not exceed command_owner calibration.duty_max (0.50, control.yaml):
+                # beyond it the owner clips the request, so Run refuses.
+                breakaway: {enabled: true, start_duty: 0.06, step_duty: 0.01, step_s: 0.3, max_duty: 0.50, move_m: 0.01,
                             margin_duty: 0.02, kick_timeout_s: 3.0, kick_settle_s: 1.0}}
     pass: {max_steady_error_mps: 0.01, max_overshoot_pct: 20.0, min_creep_speed_mps: 0.03}
   # Step 9 (wizard page, phase 8): measures the venue road / tape colours from what road_perception

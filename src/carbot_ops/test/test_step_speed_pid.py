@@ -24,7 +24,7 @@ from helpers import STEPS
 
 CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0, 'page_watch_s': 8.0}
 STEP8 = next(s for s in STEPS['steps'] if s['id'] == 'speed_pid')
-OWNER_START = {'mode': 'calibrate', 'speed_pid.kp': 0.8, 'speed_pid.ki': 0.4, 'speed_pid.kd': 0.0,
+OWNER_START = {'mode': 'calibrate', 'calibration.duty_max': 0.5, 'speed_pid.kp': 0.8, 'speed_pid.ki': 0.4, 'speed_pid.kd': 0.0,
                'speed_pid.integral_limit': 0.15, 'feedforward.duty_per_mps': 1.0, 'feedforward.static_duty': 0.08}
 STATIC, PER_MPS = 0.045, 0.8
 N_SEG = len(STEP8['procedure']['sweep_duties']) + len(STEP8['procedure']['step_targets_mps'])
@@ -478,3 +478,16 @@ def test_live_view_shows_the_ramp():
     lv = step.live({})['run']
     assert lv['phase'] == 'ramping' and lv['duty'] > 0.06 and lv['kind'] == 'breakaway'
     json.dumps(step.live({}))
+
+
+def test_breakaway_max_duty_above_the_owner_cap_is_refused():
+    cfg = copy.deepcopy(STEP8_BRK)
+    cfg['procedure']['breakaway']['max_duty'] = 0.60
+    step, car, owner, drive, _ = make(cfg=cfg)
+    step.live({})
+    msg = step.start(car.clock.t, {})
+    assert msg and 'calibration.duty_max' in msg and step.run is None
+    cfg['procedure']['breakaway']['max_duty'] = 0.50            # equal to the cap is fine
+    step, car, *_ = make(cfg=cfg)
+    step.live({})
+    assert step.start(car.clock.t, {}) is None

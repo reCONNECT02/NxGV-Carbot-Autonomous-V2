@@ -60,7 +60,7 @@ BREAK_KEYS = ('enabled', 'start_duty', 'step_duty', 'step_s', 'max_duty', 'move_
 PASS_KEYS = ('max_steady_error_mps', 'max_overshoot_pct', 'min_creep_speed_mps')
 PID_PARAMS = tuple(f'speed_pid.{k}' for k in csp.PID_KEYS)
 FF_PARAMS = tuple(f'feedforward.{k}' for k in csp.FF_KEYS)
-OWNER_PARAMS = ('mode',) + PID_PARAMS + FF_PARAMS
+OWNER_PARAMS = ('mode', 'calibration.duty_max') + PID_PARAMS + FF_PARAMS
 READ_RETRY_S = 2.0
 RAW, CLOSED = 'CALIBRATION_RAW', 'CALIBRATION'
 TRACE_POINTS = 80
@@ -128,7 +128,7 @@ class SpeedPidStep(StepImpl):
                 self.link_error = f'Cannot read {", ".join(miss)}: is calibrate.launch.py running?'
                 return
             self.link_error = ''
-            self.values = {'mode': str(o['mode']),
+            self.values = {'mode': str(o['mode']), 'duty_cap': float(o['calibration.duty_max']),
                            'pid': {k: float(o[f'speed_pid.{k}']) for k in csp.PID_KEYS},
                            'ff': {k: float(o[f'feedforward.{k}']) for k in csp.FF_KEYS}}
         self.owner.get(list(OWNER_PARAMS), done)
@@ -172,6 +172,11 @@ class SpeedPidStep(StepImpl):
         if self.values['mode'] != 'calibrate':
             return (f'command_owner runs in {self.values["mode"]!r} mode: the car only drives for calibration '
                     'under calibrate.launch.py.')
+        cap = self.values['duty_cap']
+        if self.brk['enabled'] and self.brk['max_duty'] > cap + 1e-9:
+            return (f'procedure.breakaway.max_duty {self.brk["max_duty"]:.2f} is above command_owner calibration.duty_max '
+                    f'{cap:.2f}: the owner would clip the ramp and the "did not move" result would be wrong. Lower '
+                    'max_duty in calibration_steps.yaml or raise calibration.duty_max (control.yaml).')
         pid = dict(self.values['pid'])
         self.run = {'kind': 'breakaway' if self.brk['enabled'] else 'sweep', 'i': 0, 'phase': 'ready', 'pid': pid,
                     'ff': None, 'metrics': [], 'break': {}, 'duty': 0.0, 't_step': 0.0,
