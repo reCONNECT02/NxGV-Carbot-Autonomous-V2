@@ -36,12 +36,18 @@ def board_points(cols: int, rows: int, square: float) -> np.ndarray:
     return g
 
 
-def detect_chessboard(img: np.ndarray, cols: int, rows: int, fast: bool = False) -> Optional[np.ndarray]:
+def detect_chessboard(img: np.ndarray, cols: int, rows: int, fast: bool = False,
+                     stretch: Sequence[float] = ()) -> Optional[np.ndarray]:
     """Inner corners (N,2) float32 in OpenCV order, or None.
 
     fast=True (live capture on the RDK): classic detector with FAST_CHECK on a
     half-size image, corners refined on the full image. Otherwise the more
-    robust sector-based detector first (offline / extrinsics)."""
+    robust sector-based detector first (offline / extrinsics).
+
+    stretch (non-fast only): vertical stretch factors tried when the board is not found as is. A floor
+    board seen from a camera ~9 cm above the floor is foreshortened to a few pixels per row (BACKLOG #54)
+    and the detectors give up; the image is stretched vertically (cubic), the board found there, and the
+    corners are divided back to the original pixel rows. () = old behaviour (intrinsics, tests)."""
     gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     pattern = (int(cols), int(rows))
     crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 40, 1e-3)
@@ -60,6 +66,17 @@ def detect_chessboard(img: np.ndarray, cols: int, rows: int, fast: bool = False)
         ok, c = cv2.findChessboardCornersSB(gray, pattern, flags=flags)
         if ok:
             return c.reshape(-1, 2).astype(np.float32)
+        h, w = gray.shape[:2]
+        for fy in stretch:
+            fy = float(fy)
+            if fy <= 1.0:
+                continue
+            big = cv2.resize(gray, (w, int(round(h * fy))), interpolation=cv2.INTER_CUBIC)
+            ok, c = cv2.findChessboardCornersSB(big, pattern, flags=flags)
+            if ok:
+                c = c.reshape(-1, 2).astype(np.float32)
+                c[:, 1] = (c[:, 1] + 0.5) / fy - 0.5           # pixel-centre convention of the resize
+                return c
     flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
     ok, c = cv2.findChessboardCorners(gray, pattern, flags=flags)
     if not ok:

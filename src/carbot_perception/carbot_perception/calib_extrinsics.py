@@ -48,7 +48,7 @@ STEP = 'extrinsics_ipm'
 RESULT = '04_extrinsics_ipm.yaml'
 
 
-def capture(grab, role, board, frames, tries):
+def capture(grab, role, board, frames, tries, stretch=()):
     """Average corners over `frames` detections of a still board."""
     got, img_last = [], None
     for _ in range(tries):
@@ -56,7 +56,7 @@ def capture(grab, role, board, frames, tries):
         if img is None:
             continue
         img_last = img
-        c = detect_chessboard(img, board.cols, board.rows)
+        c = detect_chessboard(img, board.cols, board.rows, stretch=stretch)
         if c is None:
             continue
         if got and float(np.mean(np.linalg.norm(c - got[-1], axis=1))) > 1.0:
@@ -114,6 +114,9 @@ def main(argv=None):
     step = step_cfg(cfg_dir, STEP)
     boards = [FloorBoard.from_yaml(b) for b in floor_board_dicts(step['target'])]      # base_link, axle_offset_m applied
     pas = step['pass']
+    if 'detect_vertical_stretch' not in step['target']:
+        raise KeyError('missing YAML key calibration_steps.yaml extrinsics_ipm.target.detect_vertical_stretch')
+    stretch = [float(x) for x in step['target']['detect_vertical_stretch']]     # foreshortened floor board, BACKLOG #54
     session = cs.open_session(root, a.session)
     cameras = effective_cameras(session, cfg_dir, root)
     out_dir = os.path.join(session, 'captures', 'extrinsics')
@@ -141,10 +144,10 @@ def main(argv=None):
             board = mine[0]
             if offline:
                 img = cv2.imread(offline.get(role, ''))
-                c = detect_chessboard(img, board.cols, board.rows) if img is not None else None
+                c = detect_chessboard(img, board.cols, board.rows, stretch=stretch) if img is not None else None
             else:
                 print(f'[calib] {role}: looking for board "{board.name}" ...')
-                c, img = capture(grab, role, board, a.frames, a.tries)
+                c, img = capture(grab, role, board, a.frames, a.tries, stretch)
             images[role] = img
             if img is None:
                 problems.append(f'{role}: no image')
@@ -168,7 +171,7 @@ def main(argv=None):
             # also collect corners of other boards this camera can see (seam check)
             for other in boards:
                 if other is not board and role in other.roles:
-                    oc = detect_chessboard(img, other.cols, other.rows)
+                    oc = detect_chessboard(img, other.cols, other.rows, stretch=stretch)
                     if oc is not None:
                         corners[(other.name, role)] = oc
     finally:

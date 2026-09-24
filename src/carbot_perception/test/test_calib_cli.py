@@ -49,9 +49,6 @@ def render(intr, mount, tex, ss=3):
     return cv2.resize(img, (intr.width, intr.height), interpolation=cv2.INTER_AREA)
 
 
-@pytest.mark.xfail(strict=True, reason='BACKLOG #54: with the rear axle 150 mm back the front board is at base_link x 0.77 '
-                   'and the camera (9.35 cm high) sees it at a grazing angle: calib_core.detect_chessboard does not find it '
-                   'in this synthetic 640x480 render (it did at x 0.62). Remove the marker when detection is robust there.')
 def test_extrinsics_cli_offline(tmp_path):
     steps = yaml.safe_load(open(os.path.join(CONFIG, 'data', 'calibration_steps.yaml')))
     target = [s for s in steps['steps'] if s['id'] == 'extrinsics_ipm'][0]['target']

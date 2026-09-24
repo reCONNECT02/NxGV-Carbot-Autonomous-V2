@@ -113,6 +113,11 @@ steps:
      target: {type: floor_markers, layout: docs/images/calib_mat.png,
               warn_nominal_offset_m: 0.03, warn_nominal_angle_deg: 5.0,
               axle_offset_m: 0.150,
+              # Vertical stretch factors tried, in order, when the board is not found as is: the board is seen
+              # from ~9 cm above the floor, so its rows are only 10-20 px apart and the detector gives up
+              # (BACKLOG #54). [] = never stretch. cv2.findChessboardCornersSB is not repeatable (the same
+              # 640x480 frame at x2.0 succeeded 19 of 20 times), so the best factor is listed three times.
+              detect_vertical_stretch: [2.0, 2.0, 2.0, 1.5, 2.5, 3.0],
               boards: [
                 # 2026-09-24: front camera only (the side cameras are removed from the project), one board.
                 # Removed with the side cameras (put back together with their roles in cameras.yaml):
