@@ -1,5 +1,11 @@
 # RDK X5 dual MIPI camera setup — verified working (2026-09-18)
 
+> **HISTORICAL (2026-09-24): the two MIPI cameras below were REMOVED from the project.** Their MIPI data lanes never
+> worked reliably on the competition cars (kernel `lane state of host phy is error`, `wait phy stop state error`,
+> `mipi_cam` `grab failed`; both I2C buses answered, so it is a lane / ribbon / connector fault). The car is FRONT
+> CAMERA ONLY: the Astra Pro colour stream `/camera/color/image_raw` (320x240 @ 15 fps, `astra_rgb.launch.py`).
+> This file is kept as the record of what was tried; nothing in the stack starts `mipi_cam` any more.
+
 ## Hardware
 - Board: D-Robotics RDK X5, hostname `risabot1`, user `sunrise`, IP 10.168.5.164
 - OS: Ubuntu 22.04.5, kernel 6.1.83 aarch64, TROS Humble

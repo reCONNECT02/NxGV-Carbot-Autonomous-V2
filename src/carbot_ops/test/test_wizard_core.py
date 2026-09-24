@@ -68,7 +68,7 @@ def test_run_pass_save_writes_session_but_not_active(tmp_path):
     assert r['ok'] and '01_sensor_health.yaml' in r['message']
     sess = w.session
     doc = yaml.safe_load(open(os.path.join(sess, '01_sensor_health.yaml')))
-    assert doc['passed'] and doc['n'] == 11
+    assert doc['passed'] and doc['n'] == 9
     assert cs.load_summary(sess)['steps']['sensor_health']['status'] == 'PASS'
     assert cs.active_session(str(tmp_path)) is None            # 10 required steps still open
     assert w.state()['steps'][0]['can_advance'] is True
@@ -246,7 +246,7 @@ def test_select_keeps_step_message(tmp_path):
 def test_live_payload_shape(tmp_path):
     w, _ = make(tmp_path)
     live = w.live(Feed().next())
-    assert live['step']['built'] and live['step']['live']['n'] == 11
+    assert live['step']['built'] and live['step']['live']['n'] == 9
     assert live['step']['meta']['instructions']
     w.action('camera_intrinsics', 'SELECT', '', {})
     live = w.live({})

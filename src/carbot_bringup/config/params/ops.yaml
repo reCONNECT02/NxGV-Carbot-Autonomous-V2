@@ -21,10 +21,9 @@ calibration_wizard:
     uwb_rate_window_s: 3.0          # per-anchor rate / report rate window in the live view
     restart_cameras:                # step 1 "Restart camera drivers" button
       enabled: true
-      kill_patterns: [mipi_cam, hobot_codec, websocket, astra_camera_container]   # camera ones only
+      kill_patterns: [hobot_codec, websocket, astra_camera_container]   # camera ones only
       grace_s: 2.0                  # SIGINT, wait, then SIGKILL (kill_stale.sh)
       root_helper_dir: /usr/local/lib/carbot   # = drivers.yaml carbot_launch.root_helper_dir
-      delay_mipi_second_s: 2.0      # = drivers.yaml carbot_launch.delay_mipi_second_s
       settle_s: 6.0                 # wait before checking the drivers are still alive
       timeout_s: 20.0               # kill helper time limit
       log_dir: /tmp/carbot_camera_restart
@@ -59,8 +58,7 @@ run_recorder:
              /carbot/perception/road_grid, /carbot/race/preflight, /carbot/race/armed,
              /carbot/system/health, /carbot/scoreboard, /carbot/map/track_json,
              /carbot/plan/global_route, /carbot/plan/route_info,
-             /carbot/cam/front/record/compressed, /carbot/cam/left_rear/record/compressed,
-             /carbot/cam/right_rear/record/compressed,
+             /carbot/cam/front/record/compressed,
              /scan, /odom, /imu/rpy, /imu/pitch, /uwb3/input_json, /cmd_vel_auto, /cmd_vel,
              /auto_mode, /e_stop, /tunnel_detected, /tunnel_cmd_vel, /tunnel_debug,
              /carbot/request/road, /carbot/request/tunnel, /carbot/request/parking,
@@ -70,18 +68,18 @@ system_monitor:
   ros__parameters:
     rate_hz: 1.0
     # Watched topics and expected rates (parallel arrays).
-    watch_topics: [/camera/color/image_raw, /cam_ov5647/image_raw, /cam_imx219/image_raw,
+    watch_topics: [/camera/color/image_raw,
                    /scan, /odom, /imu/rpy, /uwb3/input_json, /carbot/perception/road_grid,
                    /carbot/localization/local_pose, /carbot/owner/state,
                    # phase 7 additions (values only, no key renamed)
                    /carbot/localization/global_pose, /carbot/uwb/ranges, /carbot/memory/grid,
                    /carbot/plan/corridor, /carbot/plan/local_path, /carbot/detections,
                    /carbot/safety/status]
-    watch_expected_hz: [15.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 50.0,
+    watch_expected_hz: [15.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 50.0,
                         10.0, 10.0, 8.0, 5.0, 5.0, 10.0, 50.0]   # corridor/local_path 5 Hz (planning.yaml), safety 50 Hz
     soc_temp_path: /sys/class/thermal/thermal_zone0/temp
     bpu_ratio_path: /sys/devices/system/bpu/bpu0/ratio   # UNVERIFIED on RDK X5: check in phase 7
-    camera_process_patterns: [mipi_cam, astra_camera, hobot_codec, websocket]
+    camera_process_patterns: [astra_camera, hobot_codec, websocket]
     uwb_agent_pattern: micro_ros_agent
     # phase 8 (real node; calibration step 1 + race preflight read its output)
     rate_window_s: 2.0              # rate = messages in the last 2 s

@@ -2,7 +2,7 @@
 import pytest
 
 from carbot_ops import sensor_checks as sc
-from helpers import CAMERAS, STEP1, UWB, good
+from helpers import CAMERAS, OLD_SESSION_CAMERAS, STEP1, UWB, good
 
 
 def rows(snap, **pass_over):
@@ -12,43 +12,49 @@ def rows(snap, **pass_over):
 
 def test_all_green():
     r = rows(good())
-    assert len(r) == 11
+    assert len(r) == 9                                   # 1 camera + lidar/odom/imu/uwb tag + anchors/battery/processes/network
     assert all(x['state'] == 'ok' for x in r.values()), [x for x in r.values() if x['state'] != 'ok']
 
 
-def test_camera_labels_follow_yaml_roles_and_show_unconfirmed():
+def test_camera_row_is_the_front_astra_only():
     r = rows(good())
     assert r['cam_astra']['label'] == 'Astra Pro (front)'
-    assert r['cam_ov5647']['label'] == 'OV5647 · MIPI ch 2 (right side?)'   # roles_confirmed false
-    assert r['cam_imx219']['topic'] == '/cam_imx219/image_raw'
+    assert [k for k in r if k.startswith('cam_')] == ['cam_astra']
+    assert r['cam_astra']['topic'] == '/camera/color/image_raw'
 
 
-def test_mipi_never_published_gives_root_and_port_hints():
+def test_old_session_side_cameras_get_no_row():
+    checks = sc.build_checks(OLD_SESSION_CAMERAS, UWB, STEP1['pass'])
+    keys = [c.key for c in checks]
+    assert 'cam_ov5647' not in keys and 'cam_imx219' not in keys and 'cam_astra' in keys
+
+
+def test_camera_never_published_gives_usb_hint():
     s = good()
-    s['topics']['/cam_ov5647/image_raw'] = {'hz': 0.0, 'age': -1.0, 'latency': -1}
-    x = rows(s)['cam_ov5647']
+    s['topics']['/camera/color/image_raw'] = {'hz': 0.0, 'age': -1.0, 'latency': -1}
+    x = rows(s)['cam_astra']
     assert x['state'] == 'bad' and x['measured'] == 'never'
-    assert 'Restart camera drivers' in x['fix'] and 'There are no available host' in x['fix']
-    assert 'install_root_helpers' in x['fix']
+    assert 'Restart camera drivers' in x['fix'] and 'USB' in x['fix']
+    assert 'mipi' not in x['fix'].lower() and 'MIPI' not in x['fix']
 
 
 def test_stale_and_slow():
     s = good()
     s['topics']['/scan'] = {'hz': 10.0, 'age': 4.0, 'latency': 5}
-    s['topics']['/cam_imx219/image_raw'] = {'hz': 12.0, 'age': 0.05, 'latency': 5}
+    s['topics']['/camera/color/image_raw'] = {'hz': 9.0, 'age': 0.05, 'latency': 5}
     r = rows(s, enforce_min_rates=True)
     assert r['lidar']['state'] == 'bad' and 'stopped' in r['lidar']['why']
-    assert r['cam_imx219']['state'] == 'bad' and 'below 24.0' in r['cam_imx219']['why']
+    assert r['cam_astra']['state'] == 'bad' and 'below 12.0' in r['cam_astra']['why']
 
 
 def test_rates_not_enforced_still_fails_stale_and_never():
     s = good()
     s['topics']['/scan'] = {'hz': 10.0, 'age': 4.0, 'latency': 5}
-    s['topics']['/cam_imx219/image_raw'] = {'hz': 12.0, 'age': 0.05, 'latency': 5}
+    s['topics']['/camera/color/image_raw'] = {'hz': 9.0, 'age': 0.05, 'latency': 5}
     s['topics']['/odom'] = {'hz': 0.0, 'age': -1.0, 'latency': -1}
     r = rows(s, enforce_min_rates=False)
-    assert r['cam_imx219']['state'] == 'ok' and 'not enforced' in r['cam_imx219']['detail']
-    assert r['cam_imx219']['limit'] == 'publishing'
+    assert r['cam_astra']['state'] == 'ok' and 'not enforced' in r['cam_astra']['detail']
+    assert r['cam_astra']['limit'] == 'publishing'
     assert r['lidar']['state'] == 'bad' and r['odom']['state'] == 'bad'
 
 
@@ -96,7 +102,7 @@ def test_battery():
 
 def test_duplicates_and_old_viewer():
     s = good()
-    s['procs'] += [('mipi_cam /cam_ov5647', 999), ('websocket', 555)]
+    s['procs'] += [('astra_camera /', 999), ('websocket', 555)]
     x = rows(s)['processes']
     assert x['state'] == 'bad' and x['measured'] == '2'
     assert '999' in x['why'] and 'websocket' in x['why']
@@ -122,19 +128,19 @@ def test_missing_yaml_key_is_a_clear_error():
     del bad['processes']
     with pytest.raises(sc.ConfigError, match='processes'):
         sc.build_checks(CAMERAS, UWB, bad)
-    cams = dict(CAMERAS, roles={'front': 'astra', 'left_rear': 'nope', 'right_rear': 'ov5647'})
-    with pytest.raises(sc.ConfigError, match='left_rear'):
+    cams = dict(CAMERAS, roles={'front': 'nope'})
+    with pytest.raises(sc.ConfigError, match='front'):
         sc.build_checks(cams, UWB, STEP1['pass'])
 
 
-def test_disabled_cameras_have_no_row_and_are_not_process_checked():
-    cams = dict(CAMERAS, sensors={n: dict(s, enabled=(n == 'astra')) for n, s in CAMERAS['sensors'].items()})
+def test_disabled_front_camera_has_no_row():
+    cams = dict(CAMERAS, sensors={n: dict(s, enabled=False) for n, s in CAMERAS['sensors'].items()})
     s = good()
-    del s['topics']['/cam_ov5647/image_raw'], s['topics']['/cam_imx219/image_raw']
-    s['procs'] = [('astra_camera /', 100)]
+    del s['topics']['/camera/color/image_raw']
+    s['procs'] = []
     checks = sc.build_checks(cams, UWB, STEP1['pass'])
     r = {x['key']: x for x in sc.evaluate(checks, s, STEP1['pass']['max_age_s'])}
-    assert 'cam_ov5647' not in r and 'cam_imx219' not in r and len(r) == 9
+    assert 'cam_astra' not in r and len(r) == 8
     assert all(x['state'] == 'ok' for x in r.values()), [x for x in r.values() if x['state'] != 'ok']
 
 

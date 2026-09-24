@@ -30,10 +30,6 @@ TRAFFIC_LIGHT_STATE = '/traffic_light_state'  # String RED/GREEN/UNKNOWN (kept f
 BOOM_GATE_OPEN = '/boom_gate_open'      # Bool (kept for base tools)
 ASTRA_COLOR_IMAGE = '/camera/color/image_raw'
 
-# Camera_Setup.md (verified 2026-09-18)
-OV5647_IMAGE = '/cam_ov5647/image_raw'  # MIPI channel 2
-IMX219_IMAGE = '/cam_imx219/image_raw'  # MIPI channel 0
-
 # UWB_Handoff.md
 UWB_INPUT_JSON = '/uwb3/input_json'     # micro-ROS tag, std_msgs/String JSON, BEST_EFFORT
 UWB_DEBUG_POSITION = '/uwb/position'    # tools/uwb/uwb_xy.py debug viewer only
@@ -43,8 +39,9 @@ UWB_DEBUG_POSITION = '/uwb/position'    # tools/uwb/uwb_xy.py debug viewer only
 # ---------------------------------------------------------------------------
 STATUS = '/carbot/status'                               # NodeStatus, every node, 1 Hz
 
-# Cameras (role = front | left_rear | right_rear, mapped to sensors in cameras.yaml)
-CAMERA_ROLES = ('front', 'left_rear', 'right_rear')
+# Cameras: FRONT ONLY (the two MIPI side cameras were removed 2026-09-24). role -> sensor in cameras.yaml.
+# Roles named in an older session's cameras.yaml that are not listed here are ignored.
+CAMERA_ROLES = ('front',)
 
 
 def cam_preview(role: str) -> str:

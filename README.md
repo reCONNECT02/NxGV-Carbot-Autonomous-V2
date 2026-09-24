@@ -2,7 +2,7 @@
 
 ROS 2 Humble (Ubuntu 22.04) stack for the **NxGV Driverless CarBot Challenge 26/27**
 (MARii Cyberjaya, 25–26 Sept 2026) on the RISA Bot: RDK X5 8 GB, Orbbec Astra Pro
-(front), 2 × MIPI rear-quarter cameras (OV5647, IMX219), YDLiDAR T-mini Plus,
+(the only camera; the two MIPI side cameras were removed 2026-09-24), YDLiDAR T-mini Plus,
 IMU + wheel encoder, single rear motor, Ackermann steering, ESP32 + DW1000 UWB tag.
 
 It implements the 16-block architecture of `docs/reference/Carbot_Architecture_V4.md`
@@ -47,7 +47,7 @@ tools/map/              map_builder.py (track_map.yaml), mission_planner.py (mis
 tools/sandbox/          laptop runners of the real node code (no ROS)
 tools/v4_harness/       runs the V4 simulator JS in Node for the equivalence tests
 tools/bpu_model/        base repo BPU model + training/conversion scripts
-tools/setup/            install_root_helpers.sh (mipi_cam as root via sudoers)
+tools/setup/            install_root_helpers.sh (kill_stale.sh as root via sudoers)
 tools/systemd/          carbot-race.service (optional auto-start)
 tools/git-hooks/        pre-commit secret check
 docs/                   SETUP, CALIBRATION, RUN, TROUBLESHOOTING, CHALLENGE_MAP, DETECTORS, reference/
@@ -59,7 +59,7 @@ docs/                   SETUP, CALIBRATION, RUN, TROUBLESHOOTING, CHALLENGE_MAP,
 cd ~/NxGV-Carbot-Autonomous-V2
 git config core.hooksPath tools/git-hooks                 # secret check, once per clone
 cp firmware/uwb_tag/TagMicroROS/TagConfig.example.h firmware/uwb_tag/TagMicroROS/TagConfig.h   # edit locally, never commit
-sudo bash tools/setup/install_root_helpers.sh sunrise     # once: mipi_cam must run as root
+sudo bash tools/setup/install_root_helpers.sh sunrise     # once: stale-process killer as root
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash

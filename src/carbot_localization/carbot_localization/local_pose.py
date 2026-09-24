@@ -32,14 +32,24 @@ from tf2_ros import TransformBroadcaster
 
 from .estimator_core import (LocalCfg, LocalEstimator, PoseHistory, grid_axes,
                              odom_increment, wrap)
+from .icp_core import IcpCfg, IcpCorrector
 
-REQUIRED = ['rate_hz', 'motion_timeout_s', 'heading_blend', 'sigma.initial_m',
+REQUIRED = ['rate_hz', 'motion_timeout_s', 'heading_blend', 'heading_lead_s', 'sigma.initial_m',
             'sigma.idle_growth_m_per_s', 'sigma.per_distance', 'sigma.per_sqrt_s',
             'sigma.floor_m', 'sigma.visual_decay', 'visual.enabled', 'visual.max_radius_m',
             'visual.max_edge_distance_m', 'visual.gradient_step_m', 'visual.gradient_norm_min',
             'visual.gradient_norm_max', 'visual.min_rows', 'visual.prior_weight',
             'visual.weight_scale_m', 'visual.step_cap', 'visual.step_gain',
             'visual.sample_stride', 'visual.disable_pitch_rad', 'visual.disable_in_parking',
+            'icp.enabled', 'icp.every_n_grids', 'icp.max_radius_m', 'icp.sample_stride', 'icp.max_points',
+            'icp.normal_k', 'icp.memory.add_every_n_grids', 'icp.memory.max_age_s', 'icp.memory.min_age_s',
+            'icp.memory.max_points', 'icp.memory.voxel_m', 'icp.memory.uncertainty_base_m',
+            'icp.memory.uncertainty_per_m', 'icp.memory.uncertainty_limit_m', 'icp.max_iter',
+            'icp.pair_max_dist_m', 'icp.trim_fraction', 'icp.huber_m', 'icp.min_inliers',
+            'icp.min_inlier_ratio', 'icp.max_rms_m', 'icp.min_ref_points', 'icp.eig_min_ratio',
+            'icp.rot_arm_m', 'icp.max_fit_translation_m', 'icp.max_fit_rotation_rad', 'icp.gain',
+            'icp.max_step_m', 'icp.max_step_rad', 'icp.max_total_m', 'icp.max_total_rad',
+            'icp.min_speed_mps',
             'publish_tf', 'imu_timeout_s', 'pose_history_s', 'max_stamp_gap_s',
             'max_odom_step_m', 'heading_sigma_rad', 'status_publish_hz', 'init.source',
             'data.track_map', 'data.track_features', 'data.mission', 'frames.track', 'frames.base']
@@ -67,6 +77,9 @@ class LocalPoseNode(CarbotNode):
         self.track = str(self.p('frames.track'))
         self.base = str(self.p('frames.base'))
         self.est = LocalEstimator(LocalCfg.from_params(self.p), *self._initial_pose())
+        self.icp = IcpCorrector(IcpCfg.from_params(self.p))        # off unless icp.enabled (see icp_core.py)
+        self.icp_skipped = ''
+        self.last_icp_ms = 0.0
         self.hist = PoseHistory(float(self.p('pose_history_s')))     # V4 odom (track-aligned)
         self.prev_odom = None
         self.prev_t = None
@@ -130,6 +143,7 @@ class LocalPoseNode(CarbotNode):
             return
         p = msg.pose.pose
         self.est.reset(p.position.x, p.position.y, yaw_of(p.orientation))
+        self.icp.reset()
         self.hist.clear()
         self.get_logger().info(f'reset to ({p.position.x:.3f}, {p.position.y:.3f}, '
                                f'{math.degrees(yaw_of(p.orientation)):.1f} deg); IMU offset re-taken')
@@ -153,7 +167,8 @@ class LocalPoseNode(CarbotNode):
         self._publish_pose(msg.header.stamp)
 
     def _on_grid(self, g: LocalGrid) -> None:
-        if not bool(self.p('visual.enabled')):
+        visual_on, icp_on = bool(self.p('visual.enabled')), self.icp.c.enabled
+        if not visual_on and not icp_on:
             self.visual_skipped = 'disabled'
             return
         if abs(math.radians(self.pitch_deg)) > float(self.p('visual.disable_pitch_rad')):
@@ -170,11 +185,26 @@ class LocalPoseNode(CarbotNode):
         kind = np.frombuffer(bytes(g.kind), np.uint8).reshape(rows, cols)
         grown = np.frombuffer(bytes(g.grown), np.uint8).reshape(rows, cols)
         lx, ly = grid_axes(rows, cols, g.resolution_m, g.origin_x_m, g.origin_y_m)
-        pose_at = (od[0] + self.est.tx, od[1] + self.est.ty, od[2])
-        t0 = time.perf_counter()
-        r = self.est.visual_update(kind, grown, lx, ly, pose_at, self.course)
-        self.last_vis_ms = (time.perf_counter() - t0) * 1000.0
-        self.visual_skipped = '' if r.applied else f'only {r.matches} edge matches'
+        if visual_on:
+            pose_at = (od[0] + self.est.tx, od[1] + self.est.ty, od[2] + self.est.ta)
+            t0 = time.perf_counter()
+            r = self.est.visual_update(kind, grown, lx, ly, pose_at, self.course)
+            self.last_vis_ms = (time.perf_counter() - t0) * 1000.0
+            self.visual_skipped = '' if r.applied else f'only {r.matches} edge matches'
+        else:
+            self.visual_skipped = ''
+        if icp_on:
+            t0 = time.perf_counter()
+            speed = abs(self.twist.linear.x) if self.twist is not None else 0.0
+            step = self.icp.on_grid(kind, grown, lx, ly, od, stamp_s(g.header.stamp), self.est.distance, speed,
+                                    od[2] + self.est.ta)
+            if step is not None:
+                if step.applied:
+                    self.est.apply_body_step(step.dx, step.dy, step.dth)     # already slew-limited by icp_core
+                    self.icp_skipped = ''
+                else:
+                    self.icp_skipped = step.reason
+            self.last_icp_ms = (time.perf_counter() - t0) * 1000.0
 
     # ------------------------------------------------------------------ outputs
     def _tick(self) -> None:
@@ -233,6 +263,9 @@ class LocalPoseNode(CarbotNode):
                   f'{self.est.visual_updates}, travelled {self.est.distance:.2f} m')
         if self.visual_skipped:
             detail += f', vis skipped: {self.visual_skipped}'
+        if self.icp.c.enabled:
+            detail += (f', icp {self.icp.accepted}/{self.icp.attempts} ({self.last_icp_ms:.1f} ms) '
+                       f'trim {math.degrees(self.est.ta):.2f} deg' + (f' [{self.icp_skipped}]' if self.icp_skipped else ''))
         if waiting:
             self.set_status(NodeStatus.WARN, 'WAITING_INPUT', 'waiting for /odom')
         elif stale:

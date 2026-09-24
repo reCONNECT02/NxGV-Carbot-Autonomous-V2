@@ -384,7 +384,7 @@ STEP_PAGES.sensor_health = (st, live) => {
 
   const task = live.task;
   const ctl = `<button class="btn" data-act="RESTART_CAMERAS" ${task && task.state === 'running' || st.status === 'RUNNING' ? 'disabled' : ''}>Restart camera drivers` +
-    `<small>Kills stale mipi_cam, hobot_codec, websocket and Astra processes, then restarts the 3 camera drivers (~10 s)</small></button>` + calTaskBox(task);
+    `<small>Kills stale hobot_codec, websocket and Astra processes, then restarts the Astra camera driver (~10 s)</small></button>` + calTaskBox(task);
 
   let tbl;
   if (lv.error) tbl = Cal.alertBad('Step 1 cannot run', lv.error, 'Fix calibration_steps.yaml / cameras.yaml / uwb.yaml, then relaunch calibrate.launch.py.');
@@ -423,15 +423,11 @@ STEP_PAGES.camera_identity = st => {
   const dis = running || !on.length || lv.error ? 'disabled' : '';
   const names = on.map(c => c.label.toLowerCase()).join(', ');
   let ctl = lv.error ? Cal.alertBad('Step 2 cannot run', lv.error, 'Fix cameras.yaml / calibration_steps.yaml, then relaunch calibrate.launch.py.') : '';
-  ctl += `<button class="btn primary" data-act="${act}" data-arg="${Cal.esc(JSON.stringify({ confirm: true, swap: false }))}" ${dis}>` +
-    `Confirm: the pictures are right<small>Confirms ${Cal.esc(names || 'nothing (every camera is off)')}</small></button>`;
-  if (lv.sides_enabled) {
-    ctl += `<button class="btn" data-act="${act}" data-arg="${Cal.esc(JSON.stringify({ confirm: true, swap: true }))}" ${dis}>` +
-      'Confirm swapped<small>The left picture shows the right side (and the other way round): Save swaps the two side roles</small></button>';
-  } else if (off.length) {
+  ctl += `<button class="btn primary" data-act="${act}" data-arg="${Cal.esc(JSON.stringify({ confirm: true }))}" ${dis}>` +
+    `Confirm: the picture is right<small>Confirms ${Cal.esc(names || 'nothing (the camera is off)')}</small></button>`;
+  if (off.length) {
     ctl += `<p class="muted" style="margin:8px 0 0;font-size:12.5px">${Cal.esc(off.map(c => `${c.label} (${c.sensor_label})`).join(' and '))} ` +
-      `${off.length > 1 ? 'are' : 'is'} switched off in cameras.yaml, so only ${Cal.esc(names || 'nothing')} is confirmed. ` +
-      'Once a side camera is switched on again it counts as unconfirmed until this step runs again.</p>';
+      `${off.length > 1 ? 'are' : 'is'} switched off in cameras.yaml, so nothing is confirmed.</p>`;
   }
   if (on.length && !allLive && !running) {
     ctl += Cal.alert('bad', 'A camera picture is not live', 'Confirm will fail while a switched-on camera is frozen or missing. Step 1 has a Restart camera drivers button.');

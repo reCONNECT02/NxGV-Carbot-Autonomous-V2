@@ -40,7 +40,7 @@ steps:
            # (2026-09-23: system_monitor under-counts on a loaded RDK, Astra 18.9 Hz vs 30 Hz real).
            # "never published" and "stale > max_age_s" still fail.
            enforce_min_rates: false,
-           processes: {mipi_pattern: mipi_cam, astra_pattern: astra_camera,   # exactly one each
+           processes: {astra_pattern: astra_camera,   # exactly one
                        forbidden: [hobot_codec, websocket]}}                  # old one-camera viewer
   # Step 2: the user confirms each ENABLED camera shows the view its role says
   # (cameras.yaml sensors.<name>.enabled: false -> role skipped, e.g. front-only).
@@ -57,20 +57,19 @@ steps:
     instructions:
       - Stand in front of the car and wave a hand about 50 cm ahead of the front bumper.
       - The FRONT picture must show your hand straight ahead. If it shows the side or the back, stop and fix the camera mounting or cabling.
-      - "Side cameras (only if switched on): wave at the left side, then the right side. If the left picture shows the right side, press Confirm swapped instead."
-      - Press Confirm. The pictures of every switched-on camera must keep streaming for a few seconds.
+      - Press Confirm. The front picture must keep streaming for a few seconds.
       - Press Save. It writes the roles into this session (they apply from the next launch of this session).
     procedure: {measure_s: 3.0, min_samples: 2, min_ok_fraction: 0.8}
     pass: {user_confirmed: true, max_image_age_s: 2.0}   # was 1.0; loosened 2026-09-24, images were 1.2 s old under load (BACKLOG #42)
   - index: 3
     id: camera_intrinsics
-    title: Camera intrinsics (per camera)
+    title: Camera intrinsics (front camera)
     required: true
     tab: perception
     # Wizard page (phase 8): one camera per Run, cameras with cameras.yaml enabled: false are
     # shown as not detected and do not count. Same math as the terminal tool below.
     writes: [intrinsics/<sensor>.yaml (ROS camera_info format), cameras.yaml sensors.*.intrinsics_file]
-    per_sensor: [astra, ov5647, imx219]
+    per_sensor: [astra]
     tool: ros2 run carbot_perception calib_intrinsics --sensor <sensor>
     instructions:
       - "Print docs/calibration/intrinsics_board_A4.pdf at 100 % (9 x 6 inner corners, 25 mm squares) and tape it flat to a stiff board."
@@ -87,12 +86,12 @@ steps:
                 still_px: 3.0,            # max corner motion between frames to count as still
                 max_live_corners: 54}     # corners sent to the page overlay
     pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}
-  - {index: 4,  id: extrinsics_ipm,    title: 3-camera extrinsics + IPM,     required: true,  tab: perception,
-     need: "Step 3 passed and saved. Put the car on the floor sheet with each printed board fully visible in its camera.",
+  - {index: 4,  id: extrinsics_ipm,    title: Front camera extrinsics + IPM,     required: true,  tab: perception,
+     need: "Step 3 passed and saved (at the current image size, 640x480). Put the car on the floor sheet so the printed board is fully visible to the front camera.",
      instructions: ["Print the floor sheet at 100% and align the rear axle and car centre line with its marks (the axle line is 150 mm further back relative to the boards than on the first sheet: axle_offset_m).",
-                    "Check each enabled camera preview: its floor board must be flat, fully visible and still.",
-                    "Press Run. The page captures a fresh picture from each enabled camera and solves the mounts.",
-                    "Read any camera-specific error, adjust the board or camera, and press Redo. Save only after all checks pass."],
+                    "Check the front camera picture: the floor board must be flat, fully visible and still.",
+                    "Press Run. It captures a fresh front picture, finds the board and solves the camera mount. On the RDK this takes about 10-40 s: wait until the page shows a result.",
+                    "Read any error, adjust the board or the camera, and press Redo. Save only after all checks pass."],
      procedure: {capture_timeout_s: 20.0},
      writes: [cameras.yaml mounts, cameras.yaml extrinsics_calibrated],
      tool: ros2 run carbot_perception calib_extrinsics,

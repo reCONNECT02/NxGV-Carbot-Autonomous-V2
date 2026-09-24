@@ -51,14 +51,13 @@ carbot_launch:
     # Step 13 (practice runs) needs the full profile. Race mode ignores this key.
     calibrate_lite_keep: [road_perception, camera_preview, uwb_ranges, safety_monitor, command_owner,
                           system_monitor, servo_controller]
-    # Killed (SIGINT, then SIGKILL) before anything starts. Camera_Setup.md:
-    # Ctrl+C does not always kill mipi_cam / hobot_codec / websocket, and a stale
-    # mipi_cam makes the next one fail with "There are no available host".
+    # Killed (SIGINT, then SIGKILL) before anything starts. Ctrl+C does not always kill
+    # the camera / codec / websocket processes. (mipi_cam was removed 2026-09-24 with the two side
+    # cameras; the front Astra is the only camera.)
     # Patterns are matched with `pgrep -f`. The launch that runs the cleanup is
     # protected (ancestor), so an OLDER carbot launch is killed too.
     kill_patterns:
       - launch carbot_bringup
-      - mipi_cam
       - hobot_codec
       - websocket
       - astra_camera_container
@@ -73,10 +72,7 @@ carbot_launch:
     # Root-owned copies installed by tools/setup/install_root_helpers.sh (preferred:
     # a root-owned script is safe to allow in sudoers). Fallback: package share dir.
     root_helper_dir: /usr/local/lib/carbot
-    tros_setup: /opt/tros/humble/setup.bash       # mipi_cam lives in TogetheROS
     # Start-up order (seconds after the stale-process cleanup finished).
-    delay_drivers_s: 0.0
-    delay_mipi_second_s: 2.0      # start the 2nd MIPI camera after the 1st (VIN init)
     delay_base_nodes_s: 2.0       # servo_controller, tunnel_wall_follower
     delay_stack_s: 4.0            # all carbot nodes
     delay_gui_s: 5.0

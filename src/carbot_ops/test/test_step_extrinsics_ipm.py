@@ -71,3 +71,20 @@ def test_save_preserves_earlier_camera_data(tmp_path):
     assert doc['extrinsics_calibrated'] is True
     with pytest.raises(StepRefused, match='missing'):
         step.save_data(session, {'mounts': {}})
+
+
+def test_intrinsics_from_another_image_size_are_refused(tmp_path):
+    cfg, cameras, root = fixture_data()
+    cameras = copy.deepcopy(cameras)
+    want = (int(cameras['sensors']['astra']['width']), int(cameras['sensors']['astra']['height']))
+    old = tmp_path / 'astra_old.yaml'
+    old.write_text(yaml.safe_dump({'image_width': 320, 'image_height': 240}), encoding='utf-8')
+    cameras['sensors']['astra']['intrinsics_file'] = str(old)
+    step = ExtrinsicsIpmStep(cfg, cameras, lambda: cameras, root, str(tmp_path))
+    message = step.start(0.0, {})
+    assert '320x240' in message and f'{want[0]}x{want[1]}' in message and 'Redo and Save step 3' in message
+    assert step.run is None
+    same = tmp_path / 'astra_now.yaml'
+    same.write_text(yaml.safe_dump({'image_width': want[0], 'image_height': want[1]}), encoding='utf-8')
+    cameras['sensors']['astra']['intrinsics_file'] = str(same)
+    assert step.start(0.0, {}) is None

@@ -1,4 +1,4 @@
-"""Step 2 (camera identity): front-only (repo cameras.yaml) and 3-camera logic, save/keep data (no ROS)."""
+"""Step 2 (camera identity): the front camera is the only role; old sessions' side roles are ignored; save/keep data (no ROS)."""
 import copy
 import json
 import os
@@ -12,13 +12,13 @@ from carbot_ops import wizard_core as wc
 from carbot_ops.sensor_checks import ConfigError
 from carbot_ops.step_camera_identity import CameraIdentityStep, parse_argument
 from carbot_ops.step_sensor_health import SensorHealthStep
-from helpers import CAMERAS, REPO_CAMERAS, STEP1, STEPS, UWB, good
+from helpers import CAMERAS, OLD_SESSION_CAMERAS, REPO_CAMERAS, STEP1, STEPS, UWB, good
 
 CFG = {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True, 'resume_max_age_h': 12.0,
        'page_watch_s': 8.0}
 STEP2 = next(s for s in STEPS['steps'] if s['id'] == 'camera_identity')
 CONFIRM = json.dumps({'confirm': True, 'swap': False})
-SWAPPED = json.dumps({'confirm': True, 'swap': True})
+SWAPPED = json.dumps({'confirm': True, 'swap': True})      # old GUI pages sent this key; refused now
 
 
 def front_only():
@@ -76,9 +76,8 @@ def session_cameras(w):
 def test_repo_yaml_builds_and_repo_roles_unconfirmed():
     CameraIdentityStep(STEP2, REPO_CAMERAS)
     assert REPO_CAMERAS['roles_confirmed'] is False and REPO_CAMERAS['roles_confirmed_for'] == []
-    assert set(REPO_CAMERAS['roles']) == {'front', 'left_rear', 'right_rear'}   # role keys never dropped
-    assert unconfirmed_roles(REPO_CAMERAS) == [r for r, s in REPO_CAMERAS['roles'].items()
-                                               if REPO_CAMERAS['sensors'][s]['enabled']]
+    assert set(REPO_CAMERAS['roles']) == {'front'}                              # side roles removed 2026-09-24
+    assert unconfirmed_roles(REPO_CAMERAS) == ['front']
 
 
 @pytest.mark.parametrize('where,key', [('procedure', 'measure_s'), ('pass', 'max_image_age_s')])
@@ -95,7 +94,7 @@ def test_missing_cameras_key_is_error():
     with pytest.raises(ConfigError, match='roles_confirmed_for'):
         CameraIdentityStep(STEP2, cams)
     cams = copy.deepcopy(CAMERAS)
-    del cams['sensors']['ov5647']['enabled']
+    del cams['sensors']['astra']['enabled']
     with pytest.raises(KeyError, match='enabled'):
         CameraIdentityStep(STEP2, cams)
 
@@ -108,13 +107,13 @@ def test_parse_argument():
 
 
 # ---------------------------------------------------------------- front-only
-def test_front_only_live_view_skips_side_cameras():
+def test_live_view_has_only_the_front_camera():
     step = CameraIdentityStep(STEP2, front_only())
     lv = step.live({'snap': good(), 'health_seq': 1})
-    by = {c['role']: c for c in lv['cameras']}
-    assert by['front']['enabled'] and by['front']['state'] == 'live' and by['front']['preview'] == 'cam_front'
-    assert by['left_rear']['state'] == 'off' and by['right_rear']['state'] == 'off'
-    assert lv['sides_enabled'] is False
+    assert [c['role'] for c in lv['cameras']] == ['front']
+    front = lv['cameras'][0]
+    assert front['enabled'] and front['state'] == 'live' and front['preview'] == 'cam_front'
+    assert 'sides_enabled' not in lv
 
 
 def test_front_only_confirm_save_writes_complete_cameras_yaml(tmp_path):
@@ -124,22 +123,18 @@ def test_front_only_confirm_save_writes_complete_cameras_yaml(tmp_path):
     done = run(w, clock, Feed(), 'camera_identity', CONFIRM)
     assert done.status == 'PASS', done.result
     assert done.result['confirmed_roles'] == ['front']
-    assert set(done.result['skipped_roles']) == {'left_rear', 'right_rear'}
-    assert 'skipped left side, right side' in done.result['summary']
+    assert done.result['skipped_roles'] == {} and 'skipped' not in done.result['summary']
     r = w.action('camera_identity', 'SAVE', '', {})
     assert r['ok'] and 'data/cameras.yaml' in r['message'], r
     saved = session_cameras(w)
-    assert saved['roles'] == cams['roles']                      # side role keys kept, unchanged
+    assert saved['roles'] == cams['roles'] == {'front': 'astra'}
     assert saved['roles_confirmed'] is True and saved['roles_confirmed_for'] == ['front']
     assert saved['sensors'] == cams['sensors'] and saved['mounts'] == cams['mounts']   # complete file
     assert unconfirmed_roles(saved) == []
-    # a side camera switched on later is unconfirmed again
-    saved['sensors'][saved['roles']['left_rear']]['enabled'] = True
-    assert unconfirmed_roles(saved) == ['left_rear']
     assert cs.load_summary(w.session)['steps']['camera_identity']['status'] == 'PASS'
 
 
-def test_swap_refused_when_sides_off(tmp_path):
+def test_swap_is_refused_there_is_no_second_camera(tmp_path):
     w, clock = make(tmp_path, front_only())
     pass_step1(w, clock)
     r = w.action('camera_identity', 'RUN', SWAPPED, Feed().next())
@@ -181,13 +176,17 @@ def test_frozen_front_picture_fails(tmp_path):
     assert not w.action('camera_identity', 'SAVE', '', {})['ok']
 
 
-def test_disabled_side_topics_do_not_matter(tmp_path):
-    w, clock = make(tmp_path, front_only())
+def test_old_session_side_cameras_are_ignored(tmp_path):
+    """An older session's cameras.yaml still lists the removed side cameras (enabled): only the front counts."""
+    w, clock = make(tmp_path, OLD_SESSION_CAMERAS)
     pass_step1(w, clock)
-    snap = good()
-    for t in ('/cam_ov5647/image_raw', '/cam_imx219/image_raw'):
-        snap['topics'].pop(t)
-    assert run(w, clock, Feed(snap), 'camera_identity', CONFIRM).status == 'PASS'
+    snap = good()                                                   # carries no /cam_ov5647 or /cam_imx219 topic
+    done = run(w, clock, Feed(snap), 'camera_identity', CONFIRM)
+    assert done.status == 'PASS' and done.result['confirmed_roles'] == ['front']
+    assert list(done.result['roles']) == ['front']
+    assert w.action('camera_identity', 'SAVE', '', {})['ok']
+    saved = session_cameras(w)
+    assert saved['roles_confirmed_for'] == ['front'] and unconfirmed_roles(saved) == []
 
 
 def test_no_health_reports_fails(tmp_path):
@@ -200,31 +199,6 @@ def test_no_health_reports_fails(tmp_path):
         clock.t += 0.5
         done = w.tick({'snap': good(), 'health_seq': 5}) or done
     assert done.status == 'FAIL' and 'system_monitor' in done.result['summary']
-
-
-# ---------------------------------------------------------------- three cameras
-def test_three_cameras_swap_saves_swapped_roles(tmp_path):
-    w, clock = make(tmp_path, CAMERAS)
-    pass_step1(w, clock)
-    done = run(w, clock, Feed(), 'camera_identity', SWAPPED)
-    assert done.status == 'PASS' and done.result['swapped']
-    assert done.result['confirmed_roles'] == ['front', 'left_rear', 'right_rear']
-    assert w.action('camera_identity', 'SAVE', '', {})['ok']
-    saved = session_cameras(w)
-    assert saved['roles']['left_rear'] == CAMERAS['roles']['right_rear']
-    assert saved['roles']['right_rear'] == CAMERAS['roles']['left_rear']
-    assert saved['roles']['front'] == 'astra'
-
-
-def test_three_cameras_one_side_missing_fails(tmp_path):
-    w, clock = make(tmp_path, CAMERAS)
-    pass_step1(w, clock)
-    snap = good()
-    snap['topics'].pop('/cam_ov5647/image_raw')
-    done = run(w, clock, Feed(snap), 'camera_identity', CONFIRM)
-    assert done.status == 'FAIL'
-    assert [c['key'] for c in done.result['checks'] if not c['passed']] == \
-        ['stream_' + next(r for r, s in CAMERAS['roles'].items() if s == 'ov5647')]
 
 
 # ---------------------------------------------------------------- save merges, keep previous
@@ -267,12 +241,17 @@ def test_keep_previous_copies_roles(tmp_path):
     assert cs.load_summary(w2.session)['steps']['camera_identity']['status'] == 'KEPT_PREVIOUS'
 
 
-def test_keep_previous_refused_when_a_side_camera_is_on_now(tmp_path):
+def test_keep_previous_refused_when_the_front_was_not_confirmed(tmp_path):
     clock = Clock()
     _passed_session(tmp_path, front_only(), clock)
+    old = [d for d in os.listdir(os.path.join(str(tmp_path), 'calibration')) if d != 'ACTIVE'][0]
+    path = os.path.join(str(tmp_path), 'calibration', old, 'data', 'cameras.yaml')
+    doc = yaml.safe_load(open(path, encoding='utf-8'))
+    doc['roles_confirmed_for'] = []                                 # an older confirmation that did not cover the front
+    cs.write_yaml(path, doc)
     cfg = dict(CFG, resume_max_age_h=0.0)
-    impls = {'sensor_health': SensorHealthStep(STEP1, CAMERAS, UWB),
-             'camera_identity': CameraIdentityStep(STEP2, CAMERAS)}     # all three on now
+    impls = {'sensor_health': SensorHealthStep(STEP1, front_only(), UWB),
+             'camera_identity': CameraIdentityStep(STEP2, front_only())}
     w2 = wc.Wizard(STEPS, str(tmp_path), cfg, impls, now=clock)
     pass_step1(w2, clock)
     r = w2.action('camera_identity', 'KEEP_PREVIOUS', '', {})

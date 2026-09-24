@@ -10,6 +10,8 @@ local_pose:
     rate_hz: 20.0                   # idle tick: sigma growth when no /odom (pose publishes per /odom msg)
     motion_timeout_s: 0.2           # /odom older than this = "no fresh packet" (V4 idle growth)
     heading_blend: 0.25             # odom.a += 0.25 * wrap(imu_yaw - odom.a)   (V4)
+    heading_lead_s: 0.0             # 0 = off (V4). Lead the IMU yaw by yaw_rate(/odom) x this to cancel servo_controller's
+                                    # IMU EMA lag (~0.3 s, alpha 0.15): sandbox 15.3 -> ~5 cm rms with 0.3. UNTESTED on the car.
     imu_timeout_s: 0.3              # /imu/rpy older -> heading from /odom yaw increments
     pose_history_s: 2.0             # for registering a camera grid at its own timestamp
     max_stamp_gap_s: 0.15           # grid stamp outside the history by more -> skip it
@@ -41,6 +43,44 @@ local_pose:
       sample_stride: 2
       disable_pitch_rad: 0.045      # pause on steep pitch (hill)
       disable_in_parking: true
+    # ICP against the accumulated camera-edge memory (carbot_localization/icp_core.py, docs/LOCALIZATION_MEMORY.md).
+    # OFF by default: only the sandbox has seen it (tools/sandbox/run_icp_eval.py); NOT tested on the car.
+    # Independent of `visual` (which matches to the prior map): this needs no map, corrects sideways position and
+    # HEADING (visual is translation-only), and never lets the estimate jump (per-update + total caps).
+    icp:
+      enabled: false
+      every_n_grids: 4              # registration every 4th road grid (~2 Hz); edge extraction runs on every grid
+      max_radius_m: 0.70            # only edge cells this close to the car (same as visual.max_radius_m)
+      sample_stride: 2
+      max_points: 120               # cap on the current frame's edge points
+      normal_k: 8                   # neighbours for each point's local line normal
+      memory:                       # V4 guidance.evidence rule: age <= max_age and base + per_m * travel <= limit
+        add_every_n_grids: 2
+        max_age_s: 2.0                # V4 allows 3 s (local_memory.drive_max_age_s); a NARROW age band keeps the remembered
+        min_age_s: 1.0                # lines from fanning out under drift (sandbox: 0.5-3 s corrected 35 % of a heading drift, 1-2 s 62 %)
+        max_points: 300             # reference set after voxel thinning
+        voxel_m: 0.025
+        uncertainty_base_m: 0.004   # = local_memory.uncertainty_*
+        uncertainty_per_m: 0.006
+        uncertainty_limit_m: 0.02
+      max_iter: 10
+      pair_max_dist_m: 0.05         # correspondences further apart are outliers
+      trim_fraction: 0.8            # keep the best 80 % of the correspondences
+      huber_m: 0.01                 # robust residual scale
+      min_inliers: 25
+      min_inlier_ratio: 0.5
+      max_rms_m: 0.012              # fit residual above this = rejected
+      min_ref_points: 40
+      eig_min_ratio: 0.02           # normal-matrix eigenvalue below this x the largest = unobservable (straight edges: along-track)
+      rot_arm_m: 0.30               # makes dtheta comparable with metres in the normal matrix
+      max_fit_translation_m: 0.05   # a registration larger than this is implausible: rejected
+      max_fit_rotation_rad: 0.05
+      gain: 0.5                     # share of the (time-scaled) residual applied per update
+      max_step_m: 0.002             # per-update cap (visual.step_gain is 1.5 mm): the pose never jumps
+      max_step_rad: 0.001           # 0.057 deg per update (~0.11 deg/s at 2 Hz)
+      max_total_m: 0.15             # ICP alone never moves the estimate more than this ...
+      max_total_rad: 0.10           # ... or turns it more than 5.7 deg
+      min_speed_mps: 0.05           # no update while standing
 
 global_pose:
   ros__parameters:

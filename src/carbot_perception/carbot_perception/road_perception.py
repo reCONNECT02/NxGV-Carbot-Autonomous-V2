@@ -1,7 +1,8 @@
-"""BLOCK 03 - Turn three views into road (V4 perception.js).
+"""BLOCK 03 - Turn the camera view into road (V4 perception.js).
 
-Front (Astra Pro) + left + right MIPI images are warped into one top-down
-vehicle grid; each cell takes the strongest view (weight 1/(eps+depth^2)),
+The front (Astra Pro) image is warped into a top-down vehicle grid (the code still stitches any
+number of views: each cell takes the strongest view, weight 1/(eps+depth^2); with the one
+front camera that is simply its own warp; the two MIPI side cameras were removed 2026-09-24),
 pixels are classified road / paint / other, and the connected road region is
 grown (4-neighbour) from a seed near the car.
 
@@ -11,10 +12,10 @@ per camera: the remap tables are built once from the intrinsics
 (cameras.yaml mounts.<role>, calibration step 4). Before step 3 an ideal
 pinhole from mounts.<role>.hfov_deg is used and the node reports WARN.
 
-In : 3 camera images (topics from cameras.yaml roles)
+In : the front camera image (topics from cameras.yaml roles, topics.CAMERA_ROLES)
 Out: LocalGrid /carbot/perception/road_grid (base_link)
      debug JPEGs (only encoded while someone subscribes, throttled):
-     warped (3 per-camera warps), stitched (colour BEV), mask (V4 colours),
+     warped (per-camera warp), stitched (colour BEV), mask (V4 colours),
      overlay/<role> (road mask drawn back onto that camera's footage).
 """
 import time

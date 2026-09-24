@@ -45,20 +45,19 @@ def test_latency():
 
 def test_scan_processes_filters_wrappers_and_labels_namespaces():
     procs = [
-        (10, 'sudo', ['sudo', '-n', '/usr/local/lib/carbot/run_mipi_cam.sh', '/cam_ov5647', '2']),
-        (11, 'ros2', ['/usr/bin/python3', '/opt/ros/humble/bin/ros2', 'run', 'mipi_cam', 'mipi_cam',
-                      '--ros-args', '-r', '__ns:=/cam_ov5647']),
-        (12, 'mipi_cam', ['/opt/tros/humble/lib/mipi_cam/mipi_cam', '--ros-args', '-r', '__ns:=/cam_ov5647']),
-        (13, 'mipi_cam', ['/opt/tros/humble/lib/mipi_cam/mipi_cam', '--ros-args', '-r', '__ns:=/cam_imx219']),
-        (14, 'component_conta', ['/opt/ros/humble/lib/rclcpp_components/component_container', '--ros-args',
+        (10, 'sudo', ['sudo', '-n', '/usr/local/lib/carbot/kill_stale.sh', '/tmp/patterns.txt', '2']),
+        (11, 'ros2', ['/usr/bin/python3', '/opt/ros/humble/bin/ros2', 'launch', 'carbot_bringup', 'astra_rgb.launch.py']),
+        (12, 'component_conta', ['/opt/ros/humble/lib/rclcpp_components/component_container', '--ros-args',
                                  '-r', '__node:=astra_camera_container', '-r', '__ns:=/']),
-        (15, 'hobot_codec_rep', ['hobot_codec_republish']),
-        (16, 'vim', ['vim', 'notes.txt']),
+        (13, 'component_conta', ['/opt/ros/humble/lib/rclcpp_components/component_container', '--ros-args',
+                                 '-r', '__node:=astra_camera_container', '-r', '__ns:=/old']),
+        (14, 'hobot_codec_rep', ['hobot_codec_republish']),
+        (15, 'vim', ['vim', 'notes.txt']),
     ]
-    out = mc.scan_processes(procs, ['mipi_cam', 'astra_camera', 'hobot_codec', 'websocket'],
+    out = mc.scan_processes(procs, ['astra_camera', 'hobot_codec', 'websocket'],
                             ['sudo', 'bash', 'ros2', 'python3'])
-    assert out == [('astra_camera /', 14), ('hobot_codec', 15), ('mipi_cam /cam_imx219', 13),
-                   ('mipi_cam /cam_ov5647', 12)]
+    # wrappers (sudo, `ros2 launch`) are skipped; the same driver in two namespaces counts as two labels
+    assert out == [('astra_camera /', 12), ('astra_camera /old', 13), ('hobot_codec', 14)]
 
 
 def test_read_number(tmp_path):

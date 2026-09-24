@@ -8,12 +8,12 @@ Runs the real calib_extrinsics code in a sandbox session
                through virtual cameras whose TRUE mounts are the cameras.yaml
                mounts plus a random error (--perturb-cm, --perturb-deg), then
                check that the tool finds the true mounts
-  --images front=f.png left_rear=l.png right_rear=r.png
+  --images front=f.png
                real photos from the car; the session must already hold the
                intrinsics (run run_calib_intrinsics.py or copy intrinsics/*.yaml
                and data/cameras.yaml from the car's session)
 
-Shows each camera's detection and the IPM check (red = true board outlines).
+Shows the front camera's detection and the IPM check (red = true board outlines).
 
   python tools/sandbox/run_calib_extrinsics.py --synth
   python tools/sandbox/run_calib_extrinsics.py --synth --lens fisheye --perturb-deg 4
@@ -59,7 +59,7 @@ def main():
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument('--synth', action='store_true')
     src.add_argument('--images', nargs='+')
-    ap.add_argument('--lens', choices=['pinhole', 'fisheye'], default='pinhole', help='synth: MIPI lens type')
+    ap.add_argument('--lens', choices=['pinhole', 'fisheye'], default='pinhole', help='synth: lens type')
     ap.add_argument('--perturb-cm', type=float, default=1.0, help='synth: true mount position error')
     ap.add_argument('--perturb-deg', type=float, default=2.0, help='synth: true mount angle error')
     ap.add_argument('--seed', type=int, default=0)

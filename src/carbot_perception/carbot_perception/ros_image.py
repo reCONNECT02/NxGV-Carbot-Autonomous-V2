@@ -1,6 +1,6 @@
 """sensor_msgs Image <-> numpy without cv_bridge (one less build dependency on the
 RDK, and no extra copy). Encodings seen on the RISA Bot:
-  mipi_cam  bgr8 (Camera_Setup.md), nv12 if reconfigured
+  (mipi_cam bgr8 / nv12 support stays: the decoder is generic)
   Astra Pro rgb8
 """
 import array

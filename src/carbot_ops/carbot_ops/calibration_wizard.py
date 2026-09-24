@@ -82,7 +82,7 @@ REQUIRED = ['session_format', 'allow_keep_previous', 'data_root', 'data.calibrat
             'uwb_buffer_s', 'uwb_rate_window_s',
             # literal (test_required_keys reads it with ast); = camera_restart.CFG_KEYS
             'restart_cameras.enabled', 'restart_cameras.kill_patterns', 'restart_cameras.grace_s',
-            'restart_cameras.root_helper_dir', 'restart_cameras.delay_mipi_second_s',
+            'restart_cameras.root_helper_dir',
             'restart_cameras.settle_s', 'restart_cameras.timeout_s', 'restart_cameras.log_dir']
 
 

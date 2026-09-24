@@ -22,6 +22,9 @@ DESIGN DECISIONS / MATCHED TO SIMULATOR V4 How Carbot decides to move. From thre
 ## 02 / SENSE — Give each sensor a job  (`#sensors`)
 *Three cameras see the road. Other sensors support them.*
 
+> **Note (2026-09-24):** the real car has the FRONT camera only (the two rear-quarter MIPI cameras were removed: hardware
+> lane faults). Blocks 02 / 03 run on the one camera; the stitcher code is unchanged and simply has one view.
+
 - **Look**: Front + two rear-quarter cameras.
 - **Feel motion**: Wheel distance + IMU heading.
 - **Measure position**: LiDAR checks obstacles. UWB locates coarsely.

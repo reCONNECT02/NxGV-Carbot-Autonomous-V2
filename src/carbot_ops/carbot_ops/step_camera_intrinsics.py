@@ -9,7 +9,9 @@ kept (calib_core.calibrate_intrinsics).
 * Run's argument is the sensor name (cameras.yaml sensors key). Without one,
   the first enabled sensor that has not passed yet is taken.
 * Sensors with cameras.yaml `enabled: false` cannot be run and do not count:
-  the step passes when every ENABLED sensor in per_sensor has passed.
+  the step passes when every ENABLED sensor in per_sensor has passed. Only the
+  sensors of topics.CAMERA_ROLES (the front Astra) are used: an older session's
+  per_sensor may still name the removed ov5647 / imx219, which are skipped.
 * Frames come from the node: inputs['frame'](sensor) -> (seq, bgr) | None.
   The node only subscribes while this step is running, and decodes lazily.
 * Detection runs in tick (node tick_hz); the fit (a few seconds on the RDK)
@@ -24,13 +26,14 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from carbot_common import calib_tools as ct
+from carbot_common import topics as T
 from carbot_common.data import sensor_enabled
 
 from .wizard_core import StepImpl
 
 PROC_KEYS = ('extra_views', 'capture_timeout_s', 'novelty', 'still_px', 'max_live_corners')
 PASS_KEYS = ('min_views', 'max_reprojection_px', 'min_coverage_cells')
-LABEL = {'astra': 'Astra Pro (front)', 'ov5647': 'OV5647 (MIPI ch 2)', 'imx219': 'IMX219 (MIPI ch 0)'}
+LABEL = {'astra': 'Astra Pro (front)'}
 
 
 class ConfigError(ValueError):
@@ -61,7 +64,10 @@ class CameraIntrinsicsStep(StepImpl):
         self.target_views = self.min_views + int(proc['extra_views'])
         self.cameras = cameras
         self.sensors: List[Dict] = []
+        active = {cameras['roles'][r] for r in T.CAMERA_ROLES if r in (cameras.get('roles') or {})}
         for name in cfg.get('per_sensor') or []:
+            if name not in active and name not in ('astra',):
+                continue                        # a removed side camera named by an older session's copy
             if name not in cameras['sensors']:
                 raise ConfigError(f'calibration_steps.yaml camera_intrinsics.per_sensor: {name} is not in cameras.yaml')
             s = cameras['sensors'][name]

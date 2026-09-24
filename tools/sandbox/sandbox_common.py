@@ -28,7 +28,7 @@ from carbot_perception.camera_model import (Intrinsics, Mount, camera_setup,  # 
 
 CONFIG = os.path.join(REPO, 'src', 'carbot_bringup', 'config')
 OUT = os.path.join(HERE, 'out')
-ROLES = ('front', 'left_rear', 'right_rear')
+ROLES = ('front',)      # front camera only (side cameras removed 2026-09-24)
 
 # BGR colours of the virtual venue (tune to look like the real mat if you like)
 ROAD = (58, 60, 62)

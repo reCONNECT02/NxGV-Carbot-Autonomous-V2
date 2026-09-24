@@ -1,6 +1,6 @@
 """GUI + rosbag camera streams (support node, no block).
 
-preview: downscaled JPEG for the GUI (all 3 cameras side by side), throttled.
+preview: downscaled JPEG for the GUI (the front camera), throttled.
 record : throttled JPEG for the rosbag (raw 3 x 960x544 bgr8 is never recorded).
 Replaces the one-camera-at-a-time hobot_codec + websocket viewer.
 

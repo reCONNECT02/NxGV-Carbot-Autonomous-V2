@@ -1,4 +1,4 @@
-"""Wizard page for camera extrinsics, using the existing calibration solver."""
+"""Wizard page for camera extrinsics (front camera only), using the existing calibration solver."""
 import copy
 import datetime
 import os
@@ -8,6 +8,7 @@ from typing import Dict
 
 from carbot_common import calib_tools as ct
 from carbot_common import calibration_store as cs
+from carbot_common import topics as T
 from carbot_common.data import sensor_enabled
 
 from .wizard_core import StepImpl, StepRefused
@@ -23,7 +24,7 @@ class ExtrinsicsIpmStep(StepImpl):
         self.timeout = float((cfg.get('procedure') or {}).get('capture_timeout_s', 20.0))
         self.roles = []
         for role, sensor in (cameras.get('roles') or {}).items():
-            if sensor_enabled(cameras, sensor):
+            if role in T.CAMERA_ROLES and sensor_enabled(cameras, sensor):   # side roles of old sessions: ignored
                 self.roles.append((role, sensor))
         if not self.roles:
             raise ValueError('Step 4: no enabled cameras in cameras.yaml')
@@ -43,6 +44,9 @@ class ExtrinsicsIpmStep(StepImpl):
             path = ((cameras.get('sensors') or {}).get(sensor) or {}).get('intrinsics_file', '')
             if not path or not os.path.isfile(path):
                 return f'{role}: calibrated intrinsics are missing. Finish and Save step 3, then retry step 4.'
+            mismatch = self._size_mismatch(path, (cameras.get('sensors') or {}).get(sensor) or {})
+            if mismatch:
+                return f'{role}: {mismatch} Redo and Save step 3 at the current size, then retry step 4.'
         get = inputs.get('frame')
         baseline = {}
         if callable(get):
@@ -53,6 +57,21 @@ class ExtrinsicsIpmStep(StepImpl):
         self.run = {'started': now, 'frames': {}, 'seq': baseline, 'thread': None, 'result': None,
                     'error': '', 'cameras': copy.deepcopy(cameras)}
         return None
+
+    @staticmethod
+    def _size_mismatch(path: str, sensor: Dict) -> str:
+        """'' or a sentence when the saved intrinsics belong to another image size than cameras.yaml now says
+        (e.g. captured at 320x240, the camera now runs 640x480: the solve would silently use the wrong model).
+        Unreadable files are left to the solver."""
+        try:
+            doc = ct.load_yaml(path)
+            w, h = int(doc['image_width']), int(doc['image_height'])
+            want = (int(sensor['width']), int(sensor['height']))
+        except Exception:  # noqa: BLE001  placeholder / foreign file / size not in cameras.yaml: not our check
+            return ''
+        if (w, h) != want:
+            return f'the saved intrinsics are for {w}x{h} but the camera now runs {want[0]}x{want[1]}.'
+        return ''
 
     def cancel(self):
         self.run = None

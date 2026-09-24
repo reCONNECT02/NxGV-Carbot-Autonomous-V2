@@ -126,7 +126,7 @@ def main():
     src.add_argument('--webcam', default='')
     src.add_argument('--video', default='')
     src.add_argument('--images', default='')
-    ap.add_argument('--sensor', default='ov5647', help='name the result is saved under (sandbox only)')
+    ap.add_argument('--sensor', default='astra', help='name the result is saved under (sandbox only)')
     ap.add_argument('--session', default='sandbox')
     ap.add_argument('--timeout', type=float, default=300.0)
     ap.add_argument('--headless', action='store_true')

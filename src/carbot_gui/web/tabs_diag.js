@@ -91,9 +91,8 @@ TABS.health = {
               `<div class="kv"><span>RAM</span><b>${D.f(s.ram, 0)} %</b></div>${bar(s.ram, 85)}<div class="kv"><span>SoC temperature</span><b class="${s.temp > 80 ? 'bad-t' : s.temp > 70 ? 'warn-t' : ''}">${D.f(s.temp, 1)} °C</b></div>${bar(s.temp, 75)}`) +
             H.panel('Power and links', H.kv([['Battery', D.f(s.battery) + ' V', H.okc(s.battery_ok)], ['micro-ROS agent', s.agent ? 'running' : 'NOT running', H.okc(s.agent)]]) +
               `<h3 style="margin-top:12px">Camera processes</h3><table><tr><th>Process</th><th class="r">PID</th></tr>${s.procs.map(([n, p]) => `<tr><td>${D.esc(n)}</td><td class="r">${p}</td></tr>`).join('')}</table>` +
-              (() => { const c = {}; s.procs.forEach(([n]) => { c[n] = (c[n] || 0) + 1; }); const dup = Object.entries(c).filter(([n, k]) => k > 1 && !n.includes('mipi'));
-                const mipi = s.procs.filter(([n]) => n.includes('mipi')).length;
-                return dup.length || mipi > 2 ? '<p class="bad-t" style="margin:8px 0 0">Duplicate camera processes: stale launch, restart the stack</p>' : '<p class="ok-t" style="margin:8px 0 0">No duplicates</p>'; })()) + '</div>';
+              (() => { const c = {}; s.procs.forEach(([n]) => { c[n] = (c[n] || 0) + 1; }); const dup = Object.entries(c).filter(([n, k]) => k > 1);
+                return dup.length ? '<p class="bad-t" style="margin:8px 0 0">Duplicate camera processes: stale launch, restart the stack</p>' : '<p class="ok-t" style="margin:8px 0 0">No duplicates</p>'; })()) + '</div>';
           h += H.panel('Topics', `<div class="scroll"><table><tr><th>Topic</th><th class="r">Hz</th><th class="r">Expected</th><th class="r">Age</th><th class="r">Latency</th></tr>` +
             s.topics.map(t => `<tr><td>${D.esc(t.topic)}</td><td class="r ${t.ok ? 'ok-t' : 'bad-t'}">${D.f(t.hz, 1)}</td><td class="r">${D.f(t.expected, 0)}</td><td class="r">${t.age >= 0 ? D.f(t.age) + ' s' : 'never'}</td><td class="r">${t.latency >= 0 ? t.latency + ' ms' : '—'}</td></tr>`).join('') + '</table></div>');
         } else h += '<div class="panel empty" style="margin-bottom:14px">No /carbot/system/health: is system_monitor running?</div>';

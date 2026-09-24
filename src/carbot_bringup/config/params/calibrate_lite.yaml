@@ -22,7 +22,7 @@ road_perception:
 # Only the topics whose nodes the lite profile still starts (parallel arrays, same order as ops.yaml).
 system_monitor:
   ros__parameters:
-    watch_topics: [/camera/color/image_raw, /cam_ov5647/image_raw, /cam_imx219/image_raw,
+    watch_topics: [/camera/color/image_raw,
                    /scan, /odom, /imu/rpy, /uwb3/input_json, /carbot/perception/road_grid,
                    /carbot/owner/state, /carbot/uwb/ranges, /carbot/safety/status]
-    watch_expected_hz: [15.0, 30.0, 30.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 10.0, 50.0]
+    watch_expected_hz: [15.0, 10.0, 20.0, 20.0, 10.0, 8.0, 50.0, 10.0, 50.0]
