@@ -56,7 +56,7 @@ class Rig:
     def __init__(self, root, clock=None, resume=12.0, step10=True, cfg=None):
         self.clock = clock or Clock()
         self.motion = MotionRecorder()
-        self.cfg = dict(cfg or STEP11, index=1)
+        self.cfg = dict(cfg or STEP11, index=1, depends_on=[])
         self.wiz = None
         self.step = MapUwbAlignmentStep(self.cfg, copy.deepcopy(UWB), CONFIG_DIR, self.motion,
                                         lambda: self.wiz.session if self.wiz else None, clock=self.clock)

@@ -18,7 +18,7 @@ CHALLENGES = load('challenges.yaml')
 
 def only_step13():
     s = copy.deepcopy(STEP13)
-    s['index'] = 1
+    s['index'], s['depends_on'] = 1, []
     return {'version': 1, 'steps': [s]}
 
 

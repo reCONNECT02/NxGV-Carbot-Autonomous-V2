@@ -345,7 +345,7 @@ def test_classify_keys_exist_in_perception_yaml():
 
 # ----------------------------------------------------------------------------- save / keep through the wizard
 def wizard(root, impl):
-    doc = {'steps': [dict(copy.deepcopy(STEP9), index=1)]}
+    doc = {'steps': [dict(copy.deepcopy(STEP9), index=1, depends_on=[])]}
     return wc.Wizard(doc, str(root), {'session_format': '%Y%m%d_%H%M%S', 'allow_keep_previous': True,
                                       'resume_max_age_h': 0, 'page_watch_s': 8.0}, {'venue_thresholds': impl})
 

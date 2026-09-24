@@ -1,8 +1,8 @@
 """Calibration wizard logic -- pure, no rclpy, unit tested.
 
 Rules (calibration_steps.yaml header, project brief):
-* Steps run IN ORDER. RUN of step N is refused while an earlier REQUIRED step
-  has not passed (or been set to keep its previous value).
+* RUN of step N is refused while a REQUIRED step in its `depends_on` (calibration_steps.yaml)
+  has not passed (or been set to keep its previous value). Step numbers are not prerequisites.
 * Each step: RUN -> result with pass/fail -> SAVE (only a PASS) or REDO (= run
   again). A failing result blocks Next even if an older PASS was saved.
 * KEEP_PREVIOUS is offered only when an older session has a PASS for the step
@@ -144,7 +144,7 @@ class Wizard:
             raise ConfigError('calibration_steps.yaml: no steps list')
         out, ids = [], set()
         for s in steps:
-            for k in ('index', 'id', 'title'):
+            for k in ('index', 'id', 'title', 'depends_on'):
                 if k not in s:
                     raise ConfigError(f'calibration_steps.yaml: a step has no {k}: {s}')
             if s['id'] in ids:
@@ -155,6 +155,11 @@ class Wizard:
         if [x.index for x in out] != list(range(1, len(out) + 1)):
             raise ConfigError('calibration_steps.yaml: indices must be 1..N without gaps, got '
                               + str([x.index for x in out]))
+        for x in out:
+            deps = x.cfg['depends_on']
+            if not isinstance(deps, list) or any(not isinstance(d, int) or not 1 <= d < x.index for d in deps):
+                raise ConfigError(f'calibration_steps.yaml: step {x.index} depends_on must be a list of '
+                                  f'earlier step indices, got {deps!r}')
         for x in out:
             if not x.required:
                 x.status = 'SKIPPED_OPTIONAL'
@@ -228,7 +233,8 @@ class Wizard:
         return s.saved_status in PASSING
 
     def blocker(self, s: Slot) -> Optional[Slot]:
-        return next((x for x in self.slots if x.index < s.index and x.required and not self.can_advance(x)), None)
+        deps = s.cfg['depends_on']       # the step number itself is not a prerequisite
+        return next((x for x in self.slots if x.index in deps and x.required and not self.can_advance(x)), None)
 
     @staticmethod
     def blocked_text(blk: Slot) -> str:

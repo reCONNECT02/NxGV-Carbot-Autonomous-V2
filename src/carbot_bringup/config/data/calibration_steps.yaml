@@ -1,9 +1,11 @@
 # =============================================================================
 # calibration_steps.yaml -- the guided calibration wizard (calibrate.launch.py)
 #
-# Steps run IN ORDER. A step cannot be skipped until it passes, unless the user
-# picks "keep previous value" (only offered when a previous session has a PASS
-# for that step). Each result is written to:
+# A step is blocked only by the steps in its own depends_on (step indices), never by
+# its number: every step MUST list it ([] = none). E.g. 8 (speed PID), 9 (venue colours)
+# and 10 (UWB survey) are independent and can be run in any order. A step cannot be
+# skipped until it passes, unless the user picks "keep previous value" (only offered
+# when a previous session has a PASS for that step). Each result is written to:
 #   <data_root>/calibration/<YYYYmmdd_HHMMSS>/<NN>_<id>.yaml
 # plus summary.yaml (pass/fail per step) and, when relevant, params_overlay.yaml
 # (ROS parameter overrides) and data-file copies (cameras.yaml, uwb.yaml).
@@ -16,6 +18,7 @@
 version: 1
 steps:
   - index: 1
+    depends_on: []
     id: sensor_health
     title: Sensor health check
     required: true
@@ -48,6 +51,7 @@ steps:
   # confirmation of a frozen picture means nothing). Save writes the session's
   # data/cameras.yaml roles, roles_confirmed, roles_confirmed_for.
   - index: 2
+    depends_on: [1]
     id: camera_identity
     title: Camera identity (front / left / right)
     required: true
@@ -62,6 +66,7 @@ steps:
     procedure: {measure_s: 3.0, min_samples: 2, min_ok_fraction: 0.8}
     pass: {user_confirmed: true, max_image_age_s: 2.0}   # was 1.0; loosened 2026-09-24, images were 1.2 s old under load (BACKLOG #42)
   - index: 3
+    depends_on: [2]
     id: camera_intrinsics
     title: Camera intrinsics (front camera)
     required: true
@@ -86,7 +91,7 @@ steps:
                 still_px: 3.0,            # max corner motion between frames to count as still
                 max_live_corners: 54}     # corners sent to the page overlay
     pass: {min_views: 15, max_reprojection_px: 0.8, min_coverage_cells: 9}
-  - {index: 4,  id: extrinsics_ipm,    title: Front camera extrinsics + IPM,     required: true,  tab: perception,
+  - {index: 4,  depends_on: [3], id: extrinsics_ipm,    title: Front camera extrinsics + IPM,     required: true,  tab: perception,
      need: "Step 3 passed and saved (at the current image size, 640x480). Put the car on the floor sheet so the printed board is fully visible to the front camera.",
      instructions: ["Print the floor sheet at 100% and align the rear axle and car centre line with its marks (the axle line is 65 mm further back relative to the boards than on the first sheet: axle_offset_m).",
                     "Check the front camera picture: the floor board must be flat, fully visible and still.",
@@ -124,6 +129,7 @@ steps:
                 {name: front, roles: [front],      inner_corners: [6, 4], square_m: 0.050, centre_m: [0.62, 0.0],   yaw_deg: 90.0}]},
      pass: {max_ground_error_m: 0.02, max_seam_error_m: 0.03}}
   - index: 5
+    depends_on: [3, 4]
     id: lidar_camera
     title: LiDAR-camera alignment
     required: true
@@ -159,6 +165,7 @@ steps:
   # Corrections are set LIVE on servo_controller (a corrected run never passes: the next run
   # verifies it). Save writes the three values into this session's params_overlay.yaml.
   - index: 6
+    depends_on: [1]
     id: imu_odometry
     title: IMU + wheel odometry
     required: true
@@ -194,6 +201,7 @@ steps:
   # button before EVERY segment (left circle, right circle, straight runs) so it can be
   # put back on clear floor. Cancel / STOP MOTORS stop it at once.
   - index: 7
+    depends_on: [6]
     id: servo_steering
     title: Servo centre + steering limits
     required: true
@@ -230,6 +238,7 @@ steps:
                 kick_at_start: true, kick_duty: 0.40, kick_s: 0.5, kick_step: 0.05, kick_max_duty: 0.50, max_kicks: 6}
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
+    depends_on: [7]
     id: speed_pid
     title: Speed PID
     required: true
@@ -258,6 +267,7 @@ steps:
   # (ROS parameters) before Save writes params_overlay. bpu_detector.thresholds.* are detector
   # confidences, not colours: the page leaves them unchanged (Detections / Tuning tab, BACKLOG #15/#16).
   - index: 9
+    depends_on: [3, 4]
     id: venue_thresholds
     title: Venue colour / lighting thresholds
     required: true
@@ -294,6 +304,7 @@ steps:
                 param_timeout_s: 3.0}       # road_perception parameter get / set
     pass: {min_road_coverage: 0.5, max_false_paint_ratio: 0.05, tunnel_dark_check: true}
   - index: 10
+    depends_on: [1]
     id: uwb_survey
     title: UWB anchor survey + uwb_calib offsets
     required: true
@@ -327,6 +338,7 @@ steps:
                 min_verify_separation_m: 0.5, min_fixes: 10, max_extent_m: 30.0}
     pass: {max_verify_error_m: 0.15, all_anchors_seen: true, min_hdop_coverage: 0.9}
   - index: 11
+    depends_on: [4, 6, 10]
     id: map_uwb_alignment
     title: Map-to-UWB alignment lap
     required: true
@@ -354,6 +366,7 @@ steps:
   # phase 8: step 12 inserted (agreed 13-step wizard). Routes and roundabout exits are planned
   # on the saved map. Page 12 built: required (BACKLOG #20).
   - index: 12
+    depends_on: [11]
     id: mission_planner
     title: Mission planner (route + roundabout exits)
     required: true
@@ -387,6 +400,7 @@ steps:
   # PASS = the user pressed Practice done ({"op": "done"}), failed attempts included.
   # Save also writes practice/summary.yaml next to the per-challenge files.
   - index: 13
+    depends_on: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # every required step
     id: practice_runs
     title: Per-challenge practice runs (optional)
     required: false

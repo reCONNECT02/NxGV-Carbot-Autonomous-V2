@@ -43,8 +43,8 @@ class Rig:
     def __init__(self, root, uwb=None, clock=None, resume=12.0):
         self.clock = clock or Clock()
         self.uwb = copy.deepcopy(uwb or UWB)
-        self.step = UwbSurveyStep(dict(STEP10, index=1), self.uwb)
-        self.wiz = wc.Wizard({'steps': [dict(STEP10, index=1)]}, str(root), dict(CFG, resume_max_age_h=resume),
+        self.step = UwbSurveyStep(dict(STEP10, index=1, depends_on=[]), self.uwb)
+        self.wiz = wc.Wizard({'steps': [dict(STEP10, index=1, depends_on=[])]}, str(root), dict(CFG, resume_max_age_h=resume),
                              {'uwb_survey': self.step}, now=self.clock)
         self.feed = wu.UwbFeed(30.0, 3.0, clock=self.clock)
         self.tag = wu.SyntheticTag(TRUE, TAG['z_m'], BIAS, noise_m=0.01, xy=(5.0, 1.5))
