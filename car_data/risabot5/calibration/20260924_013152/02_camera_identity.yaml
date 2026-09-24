@@ -1,0 +1,18 @@
+passed: true
+summary: confirmed front; skipped left side, right side (switched off)
+checks:
+- {key: stream_front, label: Front picture (Astra Pro) streaming, measured: 4 of 4
+    reports live, limit: age <= 1 s in 80%, passed: true, ok_fraction: 1.0, why: '',
+  fix: ''}
+- {key: user_confirmed, label: You confirmed the pictures, measured: as shown, limit: confirmed,
+  passed: true, why: '', fix: ''}
+roles: {front: astra, left_rear: imx219, right_rear: ov5647}
+swapped: false
+confirmed_roles: [front]
+skipped_roles: {left_rear: imx219, right_rear: ov5647}
+measure_s: 3.0
+samples: 4
+step: camera_identity
+time: '2026-09-24T02:18:11'
+data_files: [data/cameras.yaml]
+session: '20260924_013152'

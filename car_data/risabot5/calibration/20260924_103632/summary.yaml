@@ -1,0 +1,16 @@
+session: '20260924_103632'
+created: '2026-09-24T10:36:32'
+steps:
+  sensor_health: {status: PASS, time: '2026-09-24T10:36:32', file: 01_sensor_health.yaml,
+    summary: 9 of 9 checks passed}
+  camera_identity: {status: PASS, time: '2026-09-24T10:36:59', file: 02_camera_identity.yaml,
+    summary: confirmed front}
+  camera_intrinsics: {status: PASS, time: '2026-09-24T10:40:39', file: 03_camera_intrinsics.yaml,
+    summary: 1 of 1 cameras calibrated}
+  extrinsics_ipm: {status: PASS, time: '2026-09-24T10:44:28', file: 04_extrinsics_ipm.yaml,
+    summary: Camera mounts solved}
+  lidar_camera: {status: PASS, time: '2026-09-24T10:53:50', file: 05_lidar_camera.yaml,
+    summary: "yaw correction -2.54\xB0, residual 1.91\xB0 over 3 positions"}
+  imu_odometry: {status: PASS, time: '2026-09-24T14:14:48', file: 06_imu_odometry.yaml,
+    summary: 'ticks_per_meter 299600, reverse True, imu_yaw_scale +1, drift +0.00
+      deg/min'}

@@ -1,0 +1,105 @@
+passed: true
+summary: ticks_per_meter 293103, reverse True, imu_yaw_scale +1, drift +0.00 deg/min
+checks:
+- {key: distance, label: Distance (2.00 m tape), measured: 2.002 m (+0.1 %), limit: <=
+    2 %, passed: true, why: '', fix: 'Do a distance run that passes, then run the
+    drift test again.'}
+- {key: spin, label: Spin (one full turn left), measured: +355.0 deg, limit: '+360
+    deg, <= 3 %', passed: true, why: '', fix: 'Do a spin that passes, then run the
+    drift test again.'}
+- {key: imu_rate, label: IMU publishing during the drift test, measured: 1186 messages
+    in 60 s, limit: '>= 5 Hz', passed: true, why: '', fix: ''}
+- {key: drift, label: 'Heading drift, car still', measured: +0.00 deg/min, limit: <=
+    2 deg/min, passed: true, why: '', fix: ''}
+warnings: []
+values: {ticks_per_meter: 293103.45, odom_reverse_polarity: true, imu_yaw_scale: 1.0}
+tests:
+  distance:
+    status: PASS
+    runs:
+    - odom_m: -7.1199
+      true_m: 2.0
+      seconds: 45.0
+      odom_msgs: 891
+      ticks_per_meter: 1050.0
+      reverse_polarity: false
+      error_pct: -456.0
+      status: CORRECTED
+      corrected: {odom_reverse_polarity: true}
+      why: the distance counted BACKWARDS while you pushed forward
+      fix: 'odom_reverse_polarity was toggled: do the run again to verify.'
+    - odom_m: 8.0598
+      true_m: 2.0
+      seconds: 12.6
+      odom_msgs: 252
+      ticks_per_meter: 21877.03
+      reverse_polarity: true
+      error_pct: 302.99
+      status: CORRECTED
+      corrected: {ticks_per_meter: 88162.16}
+      why: odom 8.060 m vs tape 2.00 m (+303.0 %)
+      fix: 'ticks_per_meter 21877 -> 88162.2: do the run again to verify.'
+    - odom_m: 6.152
+      true_m: 2.0
+      seconds: 14.4
+      odom_msgs: 285
+      ticks_per_meter: 88162.16
+      reverse_polarity: true
+      error_pct: 207.6
+      status: CORRECTED
+      corrected: {ticks_per_meter: 271188.43}
+      why: odom 6.152 m vs tape 2.00 m (+207.6 %)
+      fix: 'ticks_per_meter 88162.2 -> 271188: do the run again to verify.'
+    - odom_m: 2.1549
+      true_m: 2.0
+      seconds: 14.2
+      odom_msgs: 282
+      ticks_per_meter: 271188.43
+      reverse_polarity: true
+      error_pct: 7.75
+      status: CORRECTED
+      corrected: {ticks_per_meter: 292196.63}
+      why: odom 2.155 m vs tape 2.00 m (+7.7 %)
+      fix: 'ticks_per_meter 271188 -> 292197: do the run again to verify.'
+    - odom_m: 1.9593
+      true_m: 2.0
+      seconds: 16.2
+      odom_msgs: 323
+      ticks_per_meter: 292196.63
+      reverse_polarity: true
+      error_pct: -2.03
+      status: CORRECTED
+      corrected: {ticks_per_meter: 286253.35}
+      why: odom 1.959 m vs tape 2.00 m (-2.0 %)
+      fix: 'ticks_per_meter 292197 -> 286253: do the run again to verify.'
+    - odom_m: 2.0479
+      true_m: 2.0
+      seconds: 17.9
+      odom_msgs: 353
+      ticks_per_meter: 286253.35
+      reverse_polarity: true
+      error_pct: 2.39
+      status: CORRECTED
+      corrected: {ticks_per_meter: 293103.45}
+      why: odom 2.048 m vs tape 2.00 m (+2.4 %)
+      fix: 'ticks_per_meter 286253 -> 293103: do the run again to verify.'
+    - {odom_m: 2.0018, true_m: 2.0, seconds: 13.9, odom_msgs: 272, ticks_per_meter: 293103.45,
+      reverse_polarity: true, error_pct: 0.09, status: PASS}
+  drift: {status: PASS, seconds: 59.7, drift_deg_per_min: 0.0, limit: 2.0, imu_msgs: 1186}
+  spin:
+    status: PASS
+    runs:
+    - {yaw_change_deg: 362.73, measured_at_scale: 1.0, imu_yaw_scale: 1.0, seconds: 26.5,
+      imu_msgs: 514, status: PASS, yaw_at_scale_deg: 362.73, error_pct: 0.76}
+    - {yaw_change_deg: 355.66, measured_at_scale: 1.0, imu_yaw_scale: 1.0, seconds: 17.8,
+      imu_msgs: 343, status: PASS, yaw_at_scale_deg: 355.66, error_pct: -1.21}
+    - {yaw_change_deg: 355.0, measured_at_scale: 1.0, imu_yaw_scale: 1.0, seconds: 17.5,
+      imu_msgs: 338, status: PASS, yaw_at_scale_deg: 355.0, error_pct: -1.39}
+overlay:
+  servo_controller: {ticks_per_meter: 293103.45, odom_reverse_polarity: true, imu_yaw_scale: 1.0}
+measure_s: 59.7
+samples: 1186
+step: imu_odometry
+time: '2026-09-24T11:58:57'
+data_files: [params_overlay.yaml]
+session: '20260924_103632'

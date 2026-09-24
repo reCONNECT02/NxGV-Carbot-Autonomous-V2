@@ -1,0 +1,7 @@
+tunnel_wall_follower:
+  ros__parameters: {lidar_angle_offset: 3.09731}
+carbot_tf:
+  ros__parameters:
+    base_to_laser: [0.0, 0.0, 0.12, 3.09731, 0.0, 0.0]
+servo_controller:
+  ros__parameters: {ticks_per_meter: 299599.9, odom_reverse_polarity: true, imu_yaw_scale: 1.0}

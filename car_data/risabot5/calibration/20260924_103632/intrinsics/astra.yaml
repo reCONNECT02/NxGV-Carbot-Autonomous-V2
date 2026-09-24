@@ -1,0 +1,63 @@
+image_width: 640
+image_height: 480
+camera_name: astra
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 592.0687097530391
+  - 0.0
+  - 317.1276223779871
+  - 0.0
+  - 595.0559888705992
+  - 239.38873063900425
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - 0.02803366210901828
+  - 0.5463935298236988
+  - -0.0011575676860316306
+  - -0.007165979928318627
+  - -1.6271797141507796
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 592.0687097530391
+  - 0.0
+  - 317.1276223779871
+  - 0.0
+  - 0.0
+  - 595.0559888705992
+  - 239.38873063900425
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+carbot_meta:
+  rms_px: 0.4683
+  views: 18
+  pinhole_rms_px: 0.4683
+  fisheye_rms_px: 0.4731
+  hfov_deg: 56.03
+  sensor: astra
+  coverage_cells: 9

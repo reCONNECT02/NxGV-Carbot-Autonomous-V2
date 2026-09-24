@@ -1,0 +1,24 @@
+version: 1
+sensors:
+  astra:
+    enabled: true
+    driver: astra_camera
+    launch_package: carbot_bringup
+    launch_file: astra_rgb.launch.py
+    launch_args: [width, height, fps]
+    image_topic: /camera/color/image_raw
+    width: 640
+    height: 480
+    fps: 15
+    encoding: rgb8
+    expected_hz: 15.0
+    intrinsics_file: /home/sunrise/carbot_data/calibration/20260924_103632/intrinsics/astra.yaml
+roles: {front: astra}
+roles_confirmed: true
+roles_confirmed_for: [front]
+mounts:
+  front: {x_m: 0.212, y_m: 0.015, z_m: 0.0828, yaw_deg: 0.79, pitch_down_deg: 3.15,
+    roll_deg: 0.23, hfov_deg: 56.03}
+extrinsics_calibrated: true
+lidar_to_camera: {calibrated: false, yaw_offset_deg: 0.0}
+extrinsics_date: '2026-09-24T10:44:28'

@@ -1,0 +1,29 @@
+passed: true
+summary: Camera mounts solved
+checks:
+- {label: front, measured: ground RMS 0.0039 m, limit: <= 0.02 m, passed: true, why: '',
+  fix: 'Check that the printed board is flat, fully visible, and at its measured floor
+    position.'}
+problems: []
+cameras:
+  front:
+    status: PASS
+    mount: {x_m: 0.212, y_m: 0.015, z_m: 0.0828, yaw_deg: 0.79, pitch_down_deg: 3.15,
+      roll_deg: 0.23}
+    nominal: {x_m: 0.217, y_m: 0.0114, z_m: 0.0935, yaw_deg: 0.0, pitch_down_deg: 2.5,
+      roll_deg: 0.0}
+    ground_rms_m: 0.0039
+    ground_max_m: 0.0073
+    reprojection_px: 0.735
+    corner_order: flip_cols
+    offset_from_nominal_m: 0.0124
+    angle_from_nominal_deg: 1.04
+    intrinsics: calibrated
+seam_error_m: not measured (no board seen by two cameras)
+mounts:
+  front: {x_m: 0.212, y_m: 0.015, z_m: 0.0828, yaw_deg: 0.79, pitch_down_deg: 3.15,
+    roll_deg: 0.23, hfov_deg: 56.03}
+step: extrinsics_ipm
+time: '2026-09-24T10:41:57'
+data_files: [data/cameras.yaml]
+session: '20260924_103632'

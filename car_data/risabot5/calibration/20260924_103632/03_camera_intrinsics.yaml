@@ -1,0 +1,30 @@
+passed: true
+summary: 1 of 1 cameras calibrated
+checks:
+- {label: Astra Pro (front), measured: "0.468 px \xB7 18 views \xB7 9/9 areas", limit: "\u2264\
+    \ 0.8 px \xB7 \u2265 15 views \xB7 9/9", passed: true, why: '', fix: ''}
+sensors:
+  astra:
+    sensor: astra
+    label: Astra Pro (front)
+    status: PASS
+    checks: {views: true, reprojection: true, coverage: true}
+    model: plumb_bob
+    rms_px: 0.4683
+    pinhole_rms_px: 0.4683
+    fisheye_rms_px: 0.4731
+    views: 18
+    coverage_cells: 9
+    image_size: [640, 480]
+    hfov_deg: 56.03
+    fx: 592.07
+    fy: 595.06
+    cx: 317.13
+    cy: 239.39
+    why: ''
+    fix: ''
+disabled: []
+step: camera_intrinsics
+time: '2026-09-24T10:40:29'
+data_files: [intrinsics/astra.yaml, data/cameras.yaml]
+session: '20260924_103632'

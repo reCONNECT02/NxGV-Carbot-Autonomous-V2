@@ -1,0 +1,31 @@
+passed: true
+summary: 1 of 1 cameras calibrated (OV5647 (MIPI ch 2), IMX219 (MIPI ch 0) switched
+  off)
+checks:
+- {label: Astra Pro (front), measured: "0.256 px \xB7 18 views \xB7 9/9 areas", limit: "\u2264\
+    \ 0.8 px \xB7 \u2265 15 views \xB7 9/9", passed: true, why: '', fix: ''}
+sensors:
+  astra:
+    sensor: astra
+    label: Astra Pro (front)
+    status: PASS
+    checks: {views: true, reprojection: true, coverage: true}
+    model: plumb_bob
+    rms_px: 0.256
+    pinhole_rms_px: 0.256
+    fisheye_rms_px: 0.2562
+    views: 18
+    coverage_cells: 9
+    image_size: [320, 240]
+    hfov_deg: 56.35
+    fx: 294.15
+    fy: 296.26
+    cx: 163.24
+    cy: 119.47
+    why: ''
+    fix: ''
+disabled: [ov5647, imx219]
+step: camera_intrinsics
+time: '2026-09-24T02:58:22'
+data_files: [intrinsics/astra.yaml, data/cameras.yaml]
+session: '20260924_013152'

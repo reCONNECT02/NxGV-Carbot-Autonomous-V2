@@ -1,0 +1,59 @@
+passed: true
+summary: "yaw correction -2.54\xB0, residual 1.91\xB0 over 3 positions"
+checks:
+- {key: captures, label: Target positions captured, passed: true, measured: '3', limit: "\u2265\
+    \ 3", why: '', fix: ''}
+- {key: spread, label: Spread of the positions, passed: true, measured: "30.5\xB0",
+  limit: "\u2265 20\xB0", why: '', fix: ''}
+- {key: correction, label: Yaw correction, passed: true, measured: "-2.54\xB0", limit: "\u2264\
+    \ \xB110\xB0", why: '', fix: ''}
+- {key: residual, label: Bearing error after correction, passed: true, measured: "1.91\xB0",
+  limit: "\u2264 2.0\xB0", why: '', fix: ''}
+warning: 'LiDAR and camera distances differ by up to 0.13 m: measure the LiDAR x position
+  (Controls) or recheck step 4. The yaw result is still valid.'
+n_captures: 3
+yaw_offset_deg: -2.537
+max_residual_deg: 1.906
+spread_deg: 30.5
+base_to_laser_before: [0.0, 0.0, 0.12, 3.14159, 0.0, 0.0]
+base_to_laser: [0.0, 0.0, 0.12, 3.09731, 0.0, 0.0]
+intrinsics: calibrated (step 3)
+captures:
+- laser_xy: [-0.7236, 0.2113]
+  ground_xy: [0.8167, -0.2502]
+  n_scans: 5
+  n_points: 4
+  u: 0.9163
+  v: 0.5988
+  bearing_deg: -17.03
+  error_deg: -0.754
+  residual_deg: 1.783
+  cam_range_m: 0.854
+  lidar_range_m: 0.754
+- laser_xy: [-0.7419, 0.0108]
+  ground_xy: [0.8723, -0.0495]
+  n_scans: 5
+  n_points: 3
+  u: 0.5982
+  v: 0.5849
+  bearing_deg: -3.25
+  error_deg: -2.414
+  residual_deg: 0.123
+  cam_range_m: 0.874
+  lidar_range_m: 0.742
+- laser_xy: [-0.7622, -0.246]
+  ground_xy: [0.8902, 0.2128]
+  n_scans: 5
+  n_points: 5
+  u: 0.2383
+  v: 0.5827
+  bearing_deg: 13.44
+  error_deg: -4.443
+  residual_deg: -1.906
+  cam_range_m: 0.915
+  lidar_range_m: 0.801
+limits: {max_bearing_error_deg: 2.0, max_correction_deg: 10.0, warn_range_diff_m: 0.08}
+step: lidar_camera
+time: '2026-09-24T10:53:46'
+data_files: [data/cameras.yaml, params_overlay.yaml]
+session: '20260924_103632'

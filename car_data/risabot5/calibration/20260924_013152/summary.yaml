@@ -1,0 +1,10 @@
+session: '20260924_013152'
+created: '2026-09-24T01:31:53'
+steps:
+  sensor_health: {status: PASS, time: '2026-09-24T01:31:53', file: 01_sensor_health.yaml,
+    summary: 9 of 9 checks passed}
+  camera_identity: {status: PASS, time: '2026-09-24T02:20:51', file: 02_camera_identity.yaml,
+    summary: 'confirmed front; skipped left side, right side (switched off)'}
+  camera_intrinsics: {status: PASS, time: '2026-09-24T02:58:36', file: 03_camera_intrinsics.yaml,
+    summary: '1 of 1 cameras calibrated (OV5647 (MIPI ch 2), IMX219 (MIPI ch 0) switched
+      off)'}

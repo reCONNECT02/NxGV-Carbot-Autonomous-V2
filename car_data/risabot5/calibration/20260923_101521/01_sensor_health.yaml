@@ -1,0 +1,52 @@
+passed: true
+checks:
+- {key: cam_astra, label: Astra Pro (front), topic: /camera/color/image_raw, state: ok,
+  measured: 23.2 Hz, limit: publishing, why: '', fix: '', value: 23.160249710083008,
+  detail: "age 0.01 s \xB7 latency 11 ms \xB7 below 24.0 Hz (not enforced)", passed: true,
+  ok_fraction: 1.0, median: 24.373}
+- {key: lidar, label: "LiDAR \xB7 T-mini Plus", topic: /scan, state: ok, measured: 9.7
+    Hz, limit: publishing, why: '', fix: '', value: 9.655355453491211, detail: "age\
+    \ 0.03 s \xB7 latency 107 ms", passed: true, ok_fraction: 1.0, median: 9.826}
+- {key: odom, label: Wheel odometry, topic: /odom, state: ok, measured: 16.2 Hz, limit: publishing,
+  why: '', fix: '', value: 16.179340362548828, detail: "age 0.05 s \xB7 latency 4\
+    \ ms", passed: true, ok_fraction: 1.0, median: 17.171}
+- {key: imu, label: IMU, topic: /imu/rpy, state: ok, measured: 16.1 Hz, limit: publishing,
+  why: '', fix: '', value: 16.074180603027344, detail: age 0.05 s, passed: true, ok_fraction: 1.0,
+  median: 17.171}
+- {key: uwb_tag, label: UWB tag via micro-ROS agent, topic: /uwb3/input_json, state: ok,
+  measured: 9.4 Hz, limit: publishing, why: '', fix: '', value: 9.420509338378906,
+  detail: age 0.04 s, passed: true, ok_fraction: 1.0, median: 9.886}
+- {key: uwb_anchors, label: UWB anchors, topic: '', state: ok, measured: 3 of 3, limit: 3
+    of 3, why: '', fix: '', value: 3.0, detail: "1782 \xB7 1786 \xB7 1783", passed: true,
+  ok_fraction: 1.0, median: 3.0}
+- {key: battery, label: Battery, topic: /carbot/vehicle/battery_v, state: ok, measured: 10.80
+    V, limit: "\u2265 10.8 V", why: '', fix: '', value: 10.800000190734863, detail: '',
+  passed: true, ok_fraction: 1.0, median: 10.8}
+- {key: processes, label: Camera processes (no duplicates), topic: '', state: ok,
+  measured: '0', limit: '0', why: '', fix: '', value: 0.0, detail: astra_camera /
+    8213, passed: true, ok_fraction: 1.0, median: 0.0}
+- {key: network, label: ROS network settings, topic: '', state: ok, measured: "domain\
+    \ 1 \xB7 localhost_only 0", limit: "domain 1 \xB7 localhost_only 0", why: '',
+  fix: '', value: null, detail: '', passed: true, ok_fraction: 1.0}
+n_ok: 9
+n: 9
+samples: 5
+summary: 9 of 9 checks passed
+measure_s: 5.0
+min_ok_fraction: 0.8
+limits:
+  camera_rate_min_ratio: 0.8
+  lidar_min_hz: 6.0
+  odom_min_hz: 15.0
+  imu_min_hz: 15.0
+  uwb_min_hz: 7.0
+  battery_min_v: 10.8
+  max_age_s: 1.0
+  enforce_min_rates: false
+  processes:
+    mipi_pattern: mipi_cam
+    astra_pattern: astra_camera
+    forbidden: [hobot_codec, websocket]
+step: sensor_health
+time: '2026-09-23T10:06:19'
+session: '20260923_101521'

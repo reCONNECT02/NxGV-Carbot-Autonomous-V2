@@ -1,0 +1,23 @@
+version: 1
+sensors:
+  astra: {enabled: true, driver: astra_camera, launch_file: astra_mini.launch.py,
+    image_topic: /camera/color/image_raw, width: 640, height: 480, encoding: rgb8,
+    expected_hz: 30.0, intrinsics_file: /home/sunrise/carbot_data/calibration/20260924_013152/intrinsics/astra.yaml}
+  ov5647: {enabled: false, driver: mipi_cam, namespace: /cam_ov5647, channel: 2, image_width: 960,
+    image_height: 544, image_topic: /cam_ov5647/image_raw, encoding: bgr8, expected_hz: 30.0,
+    hardware: 'OV5647 Rev1.3, MIPI host 2, I2C bus 4, addr 0x36', intrinsics_file: ''}
+  imx219: {enabled: false, driver: mipi_cam, namespace: /cam_imx219, channel: 0, image_width: 960,
+    image_height: 544, image_topic: /cam_imx219/image_raw, encoding: bgr8, expected_hz: 30.0,
+    hardware: 'IMX219 v2.1, MIPI host 0, I2C bus 6, addr 0x10', intrinsics_file: ''}
+roles: {front: astra, left_rear: imx219, right_rear: ov5647}
+roles_confirmed: true
+roles_confirmed_for: [front]
+mounts:
+  front: {x_m: 0.217, y_m: 0.0114, z_m: 0.0935, yaw_deg: 0.0, pitch_down_deg: 2.5,
+    roll_deg: 0.0, hfov_deg: 60.0}
+  left_rear: {x_m: 0.1145, y_m: 0.0654, z_m: 0.1406, yaw_deg: 95.0, pitch_down_deg: 10.0,
+    roll_deg: 0.0, hfov_deg: 70.0}
+  right_rear: {x_m: 0.1145, y_m: -0.0654, z_m: 0.1406, yaw_deg: -95.0, pitch_down_deg: 10.0,
+    roll_deg: 0.0, hfov_deg: 70.0}
+extrinsics_calibrated: false
+lidar_to_camera: {calibrated: false, yaw_offset_deg: 0.0}
