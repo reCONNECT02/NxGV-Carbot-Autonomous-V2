@@ -184,8 +184,20 @@ def test_negative_distance_toggles_polarity():
 
 def test_far_too_short_changes_nothing():
     step, car, link, _ = make()
-    r = distance_run(step, car, metres=0.2)
+    r = distance_run(step, car, metres=0.02)                        # 1 % of the tape: the wheel is not turning
     assert r['status'] == 'FAIL' and link.sets == []
+
+
+def test_odometry_10x_too_low_is_corrected_not_rejected():
+    """risabot5 2026-09-24: ticks_per_meter 10x too high, a 2 m drive counted 0.2 m: every run used to FAIL with
+    'nothing changed' (distance_min_fraction 0.2) so the value never moved. Now it is corrected and verified."""
+    step, car, link, _ = make(values={'ticks_per_meter': 13400.0, 'odom_reverse_polarity': False, 'imu_yaw_scale': 1.0},
+                              tpm_true=1340.0)
+    r1 = distance_run(step, car)
+    assert r1['status'] == 'CORRECTED' and r1['odom_m'] == pytest.approx(0.2, rel=0.02)
+    assert link.values['ticks_per_meter'] == pytest.approx(1340.0, rel=0.02)
+    r2 = distance_run(step, car)
+    assert r2['status'] == 'PASS'
 
 
 def test_no_odom_is_no_data():

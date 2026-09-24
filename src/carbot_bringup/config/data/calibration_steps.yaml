@@ -181,11 +181,14 @@ steps:
       - "DRIFT: hands off, press Run drift test: the car must stay completely still for 60 s."
       - Press Save. It writes ticks_per_meter, odom_reverse_polarity and imu_yaw_scale into this session.
     # phase 8 page: min_rate_hz = /odom and /imu/rpy messages per second a run needs;
+    # distance_min_fraction was 0.2 until 2026-09-24: with a wrong ticks_per_meter the odometry counted ~10 % of the
+    # tape (risabot5 read 0.2 m for 2.00 m), every run was rejected as "wheel not turning" and NOTHING was ever
+    # corrected. 0.02 = 4 cm of 2 m: below that the wheel really is not turning (or the encoder is dead).
     # distance_min_fraction / spin_min_fraction = below this share of the tape distance / a full
     # turn nothing is corrected (wheel not turning, turn not finished); settle_s = IMU samples
     # ignored after imu_yaw_scale changes for the spin. max_runs = runs listed on the page.
     procedure: {straight_run_m: 2.0, spin_test: true, drift_test_s: 60, max_runs: 4,
-                min_rate_hz: 5.0, distance_min_fraction: 0.2, spin_min_fraction: 0.5, settle_s: 0.5}
+                min_rate_hz: 5.0, distance_min_fraction: 0.02, spin_min_fraction: 0.5, settle_s: 0.5}
     pass: {max_distance_error_pct: 2.0, max_heading_drift_deg_per_min: 2.0, max_spin_error_pct: 3.0}
   # Step 7 (wizard page, phase 8): Run starts a supervised drive, the car waits at a Go
   # button before EVERY segment (left circle, right circle, straight runs) so it can be
