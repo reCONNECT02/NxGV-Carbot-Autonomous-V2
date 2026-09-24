@@ -335,8 +335,9 @@ def build(context, mode: str):
     # ---------------------------------------------------------------- 6. carbot stack + GUI
     stack = [node(pkg, exe) for pkg, exe in select_nodes(CARBOT_NODES['common'], keep) + CARBOT_NODES[mode]]
     later.append(TimerAction(period=float(cfg.get('delay_stack_s', 4.0)), actions=stack))
-    later.append(TimerAction(period=float(cfg.get('delay_gui_s', 5.0)),
-                             actions=[node('carbot_gui', 'gui_server')]))
+    if truthy('start_gui'):                    # start_gui:=false when the dashboard runs on a PC (tools/dashboard_pc)
+        later.append(TimerAction(period=float(cfg.get('delay_gui_s', 5.0)),
+                                 actions=[node('carbot_gui', 'gui_server')]))
 
     actions.append(RegisterEventHandler(OnProcessExit(target_action=cleanup, on_exit=later)))
     return actions
@@ -359,6 +360,9 @@ def declare_arguments():
                                           "drivers.yaml carbot_launch.calibrate_lite_keep and lowers GUI/"
                                           "monitor rates (calibrate_lite.yaml). Steps 1-12 only; "
                                           "step 13 needs 'full'."),
+        DeclareLaunchArgument('start_gui', default_value='true',
+                              description='gui_server on this machine; false when the dashboard runs on a PC '
+                                          '(tools/dashboard_pc), otherwise both would use the same node name'),
         DeclareLaunchArgument('start_base', default_value='true',
                               description='servo_controller + tunnel_wall_follower (base repo)'),
     ]

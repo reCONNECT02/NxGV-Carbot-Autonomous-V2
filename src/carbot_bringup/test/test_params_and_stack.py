@@ -263,3 +263,20 @@ def test_safety_status_heartbeat_is_faster_than_every_consumers_stale_limit():
     assert limits, 'no safety_max_age_s found'
     for node, lim in limits.items():
         assert 1.0 / hz <= 0.5 * lim, f'{node}: safety_max_age_s {lim} s needs status_publish_hz >= {2 / lim:g}'
+
+
+# --------------------------------------------------------------------------- dashboard on a PC (tools/dashboard_pc)
+def test_start_gui_argument_and_pc_launch_exist():
+    src = open(os.path.join(PKG, 'carbot_bringup', 'stack.py'), encoding='utf-8').read()
+    assert "DeclareLaunchArgument('start_gui', default_value='true'" in src and "if truthy('start_gui')" in src
+    pc = open(os.path.join(PKG, 'launch', 'gui_pc.launch.py'), encoding='utf-8').read()
+    for needle in ('gui_server', "'session': ''", 'ROS_DOMAIN_ID', "mode must be calibrate or race", 'param_file_list(share, None)'):
+        assert needle in pc, needle
+    compile(pc, 'gui_pc.launch.py', 'exec')
+    uwb = _doc_data('uwb')
+    assert int(uwb['agent']['domain_id']) == 1 and int(uwb['agent']['localhost_only']) == 0   # what run_gui_pc.sh exports
+
+
+def _doc_data(name):
+    with open(os.path.join(DATA, f'{name}.yaml'), encoding='utf-8') as f:
+        return yaml.safe_load(f)

@@ -1,0 +1,11 @@
+# Save as  C:\Users\<you>\.wslconfig  (then in PowerShell: wsl --shutdown, and start Ubuntu again)
+# Mirrored networking gives WSL the same network as Windows, so the robot's DDS discovery (UDP multicast)
+# reaches ROS inside WSL and the browser reaches http://localhost:8080. Needs Windows 11 22H2 or newer.
+[wsl2]
+networkingMode=mirrored
+dnsTunneling=true
+firewall=true
+autoProxy=true
+
+[experimental]
+hostAddressLoopback=true
