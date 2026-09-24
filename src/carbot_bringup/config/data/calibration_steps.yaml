@@ -232,7 +232,7 @@ steps:
   - index: 8
     id: speed_pid
     title: Speed PID
-    required: true
+    required: false      # 2026-09-25 risabot1: owner skips it for now (car would not break away in the sweep; no time)
     tab: control
     tool: ros2 run carbot_control calib_speed
     need: Step 7 passed (the car drives straight). calibrate.launch.py running. Straight clear floor, about 1.5 m free ahead AND behind, e-stop ready.
