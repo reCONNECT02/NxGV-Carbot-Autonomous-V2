@@ -132,6 +132,7 @@ class LocalCfg:
     vis_step_cap: float = 0.12
     vis_step_gain: float = 0.0015
     vis_sample_stride: int = 2
+    heading_lead_s: float = 0.0     # 0 = V4 behaviour; >0 compensates the servo_controller IMU low-pass (below)
 
     @staticmethod
     def from_params(p) -> 'LocalCfg':
@@ -145,7 +146,7 @@ class LocalCfg:
             float(p('visual.gradient_norm_max')), int(p('visual.min_rows')),
             float(p('visual.prior_weight')), float(p('visual.weight_scale_m')),
             float(p('visual.step_cap')), float(p('visual.step_gain')),
-            int(p('visual.sample_stride')))
+            int(p('visual.sample_stride')), float(p('heading_lead_s')))
 
 
 @dataclass
@@ -166,6 +167,7 @@ class LocalEstimator:
     def reset(self, x: float, y: float, a: float) -> None:
         self.ox, self.oy, self.oa = float(x), float(y), float(a)   # V4 odom (track frame)
         self.tx = self.ty = 0.0                                      # V4 transform
+        self.ta = 0.0                                                # heading trim (ICP only; 0 = V4 behaviour)
         self.sigma = self.c.sigma_initial
         self.distance = 0.0
         self.imu_offset: Optional[float] = None                      # imu yaw -> track heading
@@ -184,6 +186,11 @@ class LocalEstimator:
             if self.imu_offset is None:
                 self.imu_offset = wrap(self.oa - imu_yaw)
             target = wrap(imu_yaw + self.imu_offset)
+            if self.c.heading_lead_s > 0.0 and dt > 1e-6:
+                # /imu/rpy yaw comes out of servo_controller's EMA (alpha 0.15 at the IMU rate, time constant
+                # ~0.3 s): in a turn it LAGS the real heading by yaw_rate x tau. Lead it with the wheel-derived
+                # yaw rate (odom_dyaw / dt: no lag, small bias) so the lag does not become sideways error.
+                target = wrap(target + self.c.heading_lead_s * odom_dyaw / dt)
             self.oa = wrap(self.oa + self.c.heading_blend * wrap(target - self.oa))
         else:
             self.oa = wrap(self.oa + odom_dyaw)
@@ -200,7 +207,16 @@ class LocalEstimator:
 
     @property
     def pose(self) -> Tuple[float, float, float]:
-        return self.ox + self.tx, self.oy + self.ty, self.oa
+        return self.ox + self.tx, self.oy + self.ty, (self.oa if self.ta == 0.0 else wrap(self.oa + self.ta))
+
+    def apply_body_step(self, dx: float, dy: float, dth: float) -> None:
+        """pose <- pose o (dx, dy, dth) in the CAR frame (icp_core): a small bounded move of the transform and a
+        heading trim. The caller (local_pose) only passes steps that icp_core already slew-limited."""
+        h = self.oa + self.ta
+        c, s = math.cos(h), math.sin(h)
+        self.tx += c * dx - s * dy
+        self.ty += s * dx + c * dy
+        self.ta += dth
 
     @property
     def odom(self) -> Tuple[float, float, float]:

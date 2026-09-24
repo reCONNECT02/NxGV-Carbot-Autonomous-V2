@@ -714,3 +714,24 @@ Removed (stated explicitly, CLAUDE.md: no silent removals):
   `topics.CAMERA_ROLES`); an old `calibration_steps.yaml` copy naming `ov5647` / `imx219` in `per_sensor` is skipped by step 3.
 * Docs: `Camera_Setup.md` and `Carbot_Architecture_V4.md` carry a note (the original text is kept), BACKLOG #22 WONTFIX, #24 DONE.
 * Not done here: the step 4 floor-sheet layout (board centres, `make_boards.py`, the PDF) is handled separately.
+
+## Local localization: ICP against camera-edge memory + IMU lag lead (2026-09-24, sandbox only)
+
+Full note: `docs/LOCALIZATION_MEMORY.md`. Read blocks 04 / 05 first: memory is V4's odom-frame `LocalMemory`; the local pose already
+corrects its translation against the prior map (`visual_update`, <= 1.5 mm per frame) and takes the heading from the IMU.
+
+What exists now:
+* `carbot_localization/icp_core.py` (pure numpy): `edge_points`, `normals`, `EdgeMemory` (V4 age + motion-uncertainty rule), robust
+  point-to-line `register` (3 DOF, eigenvalue cut-off so along-track is never invented), `IcpCorrector` (gates, time-scaled share,
+  per-update and total caps). `LocalEstimator.apply_body_step` + heading trim `ta`. Wired into `local_pose._on_grid` behind
+  `local_pose.icp.enabled` (**false**); no new topic, no new subscriber. 13 unit tests in `test/test_icp_core.py`.
+* `local_pose.heading_lead_s` (**0.0 = V4**): leads the servo_controller-EMA-lagged IMU yaw with the wheel yaw rate.
+* `tools/sandbox/run_icp_eval.py`: four scenarios x four modes (odom / map / icp / both) with sideways and along-track error.
+* New YAML (all REQUIRED, loud when missing): `local_pose.heading_lead_s`, `local_pose.icp.*` (32 keys).
+
+Result: the ICP does not pay for itself (3-6 % at best, worse with noisy edges, ~10-16 % of an RDK core); the IMU lag does: with
+`heading_lead_s` ~0.35 the sandbox local error drops 15.3 -> 3.7 cm rms (BACKLOG #54).
+
+Handoff / open: verify `heading_lead_s` on the car (BACKLOG #54); ICP stays an experiment (#55); along-track error needs landmarks
+(#56). NOT tested on the car: everything above.
+
