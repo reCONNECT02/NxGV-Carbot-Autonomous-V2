@@ -45,7 +45,8 @@ from .wizard_core import StepImpl, StepRefused
 
 OWNER, BRIDGE, COMMON = 'command_owner', 'tunnel_bridge', '/**'
 PROC_KEYS = ('raw_duty', 'circle_yaw_deg', 'circle_max_distance_m', 'straight_run_m', 'max_runs', 'timeout_s',
-             'stop_settle_s', 'imu_settle_s', 'odom_timeout_s')
+             'stop_settle_s', 'imu_settle_s', 'odom_timeout_s',
+             'stall_grace_s', 'stall_window_s', 'stall_min_progress_m', 'stall_boost_step', 'stall_boost_max_duty')
 PASS_KEYS = ('straight_drift_m_per_m', 'min_radius_m_max')
 SERVO_PARAMS = ('servo_center', 'servo_range_left', 'servo_range_right', 'imu_yaw_scale')
 OWNER_PARAMS = ('mode', 'steering.steer_sign')
@@ -82,6 +83,13 @@ class ServoSteeringStep(StepImpl):
         self.circle_max, self.straight_m = float(p['circle_max_distance_m']), float(p['straight_run_m'])
         self.timeout, self.stop_s = float(p['timeout_s']), float(p['stop_settle_s'])
         self.imu_settle, self.odom_to = float(p['imu_settle_s']), float(p['odom_timeout_s'])
+        # stall boost: while the odometry shows (almost) no progress the duty is raised a little, capped
+        self.stall_grace, self.stall_window = float(p['stall_grace_s']), float(p['stall_window_s'])
+        self.stall_min, self.boost_step = float(p['stall_min_progress_m']), float(p['stall_boost_step'])
+        self.boost_max = float(p['stall_boost_max_duty'])
+        if self.stall_window <= 0 or self.boost_step < 0 or self.boost_max < self.duty:
+            raise ConfigError('calibration_steps.yaml servo_steering.procedure: stall_window_s must be > 0, '
+                              'stall_boost_step >= 0 and stall_boost_max_duty >= raw_duty')
         self.drift_lim, self.radius_lim = float(self.pass_cfg['straight_drift_m_per_m']), float(self.pass_cfg['min_radius_m_max'])
         self.values: Optional[Dict] = None       # servo_controller + command_owner values
         self.busy, self.link_error, self.read_at = '', '', -math.inf
@@ -196,7 +204,9 @@ class ServoSteeringStep(StepImpl):
         seg = self._seg()
         if r['phase'] == 'settling' and now >= self.rec.ignore_until:
             r['phase'], r['t'] = 'driving', now
-            self.drive.command(SOURCE, self.duty, self._steer(seg), f'step 7 {seg}')
+            r['duty'], r['boosts'] = self.duty, 0
+            r['prog_t'], r['prog_d'] = now, abs(self.rec.dist)
+            self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg}')
         elif r['phase'] == 'driving':
             d, y, el = self.rec.dist, self._yaw_rad(), now - r['t']
             if self.rec.odom_t is None or now - self.rec.odom_t > self.odom_to:
@@ -207,6 +217,8 @@ class ServoSteeringStep(StepImpl):
                 return self._finish()
             done = (abs(d) >= self.straight_m if seg == 'straight'
                     else abs(y) >= self.target or abs(d) >= self.circle_max)
+            if not done:
+                self._stall_boost(r, seg, now, abs(d), el)
             if done:
                 r['phase'], r['t'] = 'stopping', now
                 self.drive.command(SOURCE, 0.0, self._steer(seg), 'stop')
@@ -214,6 +226,23 @@ class ServoSteeringStep(StepImpl):
             self.drive.stop()
             return self._segment_done(seg, self.rec.dist, self._yaw_rad())
         return None
+
+    def _stall_boost(self, r: Dict, seg: str, now: float, dist: float, elapsed: float) -> None:
+        """The car may need more than raw_duty to get going (full lock drags, static friction, a weak battery).
+        Every stall_window_s in which the odometry moved less than stall_min_progress_m, after stall_grace_s of
+        the segment, raise the duty by stall_boost_step, never above stall_boost_max_duty (the command owner
+        caps calibration duty at calibration.duty_max anyway). Starts again from raw_duty on every segment."""
+        if dist - r['prog_d'] >= self.stall_min:
+            r['prog_t'], r['prog_d'] = now, dist                 # moving: restart the window
+            return
+        if elapsed < self.stall_grace or now - r['prog_t'] < self.stall_window:
+            return
+        r['prog_t'] = now                                        # next check after another window
+        if r['duty'] + 1e-9 >= self.boost_max or self.boost_step <= 0:
+            return
+        r['duty'] = min(self.boost_max, round(r['duty'] + self.boost_step, 4))
+        r['boosts'] += 1
+        self.drive.command(SOURCE, r['duty'], self._steer(seg), f'step 7 {seg} (stall boost)')
 
     def _segment_done(self, seg: str, d: float, y: float) -> Optional[Dict]:
         r, cap = self.run, self.run['cap']
@@ -369,6 +398,7 @@ class ServoSteeringStep(StepImpl):
                    'straight_n': len(cap['straight']) + (1 if seg == 'straight' else 0), 'max_runs': self.max_runs,
                    'distance_m': round(self.rec.dist, 3), 'yaw_deg': round(math.degrees(self._yaw_rad()), 1),
                    'elapsed_s': round(now - r['t'], 1) if 't' in r else 0.0, 'note': r['note'],
+                   'duty': r.get('duty', self.duty), 'boosts': r.get('boosts', 0), 'base_duty': self.duty,
                    'servo_center': cap['servo_center'], 'steer_sign': cap['steer_sign'],
                    'circles': {s: {'distance_m': round(cap[s]['distance'], 3),
                                    'yaw_deg': round(math.degrees(cap[s]['yaw']), 1),

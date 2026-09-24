@@ -62,10 +62,11 @@ class Car:
     """RL / RR = full-lock radii, true_centre = servo_center that drives straight."""
 
     def __init__(self, clock, rec, servo, drive, RL=0.42, RR=0.44, true_centre=93, true_sign=-1.0,
-                 imu_gain=1.0, raw_yaw=37.0, speed_per_duty=1.25, stuck=False):
+                 imu_gain=1.0, raw_yaw=37.0, speed_per_duty=1.25, stuck=False, min_duty=0.0):
         self.clock, self.rec, self.servo, self.drive = clock, rec, servo, drive
         self.RL, self.RR, self.true_centre, self.true_sign = RL, RR, true_centre, true_sign
         self.gain, self.raw_yaw, self.k_speed, self.stuck = imu_gain, raw_yaw, speed_per_duty, stuck
+        self.min_duty = min_duty          # static friction: the car only moves at or above this duty
         self.x = self.y = self.th = 0.0
         self.odom_on = True
         self.publish()
@@ -87,7 +88,7 @@ class Car:
         self.clock.t += dt
         c = self.drive.cmd
         if c is not None and not self.stuck:
-            v = c[1] * self.k_speed
+            v = c[1] * self.k_speed if c[1] >= self.min_duty else 0.0
             ds = v * dt
             dth = ds * self.curvature(c[2])
             self.x += ds * math.cos(self.th + dth / 2)
@@ -343,3 +344,58 @@ def test_live_view_is_json():
     lv = step.live({})
     assert lv['run']['segment'] == 'left' and lv['run']['distance_m'] > 0
     json.dumps(lv)
+
+
+# ---------------------------------------------------------------- stall boost (BACKLOG #63)
+def test_normal_car_is_never_boosted():
+    step, car, sl, drive, _ = make()
+    res = full_run(step, car)
+    assert res['passed']
+    assert {c[1] for c in drive.log if c[1] > 0} == {step.duty}          # only the base duty was ever requested
+
+
+def test_stalled_car_gets_more_duty_until_it_moves():
+    step, car, sl, drive, _ = make(min_duty=0.23)                        # 0.16 does not move it
+    step.live({})
+    assert step.start(car.clock.t, {}) is None
+    assert go(step)['ok']
+    res = drive_until(step, car)
+    assert res is None                                                    # the left circle finished, waits for Go
+    duties = [c[1] for c in drive.log if c[1] > 0]
+    assert duties[0] == step.duty and duties == sorted(duties) and duties[-1] >= 0.23
+    assert all('stall boost' in c[3] for c in drive.log if c[1] > step.duty)
+    assert max(duties) <= step.boost_max + 1e-9
+    assert step.live({})['run']['boosts'] >= 4 and step.live({})['run']['base_duty'] == step.duty
+
+
+def test_boost_is_capped_and_starts_over_each_segment():
+    step, car, sl, drive, _ = make(min_duty=0.9)                          # never moves: above the cap
+    step.live({})
+    step.start(car.clock.t, {})
+    go(step)
+    res = drive_until(step, car)
+    assert res is not None and not res['passed'] and 'not finished within' in res['summary']
+    assert max(c[1] for c in drive.log) <= step.boost_max + 1e-9
+    step2, car2, sl2, drive2, _ = make(min_duty=0.23)
+    step2.live({})
+    step2.start(car2.clock.t, {})
+    go(step2)
+    drive_until(step2, car2)
+    go(step2)                                                             # next segment: back to the base duty
+    car2.step(); step2.tick(car2.clock.t, {})
+    for _ in range(80):
+        car2.step(); step2.tick(car2.clock.t, {})
+        if step2.run['phase'] == 'driving':
+            break
+    assert [c[1] for c in drive2.log if c[1] > 0][-1] == step2.duty or step2.run['duty'] >= step2.duty
+
+
+def test_stall_boost_keys_are_required_and_checked():
+    bad = copy.deepcopy(STEP7)
+    del bad['procedure']['stall_boost_step']
+    with pytest.raises(ConfigError, match='stall_boost_step'):
+        make(cfg=bad)
+    worse = copy.deepcopy(STEP7)
+    worse['procedure']['stall_boost_max_duty'] = worse['procedure']['raw_duty'] - 0.05
+    with pytest.raises(ConfigError, match='stall_boost_max_duty'):
+        make(cfg=worse)

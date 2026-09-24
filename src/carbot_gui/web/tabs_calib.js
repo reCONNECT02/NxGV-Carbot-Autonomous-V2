@@ -700,7 +700,8 @@ STEP_PAGES.servo_steering = st => {
     liveHtml += `<div class="calbig">${r.segment === 'straight' ? `${D.f(r.distance_m, 2)} m <span class="muted">of ${D.f(pr.straight_run_m, 1)} m</span>`
       : `${D.f(r.yaw_deg, 0)}° <span class="muted">of ${D.f(pr.circle_yaw_deg, 0)}°, ${D.f(r.distance_m, 2)} m driven</span>`}</div>` +
       `<div class="bar"><i style="width:${Math.round(Math.min(1, f) * 100)}%"></i></div>` +
-      `<p class="muted" style="font-size:12px">${r.phase === 'settling' ? 'Settling the IMU…' : r.phase === 'stopping' ? 'Stopping…' : `${D.f(r.elapsed_s, 0)} s of at most ${D.f(pr.timeout_s, 0)} s`}</p>`;
+      `<p class="muted" style="font-size:12px">${r.phase === 'settling' ? 'Settling the IMU…' : r.phase === 'stopping' ? 'Stopping…' : `${D.f(r.elapsed_s, 0)} s of at most ${D.f(pr.timeout_s, 0)} s`}` +
+      (r.duty != null && r.phase === 'driving' ? ` · motor duty ${D.f(r.duty, 2)}${r.boosts ? ` (stall boost ×${r.boosts} from ${D.f(r.base_duty, 2)})` : ''}` : '') + '</p>';
   } else liveHtml += `<div class="muted">${running ? 'Waiting for Go.' : 'Not driving.'}</div>`;
   const circ = (r && r.circles) || {};
   const res = st.result || {};

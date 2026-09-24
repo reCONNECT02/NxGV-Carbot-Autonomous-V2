@@ -216,7 +216,12 @@ steps:
     # imu_settle_s = IMU samples ignored after imu_yaw_scale is set to +-1 for the measurement;
     # odom_timeout_s = /odom older than this while driving aborts the segment.
     procedure: {raw_duty: 0.16, circle_yaw_deg: 180, circle_max_distance_m: 2.2, straight_run_m: 1.5, max_runs: 4, timeout_s: 25,
-                stop_settle_s: 0.8, imu_settle_s: 0.5, odom_timeout_s: 0.5}
+                stop_settle_s: 0.8, imu_settle_s: 0.5, odom_timeout_s: 0.5,
+                # stall boost (2026-09-24, BACKLOG #63): the car did not move at raw_duty 0.16. While the odometry
+                # moves less than stall_min_progress_m per stall_window_s (after stall_grace_s), the duty goes up
+                # by stall_boost_step, never above stall_boost_max_duty (command owner cap: calibration.duty_max 0.35).
+                stall_grace_s: 1.5, stall_window_s: 1.0, stall_min_progress_m: 0.02,
+                stall_boost_step: 0.02, stall_boost_max_duty: 0.30}
     pass: {straight_drift_m_per_m: 0.02, min_radius_m_max: 0.45}
   - index: 8
     id: speed_pid
