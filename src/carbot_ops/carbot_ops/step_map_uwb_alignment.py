@@ -16,6 +16,16 @@ Three modes. The first is new with the Haffiz UWB switch and is the default:
                                   Save also stores the lap as captures/step11_uwb_lap.csv for
                                   `map_builder.py edit` if the road shape needs touching up.
 
+Fourth mode, for when a lap will not fit by itself (sparse or distorted UWB): the owner fits the map
+by hand (tools/map/map_builder.py edit ... --init X Y YAW, read the venue_transform) and types it in:
+
+  {"mode": "manual", "x_m": X, "y_m": Y, "yaw_deg": YAW}
+                                  Nothing is recorded. The numbers are taken as the alignment
+                                  (result mode "manual", owner-confirmed; the wizard cannot check
+                                  them). If a UWB lap was recorded since the wizard started, how
+                                  well it sits on the map with these numbers is shown as
+                                  information only. Save writes track_to_venue as usual.
+
 The two older modes (terminal tool carbot_localization.calib_map_uwb as a wizard page) find
 uwb.yaml track_to_venue (p_venue = R(yaw) p_track + [x, y]) with the SAME fit
 (alignment.fit_track_to_venue: Huber loss on the ranges, inliers within inlier_m)
@@ -76,11 +86,11 @@ from .wizard_core import StepImpl, StepRefused
 STEP_ID = 'map_uwb_alignment'
 PROC_KEYS = ('modes', 'lap_min_s', 'min_extent_m', 'huber_m', 'inlier_m', 'points_seconds', 'min_points',
              # wizard page (phase 8 page 11)
-             'points_min_extent_m', 'lap_max_s', 'max_input_age_s', 'live_fit_period_s', 'overlay_max_points',
+             'manual_max_offset_m', 'points_min_extent_m', 'lap_max_s', 'max_input_age_s', 'live_fit_period_s', 'overlay_max_points',
              # Haffiz switch: uwb_lap mode
              'uwb_lap_min_speed_mps', 'uwb_lap_init', 'uwb_lap_min_points', 'map_tools_dir')
 PASS_KEYS = ('max_rms_m', 'min_inlier_frac', 'uwb_lap_max_rms_m', 'uwb_lap_min_inlier_frac', 'uwb_lap_min_sections')
-MODES = ('uwb_lap', 'lap', 'points')
+MODES = ('uwb_lap', 'lap', 'points', 'manual')
 UWB_LAP_INITS = ('none', 'map')
 # uwb.yaml keys this step writes (= calibration_steps.yaml map_uwb_alignment.writes)
 WRITES = ('track_to_venue',)
@@ -97,7 +107,7 @@ def wrap(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
 
 
-def parse_argument(arg: str, poses: Dict) -> Tuple[Optional[Dict], str]:
+def parse_argument(arg: str, poses: Dict, max_offset_m: float = 20.0) -> Tuple[Optional[Dict], str]:
     """RUN argument -> ({'mode', 'pose'?}, '') or (None, why refused)."""
     try:
         a = json.loads(arg) if arg else None
@@ -105,7 +115,18 @@ def parse_argument(arg: str, poses: Dict) -> Tuple[Optional[Dict], str]:
         a = None
     if not isinstance(a, dict) or a.get('mode') not in MODES:
         return None, ('Choose Start UWB lap, Start lap or Record point on this page '
-                      '(argument {"mode": "uwb_lap" | "lap" | "points"}).')
+                      '(argument {"mode": "uwb_lap" | "lap" | "points" | "manual"}).')
+    if a['mode'] == 'manual':
+        try:
+            vals = {k: float(a[k]) for k in ('x_m', 'y_m', 'yaw_deg')}
+        except (KeyError, TypeError, ValueError):
+            return None, 'Manual: give numbers x_m, y_m (metres) and yaw_deg (degrees).'
+        if not all(math.isfinite(v) for v in vals.values()):
+            return None, 'Manual: x_m, y_m and yaw_deg must be finite numbers.'
+        if abs(vals['x_m']) > max_offset_m or abs(vals['y_m']) > max_offset_m or abs(vals['yaw_deg']) > 360.0:
+            return None, (f'Manual: x_m / y_m beyond {max_offset_m:g} m or yaw beyond 360 deg: metres and degrees? '
+                          '(limit: calibration_steps.yaml map_uwb_alignment.procedure.manual_max_offset_m)')
+        return dict(vals, mode='manual'), ''
     if a['mode'] == 'uwb_lap':
         return {'mode': 'uwb_lap'}, ''
     if a['mode'] == 'points':
@@ -264,7 +285,7 @@ class MapUwbAlignmentStep(StepImpl):
 
     # ------------------------------------------------------------------ StepImpl
     def start(self, now: float, inputs: Dict) -> Optional[str]:
-        a, err = parse_argument(inputs.get('argument', ''), self.poses)
+        a, err = parse_argument(inputs.get('argument', ''), self.poses, self.p['manual_max_offset_m'])
         if a is None:
             return err
         if a['mode'] not in self.modes:
@@ -277,10 +298,14 @@ class MapUwbAlignmentStep(StepImpl):
             lever = tuple(float(v) for v in doc['tag']['mount_xy_m'])
         except (KeyError, TypeError, ValueError) as e:
             return f'data/uwb.yaml of this session is broken ({e}): redo {STEP10}.'
+        b = basis(doc)
+        if a['mode'] == 'manual':
+            self.run = {'mode': 'manual', 't0': now, 'args': a, 'rows': [], 'lost': 0, 'anchors': anchors,
+                        'basis': b, 'stop': False}
+            return None
         feed = inputs.get(wu.INPUT_KEY)
         if feed is None:
             return 'No UWB feed in the calibration wizard (node started without it): relaunch calibrate.launch.py.'
-        b = basis(doc)
         run = {'mode': a['mode'], 't0': now, 'cursor': feed.cursor(), 'rows': [], 'lost': 0, 'anchors': anchors,
                'lever': lever, 'basis': b, 'stop': False, 'live_fit': None, 'live_fit_t': -math.inf}
         if a['mode'] == 'uwb_lap':
@@ -322,6 +347,8 @@ class MapUwbAlignmentStep(StepImpl):
             return {}
         el = now - r['t0']
         out = {'mode': r['mode'], 'elapsed_s': round(el, 1), 'samples': len(r['rows'])}
+        if r['mode'] == 'manual':
+            return dict(out, remaining_s=0.0, fraction=1.0)
         if r['mode'] == 'points':
             secs = self.p['points_seconds']
             out.update(remaining_s=round(max(0.0, secs - el), 1), fraction=round(min(1.0, el / secs), 2))
@@ -351,6 +378,9 @@ class MapUwbAlignmentStep(StepImpl):
         r = self.run
         if r is None:
             return None
+        if r['mode'] == 'manual':
+            self.run = None
+            return self._finish_manual(r)
         feed = inputs.get(wu.INPUT_KEY)
         if feed is not None:
             rows, r['cursor'], lost = feed.rows_since(r['cursor'])
@@ -483,6 +513,44 @@ class MapUwbAlignmentStep(StepImpl):
                      'points': {}, 'lap_venue': lap.tolist() if lap is not None else [],
                      'overlay': self._lap_overlay(r['anchors'], lap, res.get('fit'))}
         return res
+
+    def _manual_evidence(self, T: Tuple[float, float, float]) -> Optional[Dict]:
+        """How the last recorded UWB lap sits on the map under the typed transform (information only)."""
+        lap = np.array((self.last or {}).get('lap_venue') or [], float).reshape(-1, 2)
+        if not len(lap):
+            return None
+        try:
+            doc, _ = self._current_map()
+            mb = load_map_builder(self.map_tools_dir, self.config_dir)
+            from carbot_common.map_geometry import template_from_yaml
+            tpl = template_from_yaml(doc)
+            lines = mb.centrelines(tpl, mb.FIT['sample_step_m'])
+            _, dist = mb.LineIndex(lines).nearest(mb.apply(mb.invert(T), lap))
+        except Exception:  # noqa: BLE001  information only, never blocks the manual result
+            return None
+        inl = dist < mb.FIT['icp_reject_m']
+        return {'n': int(len(lap)), 'inlier_frac': float(inl.mean()),
+                'rms_m': float(np.sqrt(np.mean(dist[inl] ** 2))) if inl.any() else float('inf')}
+
+    def _finish_manual(self, r: Dict) -> Dict:
+        a = r['args']
+        t2v = {'x_m': round(a['x_m'], 4), 'y_m': round(a['y_m'], 4), 'yaw_deg': round(a['yaw_deg'], 3),
+               'aligned': True}
+        txt = f'x {t2v["x_m"]:+.3f} m, y {t2v["y_m"]:+.3f} m, yaw {t2v["yaw_deg"]:+.2f} deg'
+        checks = [_check('manual', 'Manual alignment', txt, 'entered by the owner (not checked by the wizard)', True)]
+        ev = self._manual_evidence((t2v['x_m'], t2v['y_m'], math.radians(t2v['yaw_deg'])))
+        if ev is not None:
+            checks.append(_check('lap_info', 'Last UWB lap on the map (information only)',
+                                 f'{ev["inlier_frac"] * 100:.0f} % of {ev["n"]} points on the road, '
+                                 f'RMS {ev["rms_m"] * 100:.1f} cm', 'not a pass condition', True))
+            if self.last:                     # the overlay shows the lap under the typed transform
+                self.last['fit'] = None
+                self.last['overlay'] = self._lap_overlay(r['anchors'], np.array(self.last['lap_venue'], float),
+                                                         {k: t2v[k] for k in ('x_m', 'y_m', 'yaw_deg')})
+        return {'step': STEP_ID, 'mode': 'manual', 'capture': {'mode': 'manual', 'entered_by': 'owner'},
+                'checks': checks, 'basis': r['basis'], 'map': self._map_info(), 'track_to_venue': t2v,
+                'summary': f'manual: {txt} (owner-entered)',
+                'message': 'Manual alignment entered: check the numbers, then press Save.', 'passed': True}
 
     def _lap_overlay(self, anchors, lap, fit: Optional[Dict]) -> Dict:
         n = int(self.p['overlay_max_points'])
@@ -621,6 +689,8 @@ class MapUwbAlignmentStep(StepImpl):
     # ------------------------------------------------------------------ live view
     def _live_run(self, r: Dict, now: float) -> Dict:
         out = {'mode': r['mode'], 'elapsed_s': round(now - r['t0'], 1), 'reports': len(r['rows']), 'lost': r['lost']}
+        if r['mode'] == 'manual':
+            return out
         if r['mode'] == 'points':
             out['pose'] = r['pose']
             return out

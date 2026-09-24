@@ -360,9 +360,10 @@ steps:
          and 6; Points = park on 2+ known map poses far apart for 10 s each."
       - Check the green lap lies on the road on the map below, then Save. If the road shape itself is off,
         fix it with map_builder.py edit captures/step11_uwb_lap.csv, then redo steps 11 and 12.
-    procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [uwb_lap, lap, points], lap_min_s: 40,
+    procedure: {drive: slow_manual_lap, mode: calibrate_only, modes: [uwb_lap, lap, points, manual], lap_min_s: 40,
                 min_extent_m: 3.0, huber_m: 0.10, inlier_m: 0.25, points_seconds: 10, min_points: 2,
                 # wizard page (phase 8 page 11); the terminal tool ignores these
+                manual_max_offset_m: 20.0,    # manual mode: refuse |x| or |y| beyond this (metres typed as cm?)
                 points_min_extent_m: 1.5,     # points mode: poses must span this (was hard-coded in calib_map_uwb)
                 lap_max_s: 300,               # lap recording ends by itself after this
                 max_input_age_s: 1.0,         # /odom and /imu/rpy older than this = lap refused / failed

@@ -151,7 +151,7 @@ def test_repo_yaml_builds_and_writes_list_matches():
     step = MapUwbAlignmentStep(STEP11, UWB, CONFIG_DIR, MotionRecorder(), lambda: None)
     assert [w.replace('uwb.yaml ', '') for w in STEP11['writes']] == list(WRITES)
     assert {'start_pose', 'light_goal_pose'} <= set(step.poses)
-    assert step.modes == ['uwb_lap', 'lap', 'points']          # Haffiz UWB lap first
+    assert step.modes == ['uwb_lap', 'lap', 'points', 'manual']          # Haffiz UWB lap first, manual last
 
 
 @pytest.mark.parametrize('where,key', [('procedure', 'lap_min_s'), ('procedure', 'huber_m'),
