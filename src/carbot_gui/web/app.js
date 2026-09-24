@@ -49,9 +49,10 @@ const App = (() => {
         h += `<button class="navbtn" data-tab="cal-${s.index}"><span class="n">${s.index}</span>${D.esc(s.title)}<span class="flag todo" data-flag="cal-${s.index}"></span></button>`;
       });
       if (cfg.tabs.some(t => t.id === 'tuning')) h += `<h2>Tools</h2><button class="navbtn" data-tab="tuning"><span class="n"></span>Tuning</button>`;
+      if (cfg.tabs.some(t => t.id === 'steering')) h += `${cfg.tabs.some(t => t.id === 'tuning') ? '' : '<h2>Tools</h2>'}<button class="navbtn" data-tab="steering"><span class="n"></span>Steering test</button>`;
       h += '<h2>Diagnostics</h2>';
       let n = 0;
-      cfg.tabs.filter(t => t.id !== 'calibration' && t.id !== 'tuning').forEach(t => {
+      cfg.tabs.filter(t => t.id !== 'calibration' && t.id !== 'tuning' && t.id !== 'steering').forEach(t => {
         h += `<button class="navbtn" data-tab="${t.id}"><span class="n">${++n}</span>${D.esc(t.title)}<span class="flag" data-flag="${t.id}"></span></button>`;
       });
       $('rail').innerHTML = h;
@@ -63,7 +64,7 @@ const App = (() => {
     h += `<h2>${race ? 'Tabs' : 'Calibration mode'}</h2>`;
     let n = 0;
     cfg.tabs.forEach(t => {
-      const num = (t.id === 'drive' || t.id === 'calibration' || t.id === 'tuning') ? '' : ++n;
+      const num = (t.id === 'drive' || t.id === 'calibration' || t.id === 'tuning' || t.id === 'steering') ? '' : ++n;
       if (!race && t.id === 'map') h += '<h2>Diagnostics</h2>';
       h += `<button class="navbtn" data-tab="${t.id}"><span class="n">${num}</span>${D.esc(t.title)}<span class="flag" data-flag="${t.id}"></span></button>`;
     });

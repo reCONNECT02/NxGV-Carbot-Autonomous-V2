@@ -122,6 +122,8 @@ SAFETY_STATUS = '/carbot/safety/status'                 # SafetyStatus
 OWNER_STATE = '/carbot/owner/state'                     # CommandOwnerState
 VEHICLE_BATTERY = '/carbot/vehicle/battery_v'           # Float32 (servo_controller extension, phase 5)
 VEHICLE_ARM = '/carbot/vehicle/arm'                     # Bool -> servo_controller AUTO (extension, phase 5)
+VEHICLE_STEERING = '/carbot/vehicle/steering'           # String JSON: live steering servo angle + min/max seen + limits (servo_controller extension)
+VEHICLE_STEERING_RESET = '/carbot/vehicle/steering_reset'   # Bool: forget the min/max seen (GUI Steering test tab)
 # phase 5: calibration steps 7/8 drive the car THROUGH the command owner (one writer).
 # MotionRequest, source CALIBRATION (m/s + rad through the speed PID and steering map)
 # or CALIBRATION_RAW (speed_mps = base duty, steer_rad = base angular.z). Accepted

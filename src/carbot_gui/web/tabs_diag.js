@@ -190,3 +190,87 @@ TABS.tuning = {
     return { update() {} };
   },
 };
+
+/* ============================================================ STEERING TEST (calibrate only) */
+/* Drive in circles at full lock, read the angle the steering servo is commanded to, then type the safe
+   minimum / maximum. Servo angle: below the centre = LEFT, above the centre = RIGHT (servo_controller). */
+TABS.steering = {
+  rate: c => c.rates.core,
+  create(el, ctx) {
+    const NODE = 'servo_controller', KEYS = ['servo_center', 'servo_range_left', 'servo_range_right'];
+    el.innerHTML = H.head('Steering test', 'Live steering servo angle, then set the minimum and maximum it may reach', '', ctx) +
+      `<div class="grid g-side"><div>
+        <div class="panel"><h3>Steering servo now</h3>
+          <div style="font-size:56px;font-weight:700;line-height:1.1" data-k="now">—</div>
+          <div class="muted" data-k="side" style="margin-bottom:10px"></div>
+          <div data-k="gauge" style="position:relative;height:46px;background:rgba(127,127,127,.18);border-radius:8px;margin:6px 0 4px"></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px" class="muted"><span>0 (left)</span><span>90</span><span>180 (right)</span></div>
+        </div>
+        <div class="panel" style="margin-top:14px"><h3>Seen since reset</h3>
+          <div class="kv"><span>Lowest angle (most LEFT)</span><b data-k="smin">—</b></div>
+          <div class="kv"><span>Highest angle (most RIGHT)</span><b data-k="smax">—</b></div>
+          <p style="margin:10px 0 0"><button class="btn" data-k="reset">Reset min / max</button></p>
+          <p class="muted" style="font-size:12px;margin:8px 0 0">Hold full lock (drive a full circle each way), read the two numbers, and reset before trying again.</p>
+        </div></div>
+      <div class="side"><div class="panel"><h3>Allowed steering angle</h3>
+        <p class="muted" style="font-size:12px;margin-top:0">Stops the servo from turning further, for the joystick and for automatic driving. If the belt slips at full lock, type a smaller range.</p>
+        <table>
+          <tr><td>Minimum angle (left limit)</td><td class="r"><input type="text" size="5" data-k="imin"></td></tr>
+          <tr><td>Centre (straight ahead)</td><td class="r"><input type="text" size="5" data-k="icen"></td></tr>
+          <tr><td>Maximum angle (right limit)</td><td class="r"><input type="text" size="5" data-k="imax"></td></tr>
+        </table>
+        <p style="margin:10px 0 4px"><button class="btn" data-k="apply">Apply live</button> <button class="btn primary" data-k="save">Save to session</button> <button class="btn" data-k="load">Reload current</button></p>
+        <p class="muted" style="font-size:12px;margin:6px 0 0" data-k="msg">Apply live is lost at the next launch; Save writes it into the calibration session (params_overlay.yaml).</p>
+      </div></div></div>`;
+    const q = k => el.querySelector(`[data-k="${k}"]`);
+    const num = k => Number(q(k).value);
+    async function load() {
+      const r = await ctx.api('/api/params/get', { node: NODE, keys: KEYS });
+      if (!r || !r.ok) { q('msg').textContent = (r && r.message) || 'servo_controller not answering'; return; }
+      const v = r.values;
+      q('icen').value = v.servo_center; q('imin').value = v.servo_center - v.servo_range_left; q('imax').value = v.servo_center + v.servo_range_right;
+      q('msg').textContent = 'Loaded the values servo_controller is using now.';
+    }
+    function plan() {
+      const mn = num('imin'), c = num('icen'), mx = num('imax');
+      if (![mn, c, mx].every(Number.isFinite) || !(0 <= mn && mn < c && c < mx && mx <= 180)) return null;
+      return { servo_center: c, servo_range_left: c - mn, servo_range_right: mx - c };
+    }
+    async function push(action) {
+      const p = plan();
+      if (!p) { ctx.toast('Need 0 <= minimum < centre < maximum <= 180'); return; }
+      const order = KEYS.slice(1).concat(['servo_center']);          // ranges first; the centre moves the wheels, so only when it changed
+      const cur = await ctx.api('/api/params/get', { node: NODE, keys: KEYS });
+      let bad = '';
+      for (const k of order) {
+        if (action === 'set' && k === 'servo_center' && cur && cur.ok && cur.values.servo_center === p.servo_center) continue;
+        const r = await ctx.api('/api/params/' + action, { node: NODE, key: k, value: String(p[k]), default: 0 });
+        if (!r || !r.ok) { bad = `${k}: ${(r && r.message) || 'no answer'}`; break; }
+      }
+      q('msg').textContent = bad || (action === 'set' ? `Applied live: ${num('imin')} .. ${num('imax')} (centre ${num('icen')}).` : 'Saved to the calibration session.');
+      ctx.toast(q('msg').textContent);
+    }
+    q('apply').addEventListener('click', () => push('set'));
+    q('save').addEventListener('click', () => push('save'));
+    q('load').addEventListener('click', load);
+    q('reset').addEventListener('click', async () => { await ctx.api('/api/steering/reset', {}); ctx.toast('Min / max reset'); });
+    load();
+    const pos = a => `${Math.max(0, Math.min(180, a)) / 180 * 100}%`;
+    return {
+      update(d) {
+        const s = d.live;
+        if (!s) { q('now').textContent = '—'; q('side').textContent = 'No /carbot/vehicle/steering: is servo_controller running (with the extension)?'; return; }
+        const off = s.angle - s.center;
+        q('now').textContent = `${s.angle}°`;
+        q('side').textContent = off === 0 ? 'straight ahead' : `${Math.abs(off)}° ${off < 0 ? 'LEFT' : 'RIGHT'} of the centre (${s.center}°). Current limits ${s.limit_min}° .. ${s.limit_max}°`;
+        q('smin').textContent = s.seen_min === null ? '—' : `${s.seen_min}°  (${s.center - s.seen_min}° left of centre)`;
+        q('smax').textContent = s.seen_max === null ? '—' : `${s.seen_max}°  (${s.seen_max - s.center}° right of centre)`;
+        const seen = s.seen_min === null ? '' : `<div style="position:absolute;top:30px;height:8px;background:#4c8bf5;opacity:.55;border-radius:4px;left:${pos(s.seen_min)};width:calc(${pos(s.seen_max)} - ${pos(s.seen_min)})"></div>`;
+        q('gauge').innerHTML =
+          `<div style="position:absolute;top:0;height:100%;left:${pos(s.limit_min)};width:calc(${pos(s.limit_max)} - ${pos(s.limit_min)});background:rgba(60,180,90,.22);border-radius:8px"></div>` +
+          `<div style="position:absolute;top:0;height:100%;width:2px;background:#888;left:${pos(s.center)}"></div>` + seen +
+          `<div style="position:absolute;top:2px;height:24px;width:6px;margin-left:-3px;background:#f5a623;border-radius:3px;left:${pos(s.angle)}"></div>`;
+      },
+    };
+  },
+};

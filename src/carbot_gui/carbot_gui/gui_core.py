@@ -19,19 +19,19 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ----------------------------------------------------------------------------- tabs
 RACE_TABS = ['drive', 'map', 'percplan', 'memory', 'loc', 'det', 'control', 'health', 'events']
-CALIBRATE_TABS = ['calibration', 'tuning', 'map', 'percplan', 'memory', 'loc', 'det', 'control',
+CALIBRATE_TABS = ['calibration', 'tuning', 'steering', 'map', 'percplan', 'memory', 'loc', 'det', 'control',
                   'health', 'events']
 TAB_TITLES = {
     'drive': 'Drive', 'map': 'Global map', 'percplan': 'Perception + planner',
     'memory': 'Memory + LiDAR', 'loc': 'Localization', 'det': 'Detections',
     'control': 'Control + safety', 'health': 'System health', 'events': 'Events + log',
-    'calibration': 'Calibration', 'tuning': 'Tuning',
+    'calibration': 'Calibration', 'tuning': 'Tuning', 'steering': 'Steering test',
 }
 # topic groups per tab ('core' is always added while any page is open)
 TAB_GROUPS = {
     'drive': ['drive'], 'map': ['map'], 'percplan': ['percplan'], 'memory': ['memory'],
     'loc': ['loc', 'map'], 'det': ['det'], 'control': ['control'], 'health': ['health'],
-    'events': [], 'calibration': ['calibration'], 'tuning': [],
+    'events': [], 'calibration': ['calibration'], 'tuning': [], 'steering': ['steering'],
 }
 # `tab:` ids used in challenges.yaml / calibration_steps.yaml (phase 1 names, kept) -> GUI tab ids
 YAML_TAB_ALIASES = {'main': 'drive', 'map': 'map', 'perception': 'percplan', 'planner': 'percplan',

@@ -23,3 +23,5 @@ BASE_FRAME = 'base_link'
 # Carbot extension (carbot_extension.py, phase 5) - names must match carbot_common.topics
 VEHICLE_BATTERY_TOPIC = '/carbot/vehicle/battery_v'   # Float32, volts
 VEHICLE_ARM_TOPIC = '/carbot/vehicle/arm'             # Bool: True = AUTO, False = MANUAL + stop
+VEHICLE_STEERING_TOPIC = '/carbot/vehicle/steering'   # String JSON, see carbot_extension.SteeringTracker
+VEHICLE_STEERING_RESET_TOPIC = '/carbot/vehicle/steering_reset'   # Bool: reset min/max seen

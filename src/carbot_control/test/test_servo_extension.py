@@ -49,3 +49,23 @@ def test_topic_names_match_carbot_common():
     exec(open(os.path.join(os.path.dirname(EXT), 'topics.py')).read(), ns)
     assert ns['VEHICLE_BATTERY_TOPIC'] == T.VEHICLE_BATTERY and ns['VEHICLE_ARM_TOPIC'] == T.VEHICLE_ARM
     assert ns['AUTO_CMD_VEL_TOPIC'] == T.CMD_VEL_AUTO
+
+
+def test_steering_tracker():
+    t = _load().SteeringTracker()
+    assert t.payload(110, 110, 50, 70)['seen_min'] is None
+    for a in (110, 61, 175, 90):
+        t.add(a)
+    p = t.payload(90, 110, 50, 70)
+    assert (p['seen_min'], p['seen_max'], p['limit_min'], p['limit_max']) == (61, 175, 60, 180)
+    assert p['angle'] == 90 and p['center'] == 110
+    t.reset()
+    assert t.payload(110, 110, 50, 70)['seen_max'] is None
+
+
+def test_steering_topic_names_match_carbot_common():
+    from carbot_common import topics as T
+    ns = {}
+    exec(open(os.path.join(os.path.dirname(EXT), 'topics.py')).read(), ns)
+    assert ns['VEHICLE_STEERING_TOPIC'] == T.VEHICLE_STEERING
+    assert ns['VEHICLE_STEERING_RESET_TOPIC'] == T.VEHICLE_STEERING_RESET

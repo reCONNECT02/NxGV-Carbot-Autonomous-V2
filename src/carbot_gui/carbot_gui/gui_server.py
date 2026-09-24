@@ -106,6 +106,7 @@ class GuiServer(CarbotNode):
             self._subscribe(spec)
         self.pub_estop = self.create_publisher(Bool, T.E_STOP, 10)
         self.pub_manual = self.create_publisher(Bool, T.MANUAL_TAKEOVER, LATCHED)
+        self.pub_steer_reset = self.create_publisher(Bool, T.VEHICLE_STEERING_RESET, 10)
         self.pub_manual.publish(Bool(data=False))
         from std_srvs.srv import Trigger
         self.start_cli = self.create_client(Trigger, T.RACE_START_SRV) if self.race else None
@@ -179,6 +180,8 @@ class GuiServer(CarbotNode):
             'health': [('health', SystemHealth, T.SYSTEM_HEALTH, 5)],
             # phase 8: wizard pages (open step's live view + sessions); only while a calibration page is open
             'calibration': [('calib_live', String, T.CALIBRATION_LIVE, L)],
+            # Steering test tab: live steering servo angle + min/max seen (servo_controller extension)
+            'steering': [('steering', String, T.VEHICLE_STEERING, 5)],
         }
         imgs = {'cam_front': T.cam_preview('front'), 'ov_front': T.perception_overlay('front'),
                 'stitched': T.PERCEPTION_DEBUG_STITCHED, 'mask': T.PERCEPTION_DEBUG_MASK,
@@ -627,6 +630,13 @@ class GuiServer(CarbotNode):
                                      for t in h.topics]}
         return out
 
+    def tab_steering(self, q):
+        m = self.get('steering', 2.0)
+        try:
+            return {'live': json.loads(m.data) if m is not None else None}
+        except ValueError:
+            return {'live': None}
+
     def tab_events(self, q):
         return {'events': self.events.since(int(q.get('since', ['0'])[0] or 0))}
 
@@ -843,6 +853,9 @@ def serve(node: GuiServer, web_dir: str):
                 if path == '/api/start':
                     ok, msg = node.start()
                     return self._send(200, {'ok': ok, 'message': msg})
+                if path == '/api/steering/reset' and not node.race:
+                    node.pub_steer_reset.publish(Bool(data=True))
+                    return self._send(200, {'ok': True})
                 if path == '/api/calibration/action':
                     return self._send(200, node.calibration_action(body))
                 if path.startswith('/api/params/'):

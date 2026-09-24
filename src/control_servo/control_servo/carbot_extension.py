@@ -30,7 +30,10 @@ stay exactly as they are and still win.
 import os
 import time
 
-from .topics import AUTO_MODE_TOPIC, VEHICLE_ARM_TOPIC, VEHICLE_BATTERY_TOPIC
+import json
+
+from .topics import (AUTO_MODE_TOPIC, VEHICLE_ARM_TOPIC, VEHICLE_BATTERY_TOPIC, VEHICLE_STEERING_RESET_TOPIC,
+                     VEHICLE_STEERING_TOPIC)
 
 
 def _param(node, name, default):
@@ -63,6 +66,28 @@ def playback_allowed(mode: str, allowed_modes) -> bool:
     return mode in [str(m) for m in (allowed_modes or [])]
 
 
+class SteeringTracker:
+    """Pure: lowest / highest steering servo angle commanded since the last reset."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        self.lo = None
+        self.hi = None
+
+    def add(self, angle) -> None:
+        a = int(angle)
+        self.lo = a if self.lo is None else min(self.lo, a)
+        self.hi = a if self.hi is None else max(self.hi, a)
+
+    def payload(self, angle, center, range_left, range_right) -> dict:
+        """servo_controller clamps to [center - range_left, center + range_right] (degrees)."""
+        return {'angle': int(angle), 'center': int(center), 'range_left': int(range_left),
+                'range_right': int(range_right), 'limit_min': int(center) - int(range_left),
+                'limit_max': int(center) + int(range_right), 'seen_min': self.lo, 'seen_max': self.hi}
+
+
 class CarbotVehicleExtension:
 
     def __init__(self, node):
@@ -76,6 +101,20 @@ class CarbotVehicleExtension:
             node.create_publisher(Bool, AUTO_MODE_TOPIC, 10)
         if rate > 0:
             node.create_timer(1.0 / rate, self._battery)
+        from std_msgs.msg import String
+        self.String = String
+        self.steer = SteeringTracker()
+        self.steering_pub = node.create_publisher(String, VEHICLE_STEERING_TOPIC, 10)
+        node.create_subscription(Bool, VEHICLE_STEERING_RESET_TOPIC, lambda _m: self.steer.reset(), 10)
+        steer_rate = float(_param(node, 'carbot_steering_rate_hz', 10.0))
+        if steer_rate > 0:
+            node.create_timer(1.0 / steer_rate, self._steering)
+        _apply = node.apply_hardware
+
+        def apply_and_track(motor_pwm, steer_angle):        # sees EVERY steering command, not just the 10 Hz samples
+            self.steer.add(steer_angle)
+            return _apply(motor_pwm, steer_angle)
+        node.apply_hardware = apply_and_track
         if self.enabled_arm:
             node.create_subscription(Bool, VEHICLE_ARM_TOPIC, self._on_arm, 10)
         self._last_action = ''
@@ -97,6 +136,12 @@ class CarbotVehicleExtension:
             return
         if v > 0.0:
             self.battery_pub.publish(self.Float32(data=v))
+
+    def _steering(self) -> None:
+        n = self.node
+        self.steering_pub.publish(self.String(data=json.dumps(
+            self.steer.payload(n.target_servo_val, n.servo_center, n.servo_range_left, n.servo_range_right),
+            separators=(',', ':'))))
 
     def _blocked_playback(self) -> None:
         self.node.get_logger().error(
